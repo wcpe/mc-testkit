@@ -13,7 +13,7 @@ _（暂无）_
 _（暂无）_
 
 ### 修复
-_（暂无）_
+- CI / 构建：`gradlew` 与 `template/harness/gradlew` 之前以非可执行（100644）入库（Windows 提交丢失 Unix 可执行位），导致 Linux runner / Unix 环境 `./gradlew` 报 `Permission denied`、CI 构建失败；改为可执行（100755）入库，修复 CI 与「消费方照抄 `template/` 后在 Unix 上直接跑 `./gradlew`」。
 
 ### 移除
 _（暂无）_

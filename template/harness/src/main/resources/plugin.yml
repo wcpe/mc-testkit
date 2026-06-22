@@ -1,0 +1,14 @@
+# mc-testkit E2E 桩插件描述（照抄物）。由真实 Paper/Bukkit 服务端在 E2E 运行时加载。
+# 通用骨架不依赖任何业务插件；消费方若桩需要读取被测插件的 API，再在 depend 里补上其插件名。
+
+# 插件名（出现在 /plugins 列表、日志、依赖声明里）
+name: McTestkitE2eHarness
+# 插件主类（Kotlin 实现，继承 JavaPlugin）
+main: com.example.e2e.McTestkitE2eHarnessPlugin
+# 插件版本（与 build.gradle.kts 的 version 保持一致即可）
+version: 1.0.0-SNAPSHOT
+# Bukkit API 版本基线（匹配后端 Minecraft 版本，如 1.20.x 用 '1.20'）
+api-version: '1.20'
+# 依赖的其它插件（通用骨架为空；消费方按需添加被测/依赖插件名，控制加载顺序）
+# depend:
+#   - YourPluginUnderTest

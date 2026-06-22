@@ -1,0 +1,21 @@
+# mc-testkit E2E 桩插件自身配置（非业务配置），由桩插件在 onEnable 时加载。
+# 编排（mc-testkit Gradle 插件）在 prepare 阶段把场景名与结果文件路径写进这份配置。
+# 字段命名遵循 kebab-case；每个字段上方有中文说明，便于非技术运维看懂。
+
+# 本次要执行的场景 id（须与机器人侧 action、编排声明的场景名一致）。
+# 通用骨架内置：smoke（无机器人，仅校验桩自身就绪即 PASS）、example-bot（机器人驱动示例）。
+scenario: "smoke"
+
+# 结果文件路径（相对运行目录或绝对路径）。桩把 status/message 写到这里，
+# 编排的 verify 任务**只认这个文件**判 PASS/FAIL（mc-testkit 冻结契约：结果文件为测试结论真源）。
+result-file: "e2e-result.properties"
+
+# 等待首个真实玩家（机器人）入服的超时（秒）；超时未见玩家则判 FAIL。
+wait-for-player-seconds: 180
+
+# 单个场景从开始驱动到判定完成的整体超时（秒）；超时未判定则判 FAIL。
+scenario-timeout-seconds: 240
+
+# 桩判定（PASS/FAIL）后到真正关服（Bukkit.shutdown）之间的延迟（ticks，20 ticks=1 秒）。
+# 留出窗口把结果文件落盘、让机器人收到末尾消息后再关服。
+shutdown-delay-ticks: 20

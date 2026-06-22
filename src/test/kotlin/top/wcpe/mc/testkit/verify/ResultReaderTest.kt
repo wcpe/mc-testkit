@@ -1,0 +1,83 @@
+package top.wcpe.mc.testkit.verify
+
+import top.wcpe.mc.testkit.contract.McTestkitResultFile
+import java.io.File
+import java.nio.file.Files
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
+
+/**
+ * 结果判定单元测试（FR-06）。
+ *
+ * 验证「只认结果文件」：PASS 返回结论、FAIL 与文件缺失抛中文错误。
+ * 用临时目录写 `<scenario>.properties`，不连任何外部依赖。
+ */
+class ResultReaderTest {
+
+    private fun tempResultsDir(): File = Files.createTempDirectory("mc-testkit-result").toFile()
+
+    private fun writeResult(dir: File, scenario: String, content: String) {
+        File(dir, McTestkitResultFile.fileName(scenario)).writeText(content, Charsets.UTF_8)
+    }
+
+    @Test
+    fun `status 为 PASS 时返回含 message 的结论`() {
+        val dir = tempResultsDir()
+        writeResult(dir, "smoke", "status=PASS\nmessage=一切正常\n")
+
+        val result = ResultReader.read(dir, "smoke")
+
+        assertEquals(McTestkitResultFile.PASS, result.status)
+        assertEquals("一切正常", result.message)
+        assertTrue(result.isPass)
+    }
+
+    @Test
+    fun `status 为 FAIL 时抛中文错误并带上 message`() {
+        val dir = tempResultsDir()
+        writeResult(dir, "buySuccess", "status=FAIL\nmessage=余额不足\n")
+
+        val ex = assertFailsWith<IllegalStateException> {
+            ResultReader.read(dir, "buySuccess")
+        }
+        // 失败原因（message）须出现在中文报错里，便于定位
+        assertTrue(ex.message!!.contains("buySuccess"), "报错应含场景名：${ex.message}")
+        assertTrue(ex.message!!.contains("余额不足"), "报错应含失败原因：${ex.message}")
+    }
+
+    @Test
+    fun `结果文件缺失时抛中文错误并指明路径`() {
+        val dir = tempResultsDir()
+
+        val ex = assertFailsWith<IllegalStateException> {
+            ResultReader.read(dir, "missing")
+        }
+        val expectedPath = File(dir, McTestkitResultFile.fileName("missing")).absolutePath
+        assertTrue(ex.message!!.contains(expectedPath), "报错应指明结果文件路径：${ex.message}")
+    }
+
+    @Test
+    fun `status 缺失或为未知值时按失败处理并中文报错`() {
+        val dir = tempResultsDir()
+        // 没有 status 键：视为非 PASS
+        writeResult(dir, "noStatus", "message=没写状态\n")
+
+        val ex = assertFailsWith<IllegalStateException> {
+            ResultReader.read(dir, "noStatus")
+        }
+        assertTrue(ex.message!!.contains("noStatus"), "报错应含场景名：${ex.message}")
+    }
+
+    @Test
+    fun `message 缺省时仍能返回 PASS 结论`() {
+        val dir = tempResultsDir()
+        writeResult(dir, "onlyStatus", "status=PASS\n")
+
+        val result = ResultReader.read(dir, "onlyStatus")
+
+        assertEquals(McTestkitResultFile.PASS, result.status)
+        assertEquals("", result.message)
+    }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "mc-testkit-e2e-bot",
+  "private": true,
+  "version": "1.0.0",
+  "description": "mc-testkit E2E 机器人内核脚手架（mineflayer），照抄到消费方项目改场景即用",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "connect-and-wait": "node src/connectAndWait.js",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "mineflayer": "^4.23.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.3"
+  }
+}

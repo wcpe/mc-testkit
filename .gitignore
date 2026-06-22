@@ -1,0 +1,34 @@
+# JVM 构建产物
+build/
+out/
+target/
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+# 模板脚手架（template/harness）自带的 Gradle wrapper jar 也需入库，否则照抄后 gradlew 跑不起来
+!**/gradle/wrapper/gradle-wrapper.jar
+
+# Gradle / Maven
+.gradle/
+.mvn/timing.properties
+
+# IDE / 操作系统
+/.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# 过程性文档与临时文件（不入库）
+/.tmp/
+
+# 环境与密钥（不入库）
+.env
+
+# MC E2E 运行期产物（被测/示例服与代理跑出来的运行目录、日志、结果、bot 依赖）
+**/run/
+**/run-s*/
+**/run-proxy*/
+**/e2e-results/
+**/node_modules/
+*.log

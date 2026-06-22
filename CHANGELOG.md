@@ -7,7 +7,7 @@
 ## 未发布版本
 
 ### 新增
-_（暂无）_
+- CI/CD：新增 GitHub Actions 工作流——`ci.yml`（每次 push / PR 跑插件构建 + 单元/TestKit 测试 + 模板 bot prettier/eslint/audit）、`e2e.yml`（手动或打版本 tag 触发，自举跑通 smoke + 集群跨服 + 持续压测三类实机 E2E）。
 
 ### 变更
 _（暂无）_

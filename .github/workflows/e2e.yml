@@ -1,0 +1,114 @@
+# mc-testkit 实机 E2E：自举跑通 smoke + 集群跨服 + 持续压测三类场景。
+# 「自举」= 以 template/ 的桩与 bot 作消费者，真实下载并拉起 Paper + Waterfall，按结果文件判定、收尾。
+# 重且需联网（下载服务端/代理），故不在每次 PR 跑——手动触发，或打版本 tag 时跑（发版前 E2E，
+# 见 .claude/rules/testing-and-quality.md「E2E 在发版前至少跑一遍」）。
+name: E2E
+
+on:
+  workflow_dispatch: {}        # 手动触发
+  push:
+    tags: ['v*']               # 打 vX.Y.Z tag 时（发版前实机验收）
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: 自举实机 E2E（smoke + 集群 + 压测）
+    runs-on: ubuntu-latest
+    timeout-minutes: 40        # 含首跑下载 Paper/Waterfall 的时间
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 JDK 17（Paper / Waterfall 运行所需）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 安装 Node 18（mineflayer 机器人）
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: 配置 Gradle（缓存含已下载的服务端/代理 jar，加速重复运行）
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 发布插件到 mavenLocal（供消费者工程引用）
+        run: ./gradlew publishToMavenLocal --no-daemon --stacktrace
+
+      - name: 构建模板桩 jar
+        run: ./gradlew -p template/harness jar --no-daemon --stacktrace
+
+      - name: 安装模板 bot 依赖
+        working-directory: template/bot
+        run: npm install --no-audit --no-fund
+
+      - name: 生成一次性消费者工程（经 mavenLocal 引用插件，声明三类场景）
+        run: |
+          set -euo pipefail
+          VERSION="$(cat VERSION)"
+          CONSUMER="$RUNNER_TEMP/e2e-consumer"
+          mkdir -p "$CONSUMER"
+          cat > "$CONSUMER/settings.gradle.kts" <<'EOF'
+          pluginManagement {
+              repositories {
+                  mavenLocal()
+                  gradlePluginPortal()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "mc-testkit-e2e-ci"
+          EOF
+          cat > "$CONSUMER/build.gradle.kts" <<EOF
+          plugins { id("top.wcpe.mc-testkit") version "$VERSION" }
+
+          mcTestkit {
+              backend("s1") { platform = paper; version = "1.20.1"; port = 25565 }
+              backend("s2") { platform = paper; version = "1.20.1"; port = 25566 }
+              proxy("wf") { platform = waterfall; port = 25577; routesTo("s1", "s2") }
+              // 单后端烟雾：无 bot、无代理，最轻
+              scenario("smoke") { backend = "s1" }
+              // 集群跨服：2 后端 + 代理单 listener + bot 经代理 /server 切换
+              scenario("cross-server") {
+                  backends("s1", "s2"); via = "wf"
+                  bot { username = "Switcher"; action = "cross-server" }
+              }
+              // 持续压测：2 服 + 代理 N-listener 钉服 + 每服 2 bot 短时施压
+              scenario("continuous-stress") {
+                  backends("s1", "s2"); via = "wf"
+                  stress { botsPerServer = 2; durationSeconds = 20 }
+                  bot { username = "Stress"; action = "continuous-stress" }
+              }
+              // 自举：桩骨架自身即被测对象（经 HARNESS_JAR 注入两后端）
+              dependencies { pluginUnderTest = "HARNESS_JAR" }
+          }
+          EOF
+          {
+            echo "CONSUMER=$CONSUMER"
+            echo "HARNESS_JAR=$GITHUB_WORKSPACE/template/harness/build/libs/mc-testkit-e2e-harness-1.0.0-SNAPSHOT.jar"
+          } >> "$GITHUB_ENV"
+
+      - name: E2E · 单后端烟雾（e2eSmoke）
+        run: ./gradlew -p "$CONSUMER" e2eSmoke -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
+
+      - name: E2E · 集群跨服（e2eCrossServerCluster）
+        run: ./gradlew -p "$CONSUMER" e2eCrossServerCluster -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
+
+      - name: E2E · 持续压测（e2eContinuousStressStress）
+        run: ./gradlew -p "$CONSUMER" e2eContinuousStressStress -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
+
+      - name: 归档运行日志与结果（失败排查）
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            ${{ env.CONSUMER }}/build/mc-testkit/**/*.log
+            ${{ env.CONSUMER }}/build/mc-testkit/results/**
+          if-no-files-found: ignore

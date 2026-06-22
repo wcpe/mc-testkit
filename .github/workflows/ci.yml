@@ -1,0 +1,77 @@
+# mc-testkit 持续集成：每次 push / PR 跑「插件构建 + 单元/集成测试」与「模板 bot 静态检查」。
+# 不含实机 E2E（要起真实服务端/代理、重且需联网下载）——那走 e2e.yml（手动 / 打 tag 触发）。
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+# 同一分支 / PR 上有新推送时取消进行中的旧运行，省 CI 资源
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # 插件本体：编译 + 全部单元 / TestKit 测试（配置期校验，不联网、不起进程）
+  build-test:
+    name: 构建与测试（插件）
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 配置 Gradle（带依赖 / 构建缓存）
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 构建 + 测试（编译 + 单元 + TestKit）
+        run: ./gradlew build --no-daemon --stacktrace
+
+      - name: 校验模板桩骨架可独立编译
+        run: ./gradlew -p template/harness compileKotlin --no-daemon --stacktrace
+
+      - name: 归档测试报告（失败时便于排查）
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: build/reports/tests/
+          if-no-files-found: ignore
+
+  # 模板机器人：prettier + eslint + 依赖漏洞扫描（见 .claude/rules/static-analysis.md）
+  bot-checks:
+    name: 静态检查（模板 bot）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: template/bot
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 格式检查（prettier）
+        run: npx prettier --check .
+
+      - name: 代码检查（eslint）
+        run: npx eslint .
+
+      - name: 依赖漏洞扫描（npm audit，仅报告不阻断——多为 mineflayer 传递依赖）
+        run: npm audit --audit-level=high
+        continue-on-error: true

@@ -30,6 +30,13 @@ class McTestkitContractTest {
     }
 
     @Test
+    fun `后端声明名环境变量契约固定（FR-12）`() {
+        // 编排经此 env 告诉每个后端「它是谁」，消费方据此 per-backend 派生身份（如 server-id 后缀）；一经发布即契约
+        assertEquals("MC_TESTKIT_E2E_BACKEND_NAME", McTestkitEnv.BACKEND_NAME)
+        assertTrue(McTestkitEnv.BACKEND_NAME.startsWith(McTestkitEnv.PREFIX))
+    }
+
+    @Test
     fun `任务命名约定（PascalCase 中缀，兼容 kebab 与 camel 名）`() {
         assertEquals("prepareE2eBuySuccess", McTestkitTaskNames.prepare("buySuccess"))
         assertEquals("e2eBuySuccess", McTestkitTaskNames.verify("buy-success"))

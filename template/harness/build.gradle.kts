@@ -27,6 +27,11 @@ dependencies {
 kotlin {
     // 跟随 Paper 1.20.1 的 Java 基线（17）；换 MC 版本时同步调整
     jvmToolchain(17)
+    // 跳过 Kotlin 元数据版本校验：让桩能 compileOnly 用「更新版 Kotlin 编译」的被测插件 API
+    // （如其元数据版本 2.1.x 高于本工程编译器可读上限；仅编译期跳过，运行期 JVM 字节码仍兼容）。见 FR-14。
+    compilerOptions {
+        freeCompilerArgs.add("-Xskip-metadata-version-check")
+    }
 }
 
 tasks.jar {

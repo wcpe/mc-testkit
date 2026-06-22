@@ -5,6 +5,8 @@ import java.nio.file.Files
 import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * `server.properties` 编辑单元测试（FR-05）。
@@ -56,6 +58,28 @@ class ServerPropertiesTest {
         assertEquals("minecraft:flat", result.getProperty(ServerProperties.LEVEL_TYPE))
         // 不该凭空补出别的键
         assertEquals(null, result.getProperty(ServerProperties.ONLINE_MODE))
+    }
+
+    @Test
+    fun `难度键常量与缺省判定（FR-13）`() {
+        assertEquals("difficulty", ServerProperties.DIFFICULTY)
+
+        // 模板未设难度 → load 不含该键（编排据此补默认 peaceful，保护测试玩家）
+        val noDifficulty = tempRunDir()
+        writeProperties(noDifficulty, "server-port=25565\n")
+        assertFalse(ServerProperties.load(noDifficulty).containsKey(ServerProperties.DIFFICULTY))
+
+        // 模板已设难度 → load 含该键（编排据此保留消费方设定，不覆盖）
+        val withDifficulty = tempRunDir()
+        writeProperties(withDifficulty, "difficulty=hard\n")
+        assertTrue(ServerProperties.load(withDifficulty).containsKey(ServerProperties.DIFFICULTY))
+        assertEquals("hard", ServerProperties.load(withDifficulty).getProperty(ServerProperties.DIFFICULTY))
+
+        // 缺省补 peaceful 后可读回，且保留未涉及键
+        ServerProperties.edit(noDifficulty, mapOf(ServerProperties.DIFFICULTY to "peaceful"))
+        val edited = readProperties(noDifficulty)
+        assertEquals("peaceful", edited.getProperty(ServerProperties.DIFFICULTY))
+        assertEquals("25565", edited.getProperty(ServerProperties.SERVER_PORT))
     }
 
     @Test

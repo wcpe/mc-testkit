@@ -44,8 +44,11 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 | FR-09 | 抽出可发布的共享桩基类库 / 机器人包（第 2 个消费者验证后） | P2 | 计划 |
 | FR-10 | 多后端集群编排：声明「N 后端（同 data-group）+ 代理」拓扑，机器人经代理在后端间 `/server` 切换，桩跨服判定一致性（扩展 scenario 块 `backends(...)`，见 ADR-0008）| P3 | 已交付@v0.1.0 |
 | FR-11 | 压测编排：N 服 × M bot 钉服持续随机动作（N-listener 代理或直连），每服桩收集各 bot `E2E_STRESS_RESULT` 聚合判定；业务不变量（不超卖）由消费方桩查共享 DB 断言（扩展 scenario 块 `stress{}` + 规模 env，见 ADR-0008）| P3 | 已交付@v0.1.0 |
+| FR-12 | 每后端身份注入：编排起每个后端时下发本后端声明名 env `MC_TESTKIT_E2E_BACKEND_NAME`（与下发给 bot 的 `CLUSTER_BACKENDS` 同源、有序对应），消费方据此 per-backend 派生身份（如各服不同 `server-id`）；编排只负责告诉每个后端「它是谁」，不规定怎么用（见 docs/specs/fr-12-per-backend-identity.md）| P1 | 开发中 |
+| FR-13 | 测试环境默认 peaceful 难度：最小 `server.properties` 默认写 `difficulty=peaceful` 保护测试玩家不被怪物/环境杀；消费方服务端模板已设 `difficulty` 则保留其值（不覆盖）| P2 | 开发中 |
+| FR-14 | 桩兼容更新版 Kotlin 编译的被测插件 API：`template/harness` 加 `-Xskip-metadata-version-check`，使桩能 compileOnly 引用「元数据版本高于本工程编译器可读上限」的被测插件类（仅编译期跳过，运行期字节码仍兼容）| P2 | 开发中 |
 
-> 状态取值：计划 / 开发中 / 已交付@vX.Y.Z。优先级：P1(MVP) / P2 / P3。
+> 状态取值：计划 / 开发中 / 已交付@vX.Y.Z。优先级：P1(MVP 或阻断真实消费者接入的关键项) / P2 / P3。
 > 标 `已交付` 有门：该 FR 的 §6 / spec 验收标准全部满足、对应测试 / 实机验收通过后，才由 `sdd-release-version` 在发版时统一标 `已交付@vX.Y.Z`，过程中不得自行预标。
 
 ## 5. 非功能需求（NFR）
@@ -64,6 +67,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 - 插件应用后配置期任务图无环、任务名稳定、缺依赖时报中文明确错误。
 - 一个全新项目按 `template/` 照抄，能在较短时间内（手动验收）跑通一个最小购买场景。
 - 后台进程在任务结束/失败后均被收尾，端口释放、无残留（实机维度，需确认）。
+- 集群/压测下各后端经 `MC_TESTKIT_E2E_BACKEND_NAME` 收到各自声明名，消费方据此派生**不同** `server-id`（FR-12）；smoke 结果含 `backendName=s1`、集群到达服结果含其服名（已自举验证），下游跨服一致性 / 转服不丢数据断言由消费方桩查共享 DB 自证（**实机维度，需用户确认**）。
 
 ## 7. 分期（路线）
 

@@ -7,6 +7,9 @@
 ## 未发布版本
 
 ### 新增
+- **每后端身份注入**（FR-12）：编排起**每个**后端（集群 / 压测后台、单后端前台三条路径）时下发新 env `MC_TESTKIT_E2E_BACKEND_NAME` = 该后端 DSL 声明名（与下发给 bot 的 `CLUSTER_BACKENDS` 同源、有序对应）；消费方据此 per-backend 派生身份（如同组各服不同 `server-id`，跨服归属 / 转服交接所需）。`template/harness` 演示读取并写入结果明细。编排只「告诉每个后端它是谁」，不规定怎么用。见 docs/specs/fr-12-per-backend-identity.md。
+- **测试环境默认 peaceful 难度**（FR-13）：最小 `server.properties` 默认写 `difficulty=peaceful`，保护测试玩家不被怪物 / 环境杀；**仅在消费方服务端模板未设 `difficulty` 时才默认**，模板已设则保留其值。
+- **桩兼容更新版 Kotlin 编译的被测插件 API**（FR-14）：`template/harness` 加 `-Xskip-metadata-version-check`，使桩能 `compileOnly` 引用「元数据版本高于本工程编译器可读上限」的被测插件类（仅编译期跳过，运行期字节码仍兼容）。
 - CI/CD：新增 GitHub Actions 工作流——`ci.yml`（每次 push / PR 跑插件构建 + 单元/TestKit 测试 + 模板 bot prettier/eslint/audit）、`e2e.yml`（手动或打版本 tag 触发，自举跑通 smoke + 集群跨服 + 持续压测三类实机 E2E）；README 加 CI / E2E 状态徽章。
 - 代码风格门禁：接入 ktlint（`org.jlleitschuh.gradle.ktlint`，风格 `intellij_idea`，规则取舍集中在 `.editorconfig`）；`ktlintCheck` 挂到 `check` → `build`，`./gradlew build` 即跑风格检查；既有代码已用 `ktlintFormat` 规整。
 

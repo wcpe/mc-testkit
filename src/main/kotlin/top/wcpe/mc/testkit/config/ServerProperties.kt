@@ -40,6 +40,9 @@ object ServerProperties {
     /** 出生点保护半径（设 0 便于 bot 在出生点附近活动）。 */
     const val SPAWN_PROTECTION = "spawn-protection"
 
+    /** 难度（测试环境默认 `peaceful`，保护测试玩家不被怪物 / 环境杀；消费方模板已设则保留，见 FR-13）。 */
+    const val DIFFICULTY = "difficulty"
+
     /** 端口缺省回退值（运行目录无 `server.properties` 或未写 server-port 时用）。 */
     const val DEFAULT_PORT = 25565
 

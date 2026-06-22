@@ -102,7 +102,8 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
     private fun runSmokeScenario() {
         passScenario(
             message = "桩插件已就绪，真实服务端启动烟雾场景通过",
-            details = mapOf("server" to Bukkit.getServer().name),
+            // backendName 来自编排下发的 MC_TESTKIT_E2E_BACKEND_NAME（FR-12）：演示消费方如何取本后端声明名做 per-backend 身份
+            details = mapOf("server" to Bukkit.getServer().name, "backendName" to harnessConfig.backendName),
         )
     }
 
@@ -257,7 +258,13 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
             Runnable {
                 passScenario(
                     message = "机器人经代理切到本服并确认跨服切换，集群跨服链路通",
-                    details = mapOf("player" to playerName, "arrivedServer" to Bukkit.getServer().name),
+                    // backendName 即本到达服的声明名（编排下发 MC_TESTKIT_E2E_BACKEND_NAME，FR-12）：消费方据此判断「切到了哪台」
+                    details =
+                        mapOf(
+                            "player" to playerName,
+                            "arrivedServer" to Bukkit.getServer().name,
+                            "backendName" to harnessConfig.backendName,
+                        ),
                 )
             },
         )

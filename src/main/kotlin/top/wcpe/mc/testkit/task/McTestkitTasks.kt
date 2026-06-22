@@ -375,6 +375,7 @@ object McTestkitTasks {
             environment = mapOf(
                 McTestkitEnv.SCENARIO to scenario,
                 McTestkitEnv.RESULT_FILE to resultFile.absolutePath,
+                McTestkitEnv.BACKEND_NAME to backend.name,
             ),
             logger = { project.logger.lifecycle("[mc-testkit] $it") },
         )
@@ -727,14 +728,18 @@ object McTestkitTasks {
 
         // 写 eula + 最小可启动 server.properties（端口取后端解析端口、离线、关安全档案）
         File(runDir, "eula.txt").writeText("eula=true\n")
-        ServerProperties.edit(
-            runDir,
-            mapOf(
+        // 端口 / 离线 / 关安全档案是 E2E 必须强制项；难度默认 peaceful 保护测试玩家不被怪物 / 环境杀，
+        // 但仅在消费方模板未指定 difficulty 时才默认（模板设了则保留其值，FR-13）。
+        val serverPropsOverrides =
+            linkedMapOf(
                 ServerProperties.SERVER_PORT to backend.port.toString(),
                 ServerProperties.ONLINE_MODE to "false",
                 ServerProperties.ENFORCE_SECURE_PROFILE to "false",
-            ),
-        )
+            )
+        if (!ServerProperties.load(runDir).containsKey(ServerProperties.DIFFICULTY)) {
+            serverPropsOverrides[ServerProperties.DIFFICULTY] = "peaceful"
+        }
+        ServerProperties.edit(runDir, serverPropsOverrides)
 
         // 注入待测插件 jar 与依赖插件 jar（dependencies{} 声明、env / 路径解析；缺失抛中文错误）
         val resolvedJars = resolveDependencyJars(extension.declaredDependencies) {
@@ -773,6 +778,7 @@ object McTestkitTasks {
             environment = mapOf(
                 McTestkitEnv.SCENARIO to scenario,
                 McTestkitEnv.RESULT_FILE to resultFilePath,
+                McTestkitEnv.BACKEND_NAME to backend.name,
             ),
             logger = { project.logger.lifecycle("[mc-testkit] $it") },
         )

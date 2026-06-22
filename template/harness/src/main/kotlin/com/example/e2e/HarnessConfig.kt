@@ -15,6 +15,8 @@ import java.io.File
  * @property scenarioTimeoutSeconds 单场景整体超时（秒）。
  * @property shutdownDelayTicks 判定后到关服的延迟（ticks）。
  * @property stressDurationSeconds 持续压测场景的施压时长（秒，FR-11）；首个 bot 加入起计时，到时聚合收尾。
+ * @property backendName 本后端的声明名（编排经 `MC_TESTKIT_E2E_BACKEND_NAME` 下发，集群/压测下各服不同，FR-12）；
+ *   消费方据此 per-backend 派生身份（如 `server-id` 后缀）。空串表示编排未下发（单后端可不依赖）。
  */
 data class HarnessConfig(
     val scenario: ScenarioName,
@@ -23,6 +25,7 @@ data class HarnessConfig(
     val scenarioTimeoutSeconds: Long,
     val shutdownDelayTicks: Long,
     val stressDurationSeconds: Long,
+    val backendName: String,
 ) {
     companion object {
         /**
@@ -47,6 +50,8 @@ data class HarnessConfig(
                 // 压测时长优先取编排下发的 env（与 bot 同源），缺失回退 config.yml 默认
                 stressDurationSeconds = envOrNull("MC_TESTKIT_E2E_STRESS_DURATION_SECONDS")?.toLongOrNull()
                     ?: config.getLong("stress-duration-seconds", 60L),
+                // 本后端声明名（编排下发；消费方据此 per-backend 派生身份，如 server-id 后缀）
+                backendName = envOrNull("MC_TESTKIT_E2E_BACKEND_NAME") ?: "",
             )
         }
 

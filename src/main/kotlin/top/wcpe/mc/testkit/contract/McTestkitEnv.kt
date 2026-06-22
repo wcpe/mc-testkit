@@ -34,6 +34,14 @@ object McTestkitEnv {
     /** 结果文件绝对路径；编排指定桩把 status/message 写到这里（= verify 读取处，二者对齐）。 */
     const val RESULT_FILE = PREFIX + "RESULT_FILE"
 
+    /**
+     * 本后端的声明名（编排起每个后端时下发，与下发给 bot 的 [CLUSTER_BACKENDS] 同源、有序对应）。
+     * 集群/压测下各后端各不相同（如 `s1` / `s2`）；消费方（被测插件或桩）据此 per-backend 派生身份——
+     * 典型用法是做 `server-id` 后缀，使同组各服 server-id 不同（跨服归属/转服交接所需）。
+     * 编排只负责「告诉每个后端它是谁」，不关心消费方怎么用（FR-12）。
+     */
+    const val BACKEND_NAME = PREFIX + "BACKEND_NAME"
+
     // ── 代理（jar / 版本 / 端口）──
     const val WATERFALL_JAR = PREFIX + "WATERFALL_JAR"
     const val WATERFALL_VERSION = PREFIX + "WATERFALL_VERSION"

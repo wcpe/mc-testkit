@@ -34,7 +34,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 | 编号 | 需求 | 优先级 | 状态 |
 |---|---|---|---|
 | FR-01 | Gradle 插件骨架：`top.wcpe.mc-testkit`（java-gradle-plugin + kotlin-dsl）、`mcTestkit { }` DSL 扩展、发布到 maven.wcpe.top | P1 | 已交付@v0.1.0 |
-| FR-02 | 内置下载与运行：插件自实现下载并运行 Paper/Folia 后端与 Velocity/Waterfall/BungeeCord 代理（内置自实现，不外挂第三方下载库，见 ADR-0001）| P1 | 开发中 |
+| FR-02 | 内置下载与运行：插件自实现下载并运行 Paper/Folia 后端与 Velocity/Waterfall/BungeeCord 代理（内置自实现，不外挂第三方下载库，见 ADR-0001）| P1 | 已交付@v0.1.0 |
 | FR-03 | 声明式拓扑 DSL：声明「单后端」或「代理 + N 后端」节点、端口与路由 | P1 | 已交付@v0.1.0 |
 | FR-04 | 任务自动编排：prepare / 启动机器人 / runServer / proxy / cluster / verify / 缓存回写 | P1 | 已交付@v0.1.0 |
 | FR-05 | 固化环境契约：经代理固定机器人协议版本、paper-global 代理在线模式、BungeeCord 后端配置、依赖数据源/Redis 注入校验 | P1 | 已交付@v0.1.0 |

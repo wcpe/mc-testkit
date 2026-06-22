@@ -1,11 +1,5 @@
 package top.wcpe.mc.testkit.dsl
 
-import top.wcpe.mc.testkit.dsl.BackendSpec
-import top.wcpe.mc.testkit.dsl.DependenciesSpec
-import top.wcpe.mc.testkit.dsl.McTestkitDsl
-import top.wcpe.mc.testkit.dsl.ProxySpec
-import top.wcpe.mc.testkit.dsl.ScenarioSpec
-
 /**
  * `mcTestkit { }` 扩展：声明测试拓扑（后端 / 代理 / 路由）、场景与依赖注入。
  *

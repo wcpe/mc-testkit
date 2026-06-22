@@ -7,26 +7,11 @@ import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.TaskProvider
-import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import top.wcpe.mc.testkit.bot.BotConnection
 import top.wcpe.mc.testkit.bot.BotLauncher
 import top.wcpe.mc.testkit.bot.BotProcessContext
 import top.wcpe.mc.testkit.bot.botPidFile
-import top.wcpe.mc.testkit.bot.nodeCommand
 import top.wcpe.mc.testkit.bot.stopProcessByPidFile
-import top.wcpe.mc.testkit.contract.McTestkitEnv
-import top.wcpe.mc.testkit.contract.McTestkitResultFile
-import top.wcpe.mc.testkit.contract.McTestkitTaskNames
-import top.wcpe.mc.testkit.dsl.BotSpec
-import top.wcpe.mc.testkit.dsl.ProxyPlatform
-import top.wcpe.mc.testkit.dsl.ScenarioSpec
-import top.wcpe.mc.testkit.dsl.StressSpec
-import top.wcpe.mc.testkit.topology.ResolvedBackend
-import top.wcpe.mc.testkit.topology.ResolvedProxy
-import top.wcpe.mc.testkit.topology.Topology
-import top.wcpe.mc.testkit.topology.TopologyResolver
-import top.wcpe.mc.testkit.provision.ServerJarProvisioner
-import top.wcpe.mc.testkit.provision.ServerLauncher
 import top.wcpe.mc.testkit.config.BackendBungeeCordConfig
 import top.wcpe.mc.testkit.config.ProxyProtocolVersion
 import top.wcpe.mc.testkit.config.ServerProperties
@@ -34,6 +19,20 @@ import top.wcpe.mc.testkit.config.StressProxyBinding
 import top.wcpe.mc.testkit.config.bungeeClusterProxyConfigYml
 import top.wcpe.mc.testkit.config.bungeeProxyConfigYml
 import top.wcpe.mc.testkit.config.bungeeStressProxyConfigYml
+import top.wcpe.mc.testkit.contract.McTestkitEnv
+import top.wcpe.mc.testkit.contract.McTestkitResultFile
+import top.wcpe.mc.testkit.contract.McTestkitTaskNames
+import top.wcpe.mc.testkit.dsl.BotSpec
+import top.wcpe.mc.testkit.dsl.McTestkitExtension
+import top.wcpe.mc.testkit.dsl.ProxyPlatform
+import top.wcpe.mc.testkit.dsl.ScenarioSpec
+import top.wcpe.mc.testkit.dsl.StressSpec
+import top.wcpe.mc.testkit.provision.ServerJarProvisioner
+import top.wcpe.mc.testkit.provision.ServerLauncher
+import top.wcpe.mc.testkit.topology.ResolvedBackend
+import top.wcpe.mc.testkit.topology.ResolvedProxy
+import top.wcpe.mc.testkit.topology.Topology
+import top.wcpe.mc.testkit.topology.TopologyResolver
 import top.wcpe.mc.testkit.verify.ResultReader
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -329,7 +328,9 @@ object McTestkitTasks {
                         val clusterEnv = bot.env +
                             mapOf(McTestkitEnv.CLUSTER_BACKENDS to clusterBackends.joinToString(",") { it.name })
                         launchBotProcess(
-                            project, action, username,
+                            project,
+                            action,
+                            username,
                             backendPort = proxy.port,
                             protocolVersion = ProxyProtocolVersion.forBackend(clusterBackends.first().version),
                             extraEnv = clusterEnv,
@@ -483,7 +484,7 @@ object McTestkitTasks {
             task.group = TASK_GROUP
             task.description =
                 "压测场景 ${scenario.name}：${stressBackends.size} 服 × ${stress.botsPerServer} bot 钉服持续 ${stress.durationSeconds}s" +
-                    (proxy?.let { "（经代理 ${it.name} N-listener 钉服）" } ?: "（直连后端）")
+                (proxy?.let { "（经代理 ${it.name} N-listener 钉服）" } ?: "（直连后端）")
             if (scenario.botSpec != null) {
                 task.dependsOn(McTestkitTaskNames.NPM_INSTALL_BOT)
             }

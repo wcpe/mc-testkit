@@ -33,7 +33,7 @@ jobs:
       - name: 配置 Gradle（带依赖 / 构建缓存）
         uses: gradle/actions/setup-gradle@v4
 
-      - name: 构建 + 测试（编译 + 单元 + TestKit）
+      - name: 构建 + 风格检查 + 测试（编译 + ktlintCheck + 单元/TestKit）
         run: ./gradlew build --no-daemon --stacktrace
 
       - name: 校验模板桩骨架可独立编译

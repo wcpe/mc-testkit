@@ -1,9 +1,8 @@
 package top.wcpe.mc.testkit
-import top.wcpe.mc.testkit.dsl.McTestkitExtension
-
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import top.wcpe.mc.testkit.contract.McTestkitContract
+import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import top.wcpe.mc.testkit.task.McTestkitTasks
 
 /**

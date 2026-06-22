@@ -1,9 +1,9 @@
 package top.wcpe.mc.testkit.topology
 
 import org.gradle.testfixtures.ProjectBuilder
-import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import top.wcpe.mc.testkit.McTestkitPlugin
 import top.wcpe.mc.testkit.dsl.BackendPlatform
+import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import top.wcpe.mc.testkit.dsl.ProxyPlatform
 import kotlin.test.Test
 import kotlin.test.assertEquals

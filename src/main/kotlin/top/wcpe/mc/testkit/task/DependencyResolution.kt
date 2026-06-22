@@ -1,7 +1,7 @@
 package top.wcpe.mc.testkit.task
 
-import top.wcpe.mc.testkit.dsl.DependenciesSpec
 import top.wcpe.mc.testkit.config.DependencyInjections
+import top.wcpe.mc.testkit.dsl.DependenciesSpec
 import java.io.File
 
 /**

@@ -1,9 +1,8 @@
 package top.wcpe.mc.testkit
-import top.wcpe.mc.testkit.dsl.McTestkitExtension
-
 import org.gradle.testfixtures.ProjectBuilder
 import top.wcpe.mc.testkit.contract.McTestkitEnv
 import top.wcpe.mc.testkit.contract.McTestkitTaskNames
+import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

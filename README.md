@@ -1,5 +1,8 @@
 # mc-testkit
 
+[![CI](https://github.com/wcpe/mc-testkit/actions/workflows/ci.yml/badge.svg)](https://github.com/wcpe/mc-testkit/actions/workflows/ci.yml)
+[![E2E](https://github.com/wcpe/mc-testkit/actions/workflows/e2e.yml/badge.svg)](https://github.com/wcpe/mc-testkit/actions/workflows/e2e.yml)
+
 > 面向 Minecraft 插件的「全平台端到端测试编排」Gradle 插件 + 配套脚手架模板：把真实服务端/代理拉起、互联成测试拓扑，用机器人驱动端到端场景、判定结果并收尾，统一各插件五花八门的 E2E 做法。
 
 ## 状态

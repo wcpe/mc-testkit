@@ -17,10 +17,16 @@ class ClusterValidationTest {
 
     private fun backend(name: String, port: Int) = BackendSpec(name).apply { this.port = port }
     private fun proxy(name: String, port: Int, vararg routes: String) =
-        ProxySpec(name).apply { this.port = port; routesTo(*routes) }
+        ProxySpec(name).apply {
+            this.port = port
+            routesTo(*routes)
+        }
 
     private fun clusterScenario(name: String, via: String?, vararg backends: String) =
-        ScenarioSpec(name).apply { backends(*backends); this.via = via }
+        ScenarioSpec(name).apply {
+            backends(*backends)
+            this.via = via
+        }
 
     @Test
     fun `合法集群场景解析通过`() {
@@ -70,7 +76,11 @@ class ClusterValidationTest {
 
     @Test
     fun `backend 与 backends 并用报中文错误`() {
-        val sc = ScenarioSpec("x").apply { backend = "s1"; backends("s1", "s2"); via = "wf" }
+        val sc = ScenarioSpec("x").apply {
+            backend = "s1"
+            backends("s1", "s2")
+            via = "wf"
+        }
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 listOf(backend("s1", 25565), backend("s2", 25566)),

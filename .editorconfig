@@ -8,6 +8,13 @@ trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
 
+[*.{kt,kts}]
+# ktlint 代码风格：用 IntelliJ IDEA 默认风格（与本仓既有格式一致；避免 ktlint_official 强制
+# 「每参数一行 / 多行表达式换行」对既有代码做大规模改写）。规则取舍集中在此声明（static-analysis.md）。
+ktlint_code_style = intellij_idea
+# 文件按「职责」命名（如 DependencyResolution.kt / ProxyConfig.kt），不强制「单类名 = 文件名」
+ktlint_standard_filename = disabled
+
 [*.{js,jsx,ts,tsx,json,yml,yaml,css,scss,html}]
 indent_size = 2
 

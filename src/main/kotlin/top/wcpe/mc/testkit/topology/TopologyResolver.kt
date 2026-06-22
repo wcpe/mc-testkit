@@ -1,8 +1,8 @@
 package top.wcpe.mc.testkit.topology
 
 import org.gradle.api.GradleException
-import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import top.wcpe.mc.testkit.dsl.BackendSpec
+import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import top.wcpe.mc.testkit.dsl.ProxySpec
 import top.wcpe.mc.testkit.dsl.ScenarioSpec
 

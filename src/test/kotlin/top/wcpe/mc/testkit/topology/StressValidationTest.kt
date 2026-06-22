@@ -17,13 +17,19 @@ class StressValidationTest {
 
     private fun backend(name: String, port: Int) = BackendSpec(name).apply { this.port = port }
     private fun proxy(name: String, port: Int, vararg routes: String) =
-        ProxySpec(name).apply { this.port = port; routesTo(*routes) }
+        ProxySpec(name).apply {
+            this.port = port
+            routesTo(*routes)
+        }
 
     private fun stressScenario(name: String, via: String?, bots: Int, duration: Long, vararg backends: String) =
         ScenarioSpec(name).apply {
             backends(*backends)
             this.via = via
-            stress { botsPerServer = bots; durationSeconds = duration }
+            stress {
+                botsPerServer = bots
+                durationSeconds = duration
+            }
         }
 
     @Test
@@ -48,7 +54,12 @@ class StressValidationTest {
 
     @Test
     fun `压测场景无 backends 报中文错误`() {
-        val sc = ScenarioSpec("load").apply { stress { botsPerServer = 10; durationSeconds = 60 } }
+        val sc = ScenarioSpec("load").apply {
+            stress {
+                botsPerServer = 10
+                durationSeconds = 60
+            }
+        }
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(listOf(backend("s1", 25565)), emptyList(), listOf(sc))
         }

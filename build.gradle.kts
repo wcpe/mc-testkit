@@ -5,6 +5,10 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 plugins {
     `kotlin-dsl`
     `maven-publish`
+    // Kotlin 代码风格门禁：ktlint（插件版本固定，见 .claude/rules/static-analysis.md）。
+    // 风格用 intellij_idea（与本仓既有 IntelliJ 格式一致，见 .editorconfig）。
+    // 插件把 ktlintCheck 挂到 check → build 上，故 ./gradlew build 即跑风格检查；ktlintFormat 自动修。
+    id("org.jlleitschuh.gradle.ktlint") version "12.1.1"
 }
 
 // 版本号唯一真源：根 VERSION 文件（架构不变量，禁止在别处硬编码版本）。

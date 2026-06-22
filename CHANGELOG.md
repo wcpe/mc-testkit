@@ -7,7 +7,8 @@
 ## 未发布版本
 
 ### 新增
-- CI/CD：新增 GitHub Actions 工作流——`ci.yml`（每次 push / PR 跑插件构建 + 单元/TestKit 测试 + 模板 bot prettier/eslint/audit）、`e2e.yml`（手动或打版本 tag 触发，自举跑通 smoke + 集群跨服 + 持续压测三类实机 E2E）。
+- CI/CD：新增 GitHub Actions 工作流——`ci.yml`（每次 push / PR 跑插件构建 + 单元/TestKit 测试 + 模板 bot prettier/eslint/audit）、`e2e.yml`（手动或打版本 tag 触发，自举跑通 smoke + 集群跨服 + 持续压测三类实机 E2E）；README 加 CI / E2E 状态徽章。
+- 代码风格门禁：接入 ktlint（`org.jlleitschuh.gradle.ktlint`，风格 `intellij_idea`，规则取舍集中在 `.editorconfig`）；`ktlintCheck` 挂到 `check` → `build`，`./gradlew build` 即跑风格检查；既有代码已用 `ktlintFormat` 规整。
 
 ### 变更
 _（暂无）_

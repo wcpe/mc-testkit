@@ -1,6 +1,6 @@
 # 功能规格：FR-12 每后端身份注入
 
-> 状态：开发中　·　关联 PRD：FR-12（另含同批小改 FR-13/FR-14）、ADR-0006（对外契约·env 前缀）、ADR-0008（集群/压测编排）　·　分支：master
+> 状态：已交付@v0.2.0　·　关联 PRD：FR-12（另含同批小改 FR-13/FR-14）、ADR-0006（对外契约·env 前缀）、ADR-0008（集群/压测编排）　·　分支：master
 
 ## 1. 背景与目标
 
@@ -34,7 +34,7 @@ mc-testkit 此前不告诉后端「它在这组里叫什么」，消费方无从
 - [x] 编排：两条启动路径注入 `BACKEND_NAME`。
 - [x] template：`HarnessConfig.backendName` + 结果明细演示。
 - [x] 单元/TestKit + 根 `build` 绿（含 ktlint）。
-- [ ] 实机自举：smoke 结果含 `backendName=s1`（R2 端到端）+ doc-sync（PRD/API/CHANGELOG）+ 中文提交。
+- [x] 实机自举：smoke 结果含 `backendName=s1`（R2 端到端）+ doc-sync（PRD/API/CHANGELOG）+ 中文提交。
 
 ## 5. 验收标准
 

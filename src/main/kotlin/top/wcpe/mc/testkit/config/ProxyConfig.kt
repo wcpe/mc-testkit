@@ -82,10 +82,13 @@ fun bungeeProxyConfigYml(
 
 /**
  * 集群经代理（FR-10）：单 listener + N 个具名 server（server 名 = 后端名）。bot 连此 listener 落到首个
- * 后端（`force_default_server`），再经 `/server <后端名>` 在同一 TCP 连接 fast-transfer 切服。
+ * 后端（`force_default_server` + `priorities` 首个），再经 `/server <后端名>` 在同一 TCP 连接 fast-transfer 切服。
+ *
+ * `priorities` 为**全部后端有序列表**（首个为默认服，其余作 fallback）：默认服宕机时 bot 重连回退到下一个，
+ * 支撑「崩溃接管」类测试（某后端崩溃后 bot 经代理落到存活后端，由其接管上线）。正常 `/server` 切换不受影响。
  *
  * @param listenPort 代理监听端口。
- * @param backends 有序 (后端名, 地址) 列表，首个为默认服。
+ * @param backends 有序 (后端名, 地址) 列表，首个为默认服，全部入 priorities 作 fallback。
  * @param motd 监听器展示名。
  */
 fun bungeeClusterProxyConfigYml(
@@ -98,7 +101,7 @@ fun bungeeClusterProxyConfigYml(
     backends.forEach { (name, address) -> servers[name] = server(address, name) }
     return dumpYaml(
         proxyRoot(
-            listeners = listOf(listener(listenPort, listOf(backends.first().first), motd)),
+            listeners = listOf(listener(listenPort, backends.map { it.first }, motd)),
             servers = servers,
         ),
     )

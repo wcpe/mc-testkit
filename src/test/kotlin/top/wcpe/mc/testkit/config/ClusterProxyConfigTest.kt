@@ -24,5 +24,9 @@ class ClusterProxyConfigTest {
         // 透传与默认服落首个后端
         assertTrue(yml.contains("ip_forward: true"))
         assertTrue(yml.contains("force_default_server: true"))
+        // priorities 为全部后端有序列表（首个默认 + 其余 fallback）：支撑崩溃接管时回退到存活后端
+        val prioritiesBlock = Regex("(?ms)priorities:\\s*\\n(?:\\s*-\\s*\\S+\\n)+").find(yml)?.value ?: ""
+        assertTrue(prioritiesBlock.contains("- s1"), "priorities 应含默认服 s1：\n$yml")
+        assertTrue(prioritiesBlock.contains("- s2"), "priorities 应含 fallback 后端 s2：\n$yml")
     }
 }

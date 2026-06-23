@@ -22,7 +22,7 @@ v0.1.0 只支持单后端（±1 代理）。下游消费者的跨服一致性 E2
 
 ## 4. 任务拆分
 
-- [ ] PRD FR-10/31 登记、ADR-0008、本 spec。
+- [ ] PRD FR-10/11 登记、ADR-0008、本 spec。
 - [ ] DSL + 契约 + 校验（测试先行）：ScenarioSpec.backends、TaskNames.cluster、env CLUSTER_BACKENDS、TopologyResolver 集群校验。
 - [ ] 编排器：ProxyConfig 集群变体、RunLayout per-backend、McTestkitTasks.registerClusterTask（含收尾）。
 - [ ] template 跨服桩/bot 示例。

@@ -92,7 +92,7 @@ mcTestkit {
 | `e2e<Key>Stress` | 压测跑某场景：N 服 × M bot 钉服持续施压（代理 N-listener 钉服或直连）+ 各服结果聚合判 PASS/FAIL（FR-11） |
 | `stop<Key>Stress` | 停止某压测场景的全部后端、代理与机器人（按 pid 收尾）；由 `e2e<Key>Stress` 经 `finalizedBy` 触发，亦可单独调用 |
 
-> 集群任务（`e2e<Key>Cluster` / `stop<Key>Cluster`）由场景声明 `backends(...)`、压测任务（`e2e<Key>Stress` / `stop<Key>Stress`）由场景声明 `stress {}` 触发（FR-10/31，ADR-0008）。任务名一旦发布即视为契约，保持稳定。
+> 集群任务（`e2e<Key>Cluster` / `stop<Key>Cluster`）由场景声明 `backends(...)`、压测任务（`e2e<Key>Stress` / `stop<Key>Stress`）由场景声明 `stress {}` 触发（FR-10/11，ADR-0008）。任务名一旦发布即视为契约，保持稳定。
 > `<Key>` 缺省后端：场景未写 `backend =` 时取首个声明的后端（单后端无需显式指定）。一个声明了 `via` 的场景同时生成直连 `e2e<Key>` 与经代理 `e2e<Key>Via<Proxy>` 两个任务。
 
 ### 3.3 环境变量约定（前缀已冻结：`MC_TESTKIT_E2E_`）

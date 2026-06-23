@@ -7,7 +7,7 @@
 ## 未发布版本
 
 ### 新增
-- **集群代理 listener `priorities` 改为全部后端有序列表**（首个仍为默认服 + 其余作 fallback）：默认后端宕机时 bot 重连经代理**回退到下一个存活后端**，支撑「崩溃接管」类 E2E（某后端崩溃 → bot 落到存活后端、由其在归属租约 TTL 过期后接管上线）。正常 `/server` fast-transfer 切换与 `force_default_server` 落默认服行为不受影响。消费方 AllinInventorySync 据此迁移 G15 崩溃接管 E2E（实机 PASS）。`ClusterProxyConfigTest` 增 priorities 含全部后端的断言。
+- **集群代理 listener `priorities` 改为全部后端有序列表**（FR-15，首个仍为默认服 + 其余作 fallback）：默认后端宕机时 bot 重连经代理**回退到下一个存活后端**，支撑「崩溃接管」类 E2E（某后端崩溃 → bot 落到存活后端、由其在归属租约 TTL 过期后接管上线）。正常 `/server` fast-transfer 切换与 `force_default_server` 落默认服行为不受影响。消费方 AllinInventorySync 据此迁移 G15 崩溃接管 E2E（实机 PASS）。`ClusterProxyConfigTest` 增 priorities 含全部后端的断言。
 
 ### 变更
 _（暂无）_

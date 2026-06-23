@@ -47,7 +47,7 @@
 ## 5. 关键机制
 
 - **进程编排**：前台 `runServer`（被测桩跑完自停，回收 Gradle 线程）+ 后台代理/集群后端 JVM + 后台机器人进程；后台进程用 pid 文件 + `ProcessHandle` 在 finalizer/finally 收尾，保证不残留。
-- **集群编排**（FR-10）：声明 `backends(...)` 的场景把 N 个后端**全部后台**起（各自运行目录 + BungeeCord 后端模式），代理写**单 listener + N 具名 server**（server 名 = 后端名，供 bot 经代理 `/server <name>` 切换），以**结果文件**为权威完成信号轮询；正常/失败/中断三路径都 `finalizedBy` 停集群任务 + try/finally 双保险收尾全部后端与代理（端口干净）。见 [ADR-0008](adr/0008-cluster-and-stress-dsl.md)。
+- **集群编排**（FR-10）：声明 `backends(...)` 的场景把 N 个后端**全部后台**起（各自运行目录 + BungeeCord 后端模式），代理写**单 listener + N 具名 server**（server 名 = 后端名，供 bot 经代理 `/server <name>` 切换；listener `priorities` 列**全部后端**——首个为默认服 + `force_default_server`，其余作 fallback：默认后端宕机时 bot 重连经代理回退到下一个存活后端，支撑「崩溃接管」类 E2E，正常 `/server` 切换不受影响，见 FR-15），以**结果文件**为权威完成信号轮询；正常/失败/中断三路径都 `finalizedBy` 停集群任务 + try/finally 双保险收尾全部后端与代理（端口干净）。见 [ADR-0008](adr/0008-cluster-and-stress-dsl.md)。
 - **压测编排**（FR-11）：声明 `stress {}` 的场景把 N 个后端全部后台起，代理写**N listener 一端口对一后端**（`priority` 钉服，bot 连某端口钉死在该后端、不切服）或直连；每服起 `botsPerServer` 个 bot 进程钉本服持续随机施压，各服桩收集本服各 bot `E2E_STRESS_RESULT`、到 duration 末聚合写**本服**结果文件；框架读**全部 per-server 结果文件**聚合判定（任一缺失/FAIL 即失败并报哪服）。业务不变量（不超卖等）由消费方桩查共享 DB 自行判，框架只收集 + 聚合（守结果文件唯一权威）。三路径都 `finalizedBy` + try/finally 双保险收尾全部后端 + 代理 + bot。见 [ADR-0008](adr/0008-cluster-and-stress-dsl.md)。
 - **环境契约固化**（一处修、处处生效，源自首个接入项目的实证）：经代理时固定机器人 mineflayer 协议版本为后端 MC 版本；后端 `spigot.yml settings.bungeecord` 与 `config/paper-global.yml proxies.bungee-cord.online-mode`；依赖插件（数据源/Redis 等）注入与缺失校验。
 - **缓存**：内置下载模块按 平台/版本/构建号 缓存已下载的服务端/代理 jar（hash 校验复用）+ 持久运行库缓存，避免反复下载；运行目录可清理但保留运行库。

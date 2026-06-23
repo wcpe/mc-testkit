@@ -10,6 +10,11 @@ import java.util.Properties
  * 不耦合 Gradle，便于用临时目录穷举单测。键名是 Minecraft `server.properties` 既定字面量，
  * 集中在本对象常量声明，避免散落字符串。
  *
+ * **保留范围以键值为准**：底层 [Properties.store] 只保留键值对，**不保留原文件注释与键顺序**、且每次写回会带
+ * 一行时间戳注释——故写回后文件**逐字节不等**于原文件，也非跨次幂等（这对 E2E 用途无影响：后端每轮重铺
+ * 运行目录）。需要保留注释 / 结构的配置（如 `spigot.yml` / `paper-global.yml`）走 `BackendBungeeCordConfig`
+ * 的 YAML 读改写回，不用本对象。
+ *
  * 本对象只做"框架级把后端调成可被测 / 经代理模式"的通用编辑（端口 / 在线模式 / 世界类型等），
  * 不写任何业务（商店 / 点券）配置——那是消费方自带桩的事（scope-discipline）。
  */

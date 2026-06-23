@@ -7,7 +7,7 @@
 
 ## 状态
 
-**v0.2.2**，发布到 [maven.wcpe.top](https://maven.wcpe.top)。以首个接入项目为消费者实机跑通 `e2eSmoke`、「经 Waterfall 代理购买」、跨服集群与持续压测；能力与进度以 [`docs/PRD.md`](docs/PRD.md) §4 FR 表状态列为准。
+**v0.2.3**，发布到 [maven.wcpe.top](https://maven.wcpe.top)。以首个接入项目为消费者实机跑通 `e2eSmoke`、「经 Waterfall 代理购买」、跨服集群与持续压测；能力与进度以 [`docs/PRD.md`](docs/PRD.md) §4 FR 表状态列为准。
 
 ## 架构一览
 
@@ -17,7 +17,7 @@
 - **服务端桩插件**（随项目，模板提供骨架）：装备入服玩家、按场景驱动、与 bot 收发控制消息、判定结果写结果文件。
 - **mineflayer 机器人**（随项目，模板提供内核）：模拟真实玩家入服，驱动购买/交互等端到端场景。
 
-## 能力（v0.2.2）
+## 能力（v0.2.3）
 
 - 一行 DSL 声明并拉起「单后端」「代理 + N 后端」测试拓扑。
 - 多后端集群（bot 经代理 `/server` 跨服切换、桩跨服判定；代理 listener `priorities` 含全部后端，默认后端宕机时 bot 重连回退到存活后端，支撑「崩溃接管」类 E2E，FR-15）与多后端持续压测（N 服 × M bot 钉服施压、各服结果聚合）编排。
@@ -69,7 +69,7 @@ pluginManagement {
 
 ```kotlin
 plugins {
-    id("top.wcpe.mc-testkit") version "0.2.2"
+    id("top.wcpe.mc-testkit") version "0.2.3"
 }
 
 mcTestkit {

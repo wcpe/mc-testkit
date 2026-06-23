@@ -10,6 +10,15 @@ internal const val PROVISION_USER_AGENT = "mc-testkit"
 /** HTTP 重定向跟随上限：SpigotMC 的"经典"域名会 301 到 hub 域名，需要跟随。 */
 private const val MAX_REDIRECTS = 5
 
+/** 建立连接超时（毫秒）。 */
+private const val CONNECT_TIMEOUT_MS = 30_000
+
+/** 读取超时（毫秒；单次 read 间隔）。 */
+private const val READ_TIMEOUT_MS = 60_000
+
+/** [Downloader.fetchText] 响应体上限：PaperMC / Jenkins 的 JSON 响应极小，设 16 MiB 上限挡异常 / 被劫持的超大响应吃满内存。 */
+private const val MAX_TEXT_RESPONSE_BYTES = 16 * 1024 * 1024
+
 /**
  * 极简 HTTP 下载器（FR-02）。
  *
@@ -52,14 +61,19 @@ internal object Downloader {
             val connection = URL(current).openConnection() as HttpURLConnection
             connection.instanceFollowRedirects = true
             connection.setRequestProperty("User-Agent", PROVISION_USER_AGENT)
-            connection.connectTimeout = 30_000
-            connection.readTimeout = 60_000
+            connection.connectTimeout = CONNECT_TIMEOUT_MS
+            connection.readTimeout = READ_TIMEOUT_MS
             val status = connection.responseCode
             if (status in listOf(HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_MOVED_TEMP, 307, 308)) {
                 val location = connection.getHeaderField("Location")
                 connection.disconnect()
                 checkNotNull(location) { "下载重定向缺少 Location 头：$current。" }
-                current = location
+                // Location 可能是相对地址，按当前 URL 解析；并拒绝 https→http 的不安全降级
+                val target = URL(URL(current), location)
+                check(!(current.startsWith("https:", ignoreCase = true) && target.protocol.equals("http", ignoreCase = true))) {
+                    "拒绝不安全的重定向降级（https → http）：$current → $target。"
+                }
+                current = target.toString()
                 return@repeat
             }
             return connection
@@ -79,7 +93,12 @@ internal object Downloader {
         try {
             val status = connection.responseCode
             check(status in 200..299) { "请求失败：HTTP $status，地址 $url。" }
-            return connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            // 有上限读取：最多读 MAX+1 字节，超出即判定响应过大（边读边封顶，不先全量入内存）
+            val bytes = connection.inputStream.use { it.readNBytes(MAX_TEXT_RESPONSE_BYTES + 1) }
+            check(bytes.size <= MAX_TEXT_RESPONSE_BYTES) {
+                "响应过大（超过 $MAX_TEXT_RESPONSE_BYTES 字节）：$url。"
+            }
+            return String(bytes, Charsets.UTF_8)
         } finally {
             connection.disconnect()
         }

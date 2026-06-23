@@ -14,6 +14,9 @@ _（暂无）_
 
 ### 修复
 - **多 bot 展开 key / username 唯一性校验**（FR-16，修 review J1）：配置期此前只校验 `role` 唯一，但 `role` 不同的两个 bot 展开后仍可能撞 pid/log key——如 `bot("w"){count=2}`（派生 `w-1`/`w-2`）与 `bot("w-1"){}`（派生 `w-1`）——撞车会让 `bot-w-1.pid` 互相覆盖、收尾按 key 杀时漏掉一个进程而**残留占端口**（违反「多 bot 全回收」）。新增 `BotProcessPlanner.firstConflict` 以**展开真源**查 key/username 重复，配置期中文报错；补穷举与配置期复现测试。
+- **下载缓存原子化，杜绝并发读到半成品 jar**（FR-02，修 review J2）：临时文件改在缓存目标**同目录**创建（与目标同卷），移入缓存用 `Files.move(ATOMIC_MOVE)` 原子替换——并发解析同一 jar 时读者只会看到「无文件」或「完整文件」，消除旧实现「系统 temp 跨卷 → 退化为非原子 `copyTo` → 覆盖期间被读到半成品」的缓存损坏；并修 `moveIntoCache` 旧 `check(...)` 吞掉 `copyTo` 失败的死代码（移动失败现抛中文错误）。
+- **进程 pid 落盘失败即强杀，不留无法收尾的孤儿**（FR-02）：`ServerLauncher` 起进程后写 pid 文件失败时强制结束刚启动的进程并抛中文错误（避免「进程在跑但无 pid 可收尾」残留占端口）。
+- **下载器加固**（FR-02）：`Downloader` 拒绝 `https → http` 的不安全重定向降级、`fetchText` 加 16 MiB 响应上限（挡异常/被劫持的超大响应吃满内存）、连接/读取超时提为具名常量；`JsonLite` 畸形数字字面量（如 `1.2.3`）改抛中文错误而非英文 `NumberFormatException`，`\f` 转义分支用 `''` 字面量替代源码中的裸控制字符。
 
 ### 移除
 _（暂无）_

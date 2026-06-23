@@ -1,6 +1,8 @@
 package top.wcpe.mc.testkit.provision
 
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.jar.JarFile
 
 /**
@@ -56,7 +58,7 @@ internal class JarProvisionService(
         logger("下载 ${platform.id} $version 构建 $build …")
         val paperDownload = paperApi.download(project, version, build)
         val url = paperApi.downloadUrl(project, version, build, paperDownload)
-        val temp = createTempJar(platform, build)
+        val temp = createTempJar(cached, platform, build)
         try {
             download(url, temp, logger)
             val actual = temp.sha256()
@@ -80,7 +82,7 @@ internal class JarProvisionService(
 
         logger("下载 ${platform.id} 构建 $build …")
         val url = bungeeApi.downloadUrl(build)
-        val temp = createTempJar(platform, build)
+        val temp = createTempJar(cached, platform, build)
         try {
             download(url, temp, logger)
             requireValidJar(temp, platform, build)
@@ -99,18 +101,32 @@ internal class JarProvisionService(
         }
     }
 
-    /** 将临时文件原子移入缓存目标路径（覆盖已存在）。 */
+    /**
+     * 将临时文件**原子**移入缓存目标（覆盖已存在）。temp 与 destination 同目录（见 [createTempJar]），
+     * 故 [StandardCopyOption.ATOMIC_MOVE] 走同卷原子重命名——并发读者只会看到「无文件」或「完整文件」，
+     * 杜绝旧实现「跨卷退化为非原子 copyTo、覆盖期间被读到半成品 jar」的缓存损坏（review J2）。
+     * 极少数文件系统不支持原子移动时退回非原子替换；移动失败抛**中文**错误（修旧 `check(...)` 死代码吞错）。
+     */
     private fun moveIntoCache(temp: File, destination: File): File {
         destination.parentFile?.mkdirs()
-        if (destination.exists()) destination.delete()
-        check(temp.renameTo(destination) || (temp.copyTo(destination, overwrite = true).let { true })) {
-            "无法将下载产物移入缓存：${destination.absolutePath}。"
+        try {
+            try {
+                Files.move(temp.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            } catch (ignored: java.nio.file.AtomicMoveNotSupportedException) {
+                Files.move(temp.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        } catch (ex: java.io.IOException) {
+            throw IllegalStateException("无法将下载产物移入缓存：${destination.absolutePath}。", ex)
         }
         return destination
     }
 
-    private fun createTempJar(platform: ProvisionPlatform, build: Int): File =
-        File.createTempFile("mc-testkit-${platform.id}-$build-", ".jar.tmp")
+    /** 在缓存目标**同目录**建临时文件，保证与目标同卷——[moveIntoCache] 才能原子重命名（避免系统 temp 跨卷）。 */
+    private fun createTempJar(destination: File, platform: ProvisionPlatform, build: Int): File {
+        val dir = destination.absoluteFile.parentFile
+        dir.mkdirs()
+        return Files.createTempFile(dir.toPath(), "mc-testkit-${platform.id}-$build-", ".jar.tmp").toFile()
+    }
 
     private fun requireVersion(platform: ProvisionPlatform, version: String?): String {
         require(!version.isNullOrBlank()) { "平台 ${platform.id} 需要指定版本号才能下载。" }

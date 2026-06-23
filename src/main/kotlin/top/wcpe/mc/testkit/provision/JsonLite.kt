@@ -124,7 +124,7 @@ internal object JsonLite {
                 '\\' -> '\\'
                 '/' -> '/'
                 'b' -> '\b'
-                'f' -> ''
+                'f' -> '\u000C'
                 'n' -> '\n'
                 'r' -> '\r'
                 't' -> '\t'
@@ -146,11 +146,16 @@ internal object JsonLite {
             }
             val literal = text.substring(start, position)
             require(literal.isNotEmpty() && literal != "-") { "非法数字字面量 '$literal'（位置 $start）。" }
-            // 含小数点或指数视为浮点，否则视为整数（构建号 / 端口等都是整数）
-            return if (literal.any { it == '.' || it == 'e' || it == 'E' }) {
-                literal.toDouble()
-            } else {
-                literal.toLong()
+            // 含小数点或指数视为浮点，否则视为整数（构建号 / 端口等都是整数）；
+            // 畸形字面量（如 1.2.3）toDouble/toLong 会抛 NumberFormatException，转中文错误（对齐错误约定）
+            return try {
+                if (literal.any { it == '.' || it == 'e' || it == 'E' }) {
+                    literal.toDouble()
+                } else {
+                    literal.toLong()
+                }
+            } catch (ex: NumberFormatException) {
+                throw IllegalArgumentException("非法数字字面量 '$literal'（位置 $start）。", ex)
             }
         }
 

@@ -67,4 +67,18 @@ class JsonLiteTest {
         // 非法 token
         assertFailsWith<IllegalArgumentException> { JsonLite.parse("nope") }
     }
+
+    @Test
+    fun `畸形数字字面量抛中文错误而非英文 NumberFormatException`() {
+        // 1.2.3 会被消费为一个 number 串，toDouble 抛 NumberFormatException → 应转中文错误
+        val ex = assertFailsWith<IllegalArgumentException> { JsonLite.parse("""{"v":1.2.3}""") }
+        assertTrue(ex.message!!.contains("非法数字字面量"), "应为中文非法数字错误：${ex.message}")
+    }
+
+    @Test
+    fun `解析 form-feed 转义为 U+000C`() {
+        // \f 转义应解析为换页符（修复后该分支用 '\u000C' 字面量，行为不变）
+        val obj = JsonLite.asObject(JsonLite.parse("""{"k":"a\fb"}"""))
+        assertEquals("a\u000Cb", obj["k"])
+    }
 }

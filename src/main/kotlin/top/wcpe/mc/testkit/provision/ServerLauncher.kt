@@ -79,7 +79,13 @@ object ServerLauncher {
         processBuilder.environment().putAll(environment)
 
         val process = processBuilder.start()
-        pidFile.writeText(process.pid().toString())
+        // pid 落盘失败则进程无法被按 pid 收尾——宁可立即强杀刚起的进程，也不留下无法收尾的孤儿（收尾红线）
+        try {
+            pidFile.writeText(process.pid().toString())
+        } catch (ex: Exception) {
+            process.destroyForcibly()
+            throw IllegalStateException("无法写入 pid 文件 ${pidFile.absolutePath}，已强制结束刚启动的进程以免残留。", ex)
+        }
         logger("已启动进程：key=$key pid=${process.pid()} jar=${jar.name} log=${logFile.absolutePath}")
         return process
     }

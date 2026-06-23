@@ -875,14 +875,9 @@ object McTestkitTasks {
         sharedExtraEnv: Map<String, String> = emptyMap(),
     ): List<Process> {
         val plans = BotProcessPlanner.expand(scenario.name, scenario.botSpecs)
-        val forceUniqueUsername = plans.size > 1
-        return plans.map { plan ->
-            val extraEnv = LinkedHashMap<String, String>()
-            extraEnv.putAll(plan.env)
-            // 多进程时强制唯一用户名（覆盖消费方单值 BOT_USERNAME override）；同质复制下发序号
-            if (forceUniqueUsername) extraEnv[McTestkitEnv.BOT_USERNAME] = plan.username
-            plan.botIndex?.let { extraEnv[McTestkitEnv.BOT_INDEX] = it.toString() }
-            extraEnv.putAll(sharedExtraEnv)
+        // 每进程「追加 env」（唯一名 / 序号 / 共享 env）由纯函数装配，便于穷举单测
+        val environments = BotProcessPlanner.extraEnvironments(plans, sharedExtraEnv)
+        return plans.zip(environments).map { (plan, extraEnv) ->
             launchBotProcess(
                 project,
                 action = plan.action,

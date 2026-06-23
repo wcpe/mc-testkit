@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.task
 
+import top.wcpe.mc.testkit.contract.McTestkitEnv
 import top.wcpe.mc.testkit.dsl.BotSpec
 
 /**
@@ -32,6 +33,31 @@ object BotProcessPlanner {
     /** 展开场景 [bots] 为待起进程计划列表（空列表表示该场景无机器人）。 */
     fun expand(scenarioName: String, bots: List<BotSpec>): List<BotProcessPlan> =
         bots.flatMap { bot -> expandOne(scenarioName, bot) }
+
+    /**
+     * 把展开后的 [plans] 折成每进程的「追加 env」（FR-16 契约，纯函数，可穷举单测）：
+     * - 进程数 **>1** 时强制下发**唯一** `BOT_USERNAME`（盖过消费方单值 override 以保证唯一）；单进程不强制
+     *   （保留消费方 override，向后兼容）。
+     * - 同质复制（`botIndex != null`）下发 `BOT_INDEX`。
+     * - 末位合入 [sharedExtraEnv]（如集群的 `CLUSTER_BACKENDS`，使每个 bot 都能经代理 `/server` 切换）。
+     *
+     * @return 与 [plans] 一一对应、等长的 env 列表（合并顺序：业务 env → 强制唯一名 → 序号 → 共享 env）。
+     */
+    fun extraEnvironments(
+        plans: List<BotProcessPlan>,
+        sharedExtraEnv: Map<String, String> = emptyMap(),
+    ): List<Map<String, String>> {
+        val forceUniqueUsername = plans.size > 1
+        return plans.map { plan ->
+            val env = LinkedHashMap<String, String>()
+            env.putAll(plan.env)
+            // 多进程时强制唯一用户名（盖过消费方单值 BOT_USERNAME override）；同质复制下发序号
+            if (forceUniqueUsername) env[McTestkitEnv.BOT_USERNAME] = plan.username
+            plan.botIndex?.let { env[McTestkitEnv.BOT_INDEX] = it.toString() }
+            env.putAll(sharedExtraEnv)
+            env
+        }
+    }
 
     /** 展开单个 [BotSpec]：`count=1` 一项，`count>1` 复制成 N 项（各唯一 username / key / index）。 */
     private fun expandOne(scenarioName: String, bot: BotSpec): List<BotProcessPlan> {

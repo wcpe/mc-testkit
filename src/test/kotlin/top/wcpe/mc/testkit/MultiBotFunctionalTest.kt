@@ -183,6 +183,34 @@ class MultiBotFunctionalTest {
     }
 
     @Test
+    fun `多 bot 展开 key 撞车 配置期中文报错（role 唯一但 key 不唯一）`() {
+        write("settings.gradle.kts", """rootProject.name = "key-collision"""")
+        write(
+            "build.gradle.kts",
+            """
+            plugins { id("top.wcpe.mc-testkit") }
+            mcTestkit {
+                backend("s1") { platform = paper; port = 25565 }
+                scenario("x") {
+                    backend = "s1"
+                    bot("w") { action = "a"; count = 2 }
+                    bot("w-1") { action = "b" }
+                }
+            }
+            """.trimIndent(),
+        )
+        val result = GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withPluginClasspath()
+            .withArguments("help")
+            .buildAndFail()
+        assertTrue(
+            result.output.contains("w-1") && result.output.contains("重复"),
+            "role 唯一但展开 key 撞车应配置期中文报错\n${result.output}",
+        )
+    }
+
+    @Test
     fun `tasks 成功`() {
         write("settings.gradle.kts", """rootProject.name = "multibot-cluster"""")
         write(

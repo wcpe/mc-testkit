@@ -5,6 +5,7 @@ import top.wcpe.mc.testkit.dsl.BotSpec
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -228,5 +229,72 @@ class BotProcessPlannerTest {
         )
         val envs = BotProcessPlanner.extraEnvironments(plans)
         assertEquals(listOf("P1", "P2"), envs.map { it[McTestkitEnv.BOT_USERNAME] })
+    }
+
+    // ── firstConflict：展开后 key / username 全局唯一校验（J1：role 唯一不足以保证 key 不撞）──
+
+    @Test
+    fun `合法多 bot 无冲突返回 null`() {
+        assertNull(
+            BotProcessPlanner.firstConflict(
+                "gui-edit",
+                listOf(bot("admin") { username = "Admin" }, bot("target") { username = "Target" }),
+            ),
+        )
+        assertNull(
+            BotProcessPlanner.firstConflict(
+                "g16",
+                listOf(
+                    bot {
+                        username = "P"
+                        action = "cross-server"
+                        count = 8
+                    },
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `role 不同但展开 key 撞车被检出（w count2 与 w-1）`() {
+        // bot("w") count=2 展开 key: w-1, w-2；bot("w-1") 展开 key: w-1 ← 与前者撞车
+        val conflict = BotProcessPlanner.firstConflict(
+            "x",
+            listOf(
+                bot("w") { count = 2 },
+                bot("w-1") { },
+            ),
+        )
+        assertNotNull(conflict)
+        assertTrue(conflict!!.contains("w-1"), "冲突描述应点出撞车的标识 w-1：$conflict")
+    }
+
+    @Test
+    fun `role 不同但展开 username 撞车被检出`() {
+        // bot("a") username=P count=2 展开 username: P1, P2；bot("b") username=P1 ← 撞车
+        val conflict = BotProcessPlanner.firstConflict(
+            "x",
+            listOf(
+                bot("a") {
+                    username = "P"
+                    count = 2
+                },
+                bot("b") { username = "P1" },
+            ),
+        )
+        assertNotNull(conflict)
+        assertTrue(conflict!!.contains("用户名"), "应为用户名冲突：$conflict")
+    }
+
+    @Test
+    fun `单 count=N bot 自身不冲突`() {
+        assertNull(
+            BotProcessPlanner.firstConflict(
+                "g16",
+                listOf(
+                    bot("w") { count = 100 },
+                ),
+            ),
+        )
     }
 }

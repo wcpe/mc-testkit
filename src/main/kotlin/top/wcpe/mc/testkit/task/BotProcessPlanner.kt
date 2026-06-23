@@ -59,6 +59,30 @@ object BotProcessPlanner {
         }
     }
 
+    /**
+     * 校验展开后每进程的 **key**（日志/pid 文件名）与 **username**（Minecraft 离线名）全局唯一（FR-16）。
+     *
+     * 配置期校验只查 `role` 唯一不够：`role` 不同的两个 bot 展开后仍可能撞 key——如 `bot("w"){count=2}`
+     * 得 `w-1`/`w-2`，`bot("w-1"){}` 得 `w-1`，二者撞车会让 `bot-w-1.pid` 互相覆盖、收尾漏杀一个进程
+     * 而残留占端口（testing-and-quality §2 收尾红线）；username 撞车则两 bot 同名无法同时登录。
+     * 以**展开结果**（[expand] 唯一真源）查重，避免在校验侧重复 key 派生规则而漂移。
+     *
+     * @return 首个冲突的中文描述（key 或 username 重复）；无冲突返回 null。
+     */
+    fun firstConflict(scenarioName: String, bots: List<BotSpec>): String? {
+        val plans = expand(scenarioName, bots)
+        firstDuplicate(plans.map { it.key })?.let { return "bot 日志/pid 标识「$it」重复" }
+        firstDuplicate(plans.map { it.username })?.let { return "bot 用户名「$it」重复" }
+        return null
+    }
+
+    /** 返回首个重复出现的元素（保持发现顺序），无重复返回 null。 */
+    private fun firstDuplicate(values: List<String>): String? {
+        val seen = HashSet<String>()
+        values.forEach { if (!seen.add(it)) return it }
+        return null
+    }
+
     /** 展开单个 [BotSpec]：`count=1` 一项，`count>1` 复制成 N 项（各唯一 username / key / index）。 */
     private fun expandOne(scenarioName: String, bot: BotSpec): List<BotProcessPlan> {
         // action 默认：显式 action > role > 场景名（保持单 bot 旧默认 `action ?: scenarioName`）

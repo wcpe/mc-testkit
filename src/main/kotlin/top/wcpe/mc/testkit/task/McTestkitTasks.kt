@@ -65,6 +65,18 @@ object McTestkitTasks {
         // ① 复用 FR-03 解析 + 配置期校验（失败即抛中文 GradleException，阻断后续注册）
         val topology = TopologyResolver.resolve(extension)
 
+        // ①' 多 bot 展开后 key/username 唯一性校验（FR-16）：TopologyResolver 只查 role 唯一，
+        // 但 role 不同的两 bot 展开后仍可能撞 key（如 bot("w"){count=2} 与 bot("w-1")），故在此用
+        // BotProcessPlanner 展开真源查重，杜绝 pid 互相覆盖致收尾漏杀残留。
+        extension.declaredScenarios.forEach { scenario ->
+            BotProcessPlanner.firstConflict(scenario.name, scenario.botSpecs)?.let { conflict ->
+                throw GradleException(
+                    "mcTestkit 场景「${scenario.name}」多 bot 展开后$conflict；" +
+                        "请改用唯一的角色名 / 用户名 / count 组合（注意 count>1 会派生「<角色>-<序号>」，勿与其它角色撞名）。",
+                )
+            }
+        }
+
         // ② 固定名任务（npm 安装 / 缓存回写 / 清缓存）
         registerFixedTasks(project)
 

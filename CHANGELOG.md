@@ -13,7 +13,7 @@ _（暂无）_
 _（暂无）_
 
 ### 修复
-_（暂无）_
+- **多 bot 展开 key / username 唯一性校验**（FR-16，修 review J1）：配置期此前只校验 `role` 唯一，但 `role` 不同的两个 bot 展开后仍可能撞 pid/log key——如 `bot("w"){count=2}`（派生 `w-1`/`w-2`）与 `bot("w-1"){}`（派生 `w-1`）——撞车会让 `bot-w-1.pid` 互相覆盖、收尾按 key 杀时漏掉一个进程而**残留占端口**（违反「多 bot 全回收」）。新增 `BotProcessPlanner.firstConflict` 以**展开真源**查 key/username 重复，配置期中文报错；补穷举与配置期复现测试。
 
 ### 移除
 _（暂无）_

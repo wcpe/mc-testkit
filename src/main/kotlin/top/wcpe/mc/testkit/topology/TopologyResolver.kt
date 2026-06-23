@@ -117,9 +117,9 @@ object TopologyResolver {
 
     /**
      * 校验：场景引用的后端（backend / backends）与代理（via）均存在。多后端场景按类型分两支
-     * （FR-10/31，ADR-0008）：① 集群（声明 backends、无 stress）须有 via 且代理路由覆盖全部后端；
+     * （FR-10/11，ADR-0008）：① 集群（声明 backends、无 stress）须有 via 且代理路由覆盖全部后端；
      * ② 压测（声明 stress）须有 ≥1 backends、botsPerServer / durationSeconds 为正，via 可选（设了则
-     * 须路由覆盖）。单后端 backend 与多后端 backends 互斥。
+     * 须路由覆盖）。单后端 backend 与多后端 backends 互斥。多 bot 声明（FR-16）由 [validateScenarioBots] 校验。
      */
     private fun validateScenarioRefs(
         backends: List<BackendSpec>,
@@ -132,6 +132,9 @@ object TopologyResolver {
             val hasBackends = scenario.backendRefs.isNotEmpty()
             val isStress = scenario.stressSpec != null
             val isCluster = hasBackends && !isStress
+
+            // 多 bot / 复制份数声明合法性（FR-16，ADR-0009）
+            validateScenarioBots(scenario, isStress)
 
             // 单后端 backend 与多后端 backends 互斥（集群 / 压测都用 backends）
             if (hasBackends && scenario.backend != null) {
@@ -209,6 +212,48 @@ object TopologyResolver {
                             "请让 proxy(\"$viaRef\") routesTo(...) 覆盖全部后端。",
                     )
                 }
+            }
+        }
+    }
+
+    /**
+     * 校验单场景的 bot 声明（FR-16，ADR-0009）：① 每个 bot 的 `count >= 1`；② 同场景声明 ≥2 个 bot 时
+     * 每个须有**唯一** `role`（匿名 `bot { }` 只能一个，否则多进程无法区分）；③ 压测场景禁 `count>1` /
+     * 多 bot（规模用 `stress { botsPerServer }` 表达，避免与「同质钉服」语义混淆）。一律中文报错。
+     */
+    private fun validateScenarioBots(scenario: ScenarioSpec, isStress: Boolean) {
+        val bots = scenario.botSpecs
+
+        bots.forEach { bot ->
+            if (bot.count < 1) {
+                throw GradleException(
+                    "mcTestkit 场景「${scenario.name}」的 bot${bot.role?.let { "（角色 $it）" } ?: ""} count 必须 >=1，" +
+                        "当前为 ${bot.count}。",
+                )
+            }
+        }
+
+        // 压测：规模由 botsPerServer 表达，bot 不支持 count / 多 bot（ADR-0009 与压测划清边界）
+        if (isStress && (bots.size > 1 || bots.any { it.count > 1 })) {
+            throw GradleException(
+                "mcTestkit 压测场景「${scenario.name}」的 bot 不支持 count / 多 bot（规模请用 stress { botsPerServer } 表达）。",
+            )
+        }
+
+        // 多 bot：每个须有唯一 role（异质角色或便于多进程区分）
+        if (bots.size > 1) {
+            val anonymous = bots.count { it.role == null }
+            if (anonymous > 0) {
+                throw GradleException(
+                    "mcTestkit 场景「${scenario.name}」声明了多个 bot，每个须有唯一角色名 bot(\"<角色>\") { }；" +
+                        "匿名 bot { } 只能声明一个。",
+                )
+            }
+            val duplicateRole = firstDuplicate(bots.mapNotNull { it.role })
+            if (duplicateRole != null) {
+                throw GradleException(
+                    "mcTestkit 场景「${scenario.name}」的 bot 角色名重复：「$duplicateRole」声明了多次，多 bot 的角色名必须唯一。",
+                )
             }
         }
     }

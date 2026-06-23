@@ -48,6 +48,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 | FR-13 | 测试环境默认 peaceful 难度：最小 `server.properties` 默认写 `difficulty=peaceful` 保护测试玩家不被怪物/环境杀；消费方服务端模板已设 `difficulty` 则保留其值（不覆盖）| P2 | 已交付@v0.2.0 |
 | FR-14 | 桩兼容更新版 Kotlin 编译的被测插件 API：`template/harness` 加 `-Xskip-metadata-version-check`，使桩能 compileOnly 引用「元数据版本高于本工程编译器可读上限」的被测插件类（仅编译期跳过，运行期字节码仍兼容）| P2 | 已交付@v0.2.0 |
 | FR-15 | 集群代理崩溃接管 fallback：集群代理 listener `priorities` 改为**全部后端**有序列表（首个仍为默认服 + `force_default_server`，其余作 fallback），默认后端宕机时 bot 重连经代理回退到下一个存活后端，支撑「崩溃接管」类 E2E（某后端崩溃 → bot 落存活后端、由其在归属租约 TTL 过期后接管上线）；正常 `/server` 切换与 `force_default_server` 落默认服不受影响（集群编排加法增强，见 ADR-0008）| P3 | 已交付@v0.2.1 |
+| FR-16 | 单场景多 bot：一个 `scenario { }` 可驱动多个 bot——**异质**（多个具名 `bot("角色") { }` 各有 `username`/`action`/`env`）与**同质批量**（`bot { count = N }` 复制 N 份、各唯一 username、经 `BOT_INDEX`（1..N）区分）；用于集群（多 bot 各自经代理 `/server` 切）与单后端（多 bot 直连，可分角色）。复用既有 env（`BOT_USERNAME`/`BOT_ACTION`/`BOT_INDEX`/`CLUSTER_BACKENDS`）与任务名（声明多 bot 时 `e2e<Key>`/`Cluster`/`launch<Key>Bot` 起多个进程），与压测 FR-11「同质钉服」划清边界、随场景结束全部回收；结果仍由桩按 username/index 聚合（扩展 scenario 的 bot 声明，见 ADR-0009）| P3 | 开发中 |
 
 > 状态取值：计划 / 开发中 / 已交付@vX.Y.Z。优先级：P1(MVP 或阻断真实消费者接入的关键项) / P2 / P3。
 > 标 `已交付` 有门：该 FR 的 §6 / spec 验收标准全部满足、对应测试 / 实机验收通过后，才由 `sdd-release-version` 在发版时统一标 `已交付@vX.Y.Z`，过程中不得自行预标。

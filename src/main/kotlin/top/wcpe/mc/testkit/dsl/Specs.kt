@@ -50,15 +50,24 @@ class ProxySpec(val name: String) {
 }
 
 /**
- * 机器人驱动声明（场景内可选）。
+ * 机器人驱动声明（场景内可选；一个场景可声明多个，FR-16）。
+ *
+ * @property role 角色标签（`bot("admin") { }` 的名字；匿名 `bot { }` 为 null）。同场景声明多个 bot 时
+ *   须各有唯一 role 以区分（异质角色 / 多进程的日志·pid·username 基名），见 ADR-0009。
  */
 @McTestkitDsl
-class BotSpec {
+class BotSpec(val role: String? = null) {
     /** 机器人用户名。 */
     var username: String? = null
 
     /** 控制动作 / 场景 id（与桩、机器人侧约定一致）。 */
     var action: String? = null
+
+    /**
+     * 同质复制份数（FR-16）：>1 表示把本 bot 复制 N 份，各唯一 username、经 `BOT_INDEX`（1..N）区分，
+     * 都用同一 action / env。默认 1（单进程）。压测场景禁用（规模用 `stress { botsPerServer }` 表达）。
+     */
+    var count: Int = 1
 
     private val mutableEnv = LinkedHashMap<String, String>()
 
@@ -118,14 +127,25 @@ class ScenarioSpec(val name: String) {
         mutableBackends += names
     }
 
-    private var mutableBot: BotSpec? = null
+    private val mutableBots = mutableListOf<BotSpec>()
 
-    /** 该场景的机器人驱动声明；null 表示无机器人（仅 prepare + verify）。 */
-    val botSpec: BotSpec? get() = mutableBot
+    /** 该场景声明的全部机器人驱动（按声明顺序；空表示无机器人，仅 prepare + verify，FR-16）。 */
+    val botSpecs: List<BotSpec> get() = mutableBots.toList()
 
-    /** 声明该场景由 mineflayer 机器人驱动。 */
+    /** 首个机器人声明（向后兼容单 bot 读取 + 压测取首个）；null 表示无机器人。 */
+    val botSpec: BotSpec? get() = mutableBots.firstOrNull()
+
+    /** 声明该场景由一个匿名 mineflayer 机器人驱动。 */
     fun bot(configure: BotSpec.() -> Unit) {
-        mutableBot = BotSpec().apply(configure)
+        mutableBots += BotSpec().apply(configure)
+    }
+
+    /**
+     * 声明该场景由一个**具名角色** mineflayer 机器人驱动（FR-16）。同场景声明多个 bot 时须各有唯一
+     * role（异质角色，如 `admin` / `target`）；role 兼作该 bot 的日志/pid/username 基名。
+     */
+    fun bot(role: String, configure: BotSpec.() -> Unit) {
+        mutableBots += BotSpec(role).apply(configure)
     }
 
     private var mutableStress: StressSpec? = null

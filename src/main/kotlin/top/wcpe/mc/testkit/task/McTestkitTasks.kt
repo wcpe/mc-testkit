@@ -156,17 +156,18 @@ object McTestkitTasks {
 
         // e2e（直连后端）：prepare → 前台起后端（自停 waitFor）→ 读结果文件判定
         // bot 必须先于后端跑完连上，故先注册 launch（若有），再在 verify 注册块里 mustRunAfter，避免回头 configure。
-        val launch: TaskProvider<DefaultTask>? = scenario.botSpec?.let { bot ->
+        val hasBots = scenario.botSpecs.isNotEmpty()
+        val launch: TaskProvider<DefaultTask>? = if (hasBots) {
             registerTask(project, McTestkitTaskNames.launchBot(scenario.name)) { task ->
                 task.group = TASK_GROUP
-                task.description = "启动场景 ${scenario.name} 的 mineflayer 机器人"
+                task.description = "启动场景 ${scenario.name} 的 mineflayer 机器人（声明多 bot 时起多个进程）"
                 task.dependsOn(prepare, McTestkitTaskNames.NPM_INSTALL_BOT)
                 task.doLast {
-                    val action = bot.action ?: scenario.name
-                    val username = bot.username ?: action
-                    launchBotProcess(project, action, username, backendPort = backend.port, protocolVersion = null, extraEnv = bot.env)
+                    launchScenarioBots(project, scenario, backendPort = backend.port, protocolVersion = null)
                 }
             }
+        } else {
+            null
         }
 
         val verify = registerTask(project, McTestkitTaskNames.verify(scenario.name)) { task ->
@@ -178,8 +179,13 @@ object McTestkitTasks {
                 task.mustRunAfter(launch)
             }
             task.doLast {
-                runBackendForeground(project, backend, scenario.name)
-                verifyScenarioResult(project, scenario.name)
+                try {
+                    runBackendForeground(project, backend, scenario.name)
+                    verifyScenarioResult(project, scenario.name)
+                } finally {
+                    // 成功 / 失败都收尾全部 bot（多 bot 防残留；单 bot 已自停为安全 no-op）
+                    if (hasBots) stopScenarioBots(project, scenario)
+                }
             }
         }
 
@@ -242,25 +248,20 @@ object McTestkitTasks {
                     }
                     // ② 后台起代理（写 pid 供收尾）
                     proxyProcess = startProxyBackground(project, proxy, backend)
-                    // ③ 起 bot：经代理端口进服，协议版本固定为后端版本（环境契约 FR-05）
-                    scenario.botSpec?.let { bot ->
-                        val action = bot.action ?: scenario.name
-                        val username = bot.username ?: action
-                        launchBotProcess(
-                            project,
-                            action,
-                            username,
-                            backendPort = proxy.port,
-                            protocolVersion = ProxyProtocolVersion.forBackend(backend.version),
-                            extraEnv = bot.env,
-                        )
-                    }
+                    // ③ 起全部 bot：经代理端口进服，协议版本固定为后端版本（环境契约 FR-05；多 bot 各唯一名）
+                    launchScenarioBots(
+                        project,
+                        scenario,
+                        backendPort = proxy.port,
+                        protocolVersion = ProxyProtocolVersion.forBackend(backend.version),
+                    )
                     // ④ 前台起后端（自停 waitFor）
                     runBackendForeground(project, backend, scenario.name)
                     // ⑤ 只认结果文件判定
                     verifyScenarioResult(project, scenario.name)
                 } finally {
-                    // 双保险：即便 finalizedBy 未触发（极端情况），任务体内也按 pid 收尾代理
+                    // 双保险：先按 pid 收尾全部 bot（多 bot 防残留），再收尾代理（即便 finalizedBy 未触发）
+                    if (scenario.botSpecs.isNotEmpty()) stopScenarioBots(project, scenario)
                     proxyProcess?.let { stopProcessQuietly(project, it, proxyPidFile) }
                 }
             }
@@ -281,16 +282,21 @@ object McTestkitTasks {
     ) {
         val layout = layoutOf(project)
         val stopName = McTestkitTaskNames.stopCluster(scenario.name)
+        // 全部 bot 的 pid key（多 bot 各一支；停任务据此按 pid 收尾，防 straggler 残留）
+        val botKeys = BotProcessPlanner.expand(scenario.name, scenario.botSpecs).map { it.key }
 
-        // 停集群任务：按 pid 收尾全部后端 + 代理（单独可调；集群任务 finalizedBy 它）
+        // 停集群任务：按 pid 收尾全部后端 + 代理 + 全部 bot（单独可调；集群任务 finalizedBy 它）
         registerTask(project, stopName) { task ->
             task.group = TASK_GROUP
-            task.description = "停止集群场景 ${scenario.name} 的全部后端与代理（按 pid 收尾）"
+            task.description = "停止集群场景 ${scenario.name} 的全部后端、代理与机器人（按 pid 收尾）"
             task.doLast {
                 clusterBackends.forEach { backend ->
                     stopProcessByPidFile(layout.clusterBackendPidFile(backend.name)) { project.logger.lifecycle("[mc-testkit] $it") }
                 }
                 stopProcessByPidFile(layout.proxyPidFile(proxy.name)) { project.logger.lifecycle("[mc-testkit] $it") }
+                botKeys.forEach { key ->
+                    stopProcessByPidFile(botPidFile(layout.resultsDir, key)) { project.logger.lifecycle("[mc-testkit] $it") }
+                }
             }
         }
 
@@ -298,7 +304,7 @@ object McTestkitTasks {
             task.group = TASK_GROUP
             task.description =
                 "集群运行场景 ${scenario.name}：${clusterBackends.size} 后端 + 代理 ${proxy.name}（bot /server 切换）→ 判定"
-            if (scenario.botSpec != null) {
+            if (scenario.botSpecs.isNotEmpty()) {
                 task.dependsOn(McTestkitTaskNames.NPM_INSTALL_BOT)
             }
             // 正常 / 失败 / 中断三路径都收尾（finalizedBy）；任务体内再 try/finally 双保险
@@ -306,6 +312,7 @@ object McTestkitTasks {
             task.doLast {
                 val backendProcesses = LinkedHashMap<String, Process>()
                 var proxyProcess: Process? = null
+                val botProcesses = mutableListOf<Process>()
                 try {
                     layout.resultsDir.mkdirs()
                     val resultFile = File(layout.resultsDir, McTestkitResultFile.fileName(scenario.name))
@@ -321,27 +328,24 @@ object McTestkitTasks {
                     }
                     // ② 后台起集群代理（单 listener + N 具名 server）
                     proxyProcess = startClusterProxyBackground(project, proxy, clusterBackends)
-                    // ③ 起 bot：经代理端口，CLUSTER_BACKENDS 下发 /server 切换目标，协议版本固定为后端版本
-                    scenario.botSpec?.let { bot ->
-                        val action = bot.action ?: scenario.name
-                        val username = bot.username ?: action
-                        val clusterEnv = bot.env +
-                            mapOf(McTestkitEnv.CLUSTER_BACKENDS to clusterBackends.joinToString(",") { it.name })
-                        launchBotProcess(
-                            project,
-                            action,
-                            username,
-                            backendPort = proxy.port,
-                            protocolVersion = ProxyProtocolVersion.forBackend(clusterBackends.first().version),
-                            extraEnv = clusterEnv,
-                        )
-                    }
+                    // ③ 起全部 bot：经代理端口，CLUSTER_BACKENDS 下发 /server 切换目标（每个 bot 都能切），
+                    //    协议版本固定为后端版本；多 bot 各唯一 username、同质复制下发 BOT_INDEX（FR-16）
+                    botProcesses += launchScenarioBots(
+                        project,
+                        scenario,
+                        backendPort = proxy.port,
+                        protocolVersion = ProxyProtocolVersion.forBackend(clusterBackends.first().version),
+                        sharedExtraEnv = mapOf(
+                            McTestkitEnv.CLUSTER_BACKENDS to clusterBackends.joinToString(",") { it.name },
+                        ),
+                    )
                     // ④ 轮询结果文件（任一桩写出即完成）
                     awaitClusterResult(project, resultFile, scenario.name)
                     // ⑤ 只认结果文件判定
                     verifyScenarioResult(project, scenario.name)
                 } finally {
-                    // 双保险收尾：全部后端 + 代理（即便 finalizedBy 未触发）
+                    // 双保险收尾：全部 bot（自停兜底）+ 后端 + 代理（即便 finalizedBy 未触发）
+                    botProcesses.forEach { destroyProcessQuietly(project, it) }
                     backendProcesses.forEach { (name, proc) ->
                         stopProcessQuietly(project, proc, layout.clusterBackendPidFile(name))
                     }
@@ -854,15 +858,67 @@ object McTestkitTasks {
         return process
     }
 
-    /** 起 bot：env 由 BotConnection 建（含协议版本固定），BotLauncher 后台拉起。 */
+    /**
+     * 起场景声明的全部 bot 进程（FR-16）：按 [BotProcessPlanner.expand] 逐 plan 起进程。
+     *
+     * 进程数 >1 时**强制**下发唯一 `BOT_USERNAME`（末位合入，盖过消费方单值 override 以保证唯一）；
+     * 同质复制（`count>1`）下发 `BOT_INDEX`（1..N）；并合入 [sharedExtraEnv]（如集群的 `CLUSTER_BACKENDS`，
+     * 使每个 bot 都能经代理 `/server` 切换）。单 bot 时不强制 username（保留消费方 override，向后兼容）。
+     *
+     * @return 全部已起进程（供调用方按需收尾；亦各自写了 `bot-<key>.pid` 供按 pid 收尾）。
+     */
+    private fun launchScenarioBots(
+        project: Project,
+        scenario: ScenarioSpec,
+        backendPort: Int,
+        protocolVersion: String?,
+        sharedExtraEnv: Map<String, String> = emptyMap(),
+    ): List<Process> {
+        val plans = BotProcessPlanner.expand(scenario.name, scenario.botSpecs)
+        val forceUniqueUsername = plans.size > 1
+        return plans.map { plan ->
+            val extraEnv = LinkedHashMap<String, String>()
+            extraEnv.putAll(plan.env)
+            // 多进程时强制唯一用户名（覆盖消费方单值 BOT_USERNAME override）；同质复制下发序号
+            if (forceUniqueUsername) extraEnv[McTestkitEnv.BOT_USERNAME] = plan.username
+            plan.botIndex?.let { extraEnv[McTestkitEnv.BOT_INDEX] = it.toString() }
+            extraEnv.putAll(sharedExtraEnv)
+            launchBotProcess(
+                project,
+                action = plan.action,
+                username = plan.username,
+                key = plan.key,
+                backendPort = backendPort,
+                protocolVersion = protocolVersion,
+                extraEnv = extraEnv,
+            )
+        }
+    }
+
+    /** 按 plan key 收尾场景全部 bot 的 pid 文件（单 bot / 已自停为安全 no-op，[stopProcessByPidFile]）。 */
+    private fun stopScenarioBots(project: Project, scenario: ScenarioSpec) {
+        val layout = layoutOf(project)
+        BotProcessPlanner.expand(scenario.name, scenario.botSpecs).forEach { plan ->
+            stopProcessByPidFile(botPidFile(layout.resultsDir, plan.key)) { project.logger.lifecycle("[mc-testkit] $it") }
+        }
+    }
+
+    /**
+     * 起一个 bot 进程：env 由 [BotConnection] 建（含协议版本固定），[BotLauncher] 后台拉起。
+     *
+     * @param action 机器人场景分发动作（写入 `BOT_ACTION`，机器人内核据此分发）。
+     * @param key 日志 / pid 唯一 key（`bot-<key>.log` / `bot-<key>.pid`，多 bot 时区分各进程）。
+     * @return 已启动的进程（供调用方按需收尾）。
+     */
     private fun launchBotProcess(
         project: Project,
         action: String,
         username: String,
+        key: String,
         backendPort: Int,
         protocolVersion: String?,
         extraEnv: Map<String, String> = emptyMap(),
-    ) {
+    ): Process {
         val layout = layoutOf(project)
         val botDir = layout.botDir(project.findProperty(BOT_DIR_PROPERTY)?.toString())
         val botScript = File(botDir, RunLayout.BOT_SCRIPT_RELATIVE)
@@ -881,9 +937,9 @@ object McTestkitTasks {
         val environment = connection.toEnvironment(extraEnvironment = extraEnv) {
             project.providers.environmentVariable(it).orNull
         }
-        BotLauncher.launch(
+        return BotLauncher.launch(
             context = BotProcessContext(botDir = botDir, botScript = botScript, resultsDir = layout.resultsDir),
-            action = action,
+            action = key,
             environment = environment,
             logger = { project.logger.lifecycle("[mc-testkit] $it") },
         )

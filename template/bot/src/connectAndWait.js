@@ -14,6 +14,11 @@ const runContinuousStress = require('./scenarios/continuousStress')
 //
 // 所有环境变量以 MC_TESTKIT_E2E_ 为前缀（mc-testkit 冻结契约，docs/API.md §3.3），集中在此读取。
 
+// 压测 bot 比桩计时早停的秒数（留出向桩上报的窗口后再被关服）
+const STRESS_BOT_EARLY_STOP_SECONDS = 10
+// 压测 bot 最短施压秒数下限（避免极短时长配置把施压窗口压到 0）
+const STRESS_BOT_MIN_DURATION_SECONDS = 5
+
 const config = {
   // 场景动作：决定分发到哪个场景驱动，须与桩侧场景 id、编排声明一致
   action: envValue('MC_TESTKIT_E2E_BOT_ACTION', 'unspecified'),
@@ -32,8 +37,12 @@ const config = {
   // 每 bot 序号 + 共享种子：seed ^ botIndex 播种确定性 RNG，使各 bot 可复现且互异
   botIndex: envInt('MC_TESTKIT_E2E_BOT_INDEX', 0),
   randomSeed: envInt('MC_TESTKIT_E2E_STRESS_RANDOM_SEED', 0),
-  // 单 bot 施压时长（毫秒）：比桩计时早约 10s 停，留出上报窗口后再被关服
-  durationMs: Math.max(5, envInt('MC_TESTKIT_E2E_STRESS_DURATION_SECONDS', 60) - 10) * 1000
+  // 单 bot 施压时长（毫秒）：比桩计时早 STRESS_BOT_EARLY_STOP_SECONDS 停，留出上报窗口后再被关服
+  durationMs:
+    Math.max(
+      STRESS_BOT_MIN_DURATION_SECONDS,
+      envInt('MC_TESTKIT_E2E_STRESS_DURATION_SECONDS', 60) - STRESS_BOT_EARLY_STOP_SECONDS
+    ) * 1000
 }
 
 const startedAt = Date.now()

@@ -234,7 +234,13 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
         permissionAttachments.remove(event.player.uniqueId)?.remove()
     }
 
-    /** 跨服场景（FR-10）：收到机器人切到本服后发的「切换确认标记」（聊天）即判 PASS。 */
+    /**
+     * 跨服场景（FR-10）：收到机器人切到本服后发的「切换确认标记」（聊天）即判 PASS。
+     *
+     * 注：此处用 `AsyncPlayerChatEvent` 接收 bot 控制消息，在较新 Paper（1.19+）已弃用——示例以默认
+     * `paper-api:1.20.1` 为准、可直接照抄；消费方若目标后端更高版本，可改用 `AsyncChatEvent`（Adventure
+     * 组件，取文本经 `PlainTextComponentSerializer`）替代，控制协议字面量不变。
+     */
     @EventHandler
     fun onPlayerChat(event: org.bukkit.event.player.AsyncPlayerChatEvent) {
         // 持续压测：收集各 bot 上报的 E2E_STRESS_RESULT（不触发 pass/fail，N×M bot 不能各自关服）

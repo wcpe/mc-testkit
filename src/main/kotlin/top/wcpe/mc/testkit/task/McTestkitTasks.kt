@@ -746,6 +746,8 @@ object McTestkitTasks {
         File(runDir, "eula.txt").writeText("eula=true\n")
         // 端口 / 离线 / 关安全档案是 E2E 必须强制项；难度默认 peaceful 保护测试玩家不被怪物 / 环境杀，
         // 但仅在消费方模板未指定 difficulty 时才默认（模板设了则保留其值，FR-13）。
+        // 注：online-mode=false 是「离线 bot 入服」的通用基线，在此设；经代理（BungeeCord 模式）时
+        // BackendBungeeCordConfig 会再确认它（三件套之一），二者值一致，非冲突。
         val serverPropsOverrides =
             linkedMapOf(
                 ServerProperties.SERVER_PORT to backend.port.toString(),

@@ -64,8 +64,12 @@ class BotSpec(val role: String? = null) {
     var action: String? = null
 
     /**
-     * 同质复制份数（FR-16）：>1 表示把本 bot 复制 N 份，各唯一 username、经 `BOT_INDEX`（1..N）区分，
-     * 都用同一 action / env。默认 1（单进程）。压测场景禁用（规模用 `stress { botsPerServer }` 表达）。
+     * 同质复制份数（FR-16）：>1 表示把本 bot 复制 N 份，各唯一 username（基名 + 序号）、经 `BOT_INDEX`
+     * （1..N）区分，都用同一 action / env。默认 1（单进程）。压测场景禁用（规模用 `stress { botsPerServer }`
+     * 表达）。
+     *
+     * 注意：派生 username = `<基名><序号>` 须满足 Minecraft 离线名约束（≤16 字符、仅 `[A-Za-z0-9_]`），
+     * 故 `count` 较大时请用**短基名**（如 `username = "P"` → `P1`..`P99`），否则 bot 会因用户名非法而连不上。
      */
     var count: Int = 1
 

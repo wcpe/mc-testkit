@@ -74,6 +74,8 @@ object ServerLauncher {
 
         val processBuilder = ProcessBuilder(command)
         processBuilder.directory(runDirectory)
+        // 先把 stderr 并入 stdout，再把 stdout 追加到日志文件——故进程 stdout + stderr 都落 <key>.log，
+        // 子进程崩溃栈也不会丢（两者顺序不可颠倒：redirectErrorStream 使 redirectError 失效，须靠 stdout 落盘）。
         processBuilder.redirectErrorStream(true)
         processBuilder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
         processBuilder.environment().putAll(environment)

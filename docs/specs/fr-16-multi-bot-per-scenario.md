@@ -1,6 +1,6 @@
 # 功能规格：FR-16 单场景多 bot
 
-> 状态：开发中　·　关联 PRD：FR-16、ADR-0009（单场景多 bot 的 scenario 块扩展，补 ADR-0008）、ADR-0006（对外契约·env 前缀/任务命名）　·　分支：master
+> 状态：已交付@v0.2.2　·　关联 PRD：FR-16、ADR-0009（单场景多 bot 的 scenario 块扩展，补 ADR-0008）、ADR-0006（对外契约·env 前缀/任务命名）　·　分支：master
 
 ## 1. 背景与目标
 

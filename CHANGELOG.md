@@ -7,7 +7,7 @@
 ## 未发布版本
 
 ### 新增
-- **单场景多 bot**（FR-16）：一个 `scenario { }` 可驱动多个 bot——**异质**（多个具名 `bot("角色") { }`，各自 `username` / `action` / `env`，如管理 GUI 的 `admin` + `target` 双角色）与**同质批量**（`bot { count = N }` 复制 N 份，各唯一 `username`、经 `BOT_INDEX`（1..N）区分，如集群 N 个并发切服玩家）。用于集群（多 bot 各自经代理 `/server` 切）与单后端（多 bot 直连，可分角色）。**零新增 env / 任务名**：复用 `BOT_USERNAME`（多进程强制唯一）/ `BOT_ACTION` / `BOT_INDEX` / `CLUSTER_BACKENDS`，声明多 bot 时既有 `launch<Key>Bot` / `e2e<Key>` / `e2e<Key>WithBot` / `e2e<Key>Cluster` **起多个 bot 进程**并随场景结束按 pid 全部收尾（集群多 bot 收尾并入 `stop<Key>Cluster`）。与压测 FR-11「同质钉服」划清边界（压测场景禁用 `count` / 多 bot）。结果仍由桩按 username/index 聚合（结果文件唯一权威）。新增纯函数 `BotProcessPlanner`（`expand` 场景 bot 列表 → 每进程身份；`extraEnvironments` → 每进程追加 env：唯一名/序号/共享 `CLUSTER_BACKENDS`，均穷举单测）与配置期校验（`count>=1`、多 bot 须各有唯一 `role`、压测禁 `count`/多 bot，中文报错）。下游 AllinInventorySync 据此迁移「N 玩家切服不回档」与「管理 GUI admin/target 双角色」两个 E2E。见 docs/specs/fr-16-multi-bot-per-scenario.md、ADR-0009。向后兼容：现有单 `bot { }` 行为不变。
+_（暂无）_
 
 ### 变更
 _（暂无）_
@@ -17,6 +17,13 @@ _（暂无）_
 
 ### 移除
 _（暂无）_
+
+## [0.2.2] - 2026-06-23
+
+> 单场景多 bot（FR-16）：一个 `scenario { }` 可驱动多个 bot——异质具名角色（如管理 GUI 的 `admin` + `target`）+ 同质批量复制（`bot { count = N }`，各唯一 username、经 `BOT_INDEX` 区分），用于集群多 bot 各自经代理切服、单后端多 bot 直连分角色。复用既有 env / 任务名、零新增，与压测「同质钉服」划清边界。纯增量，向后兼容 0.2.1；交付以解锁下游 AllinInventorySync「N 玩家切服不回档」与「管理 GUI 双角色」两个 E2E（实机由下游接 g16 / gui-edit 闭环验收）。
+
+### 新增
+- **单场景多 bot**（FR-16）：一个 `scenario { }` 可驱动多个 bot——**异质**（多个具名 `bot("角色") { }`，各自 `username` / `action` / `env`，如管理 GUI 的 `admin` + `target` 双角色）与**同质批量**（`bot { count = N }` 复制 N 份，各唯一 `username`、经 `BOT_INDEX`（1..N）区分，如集群 N 个并发切服玩家）。用于集群（多 bot 各自经代理 `/server` 切）与单后端（多 bot 直连，可分角色）。**零新增 env / 任务名**：复用 `BOT_USERNAME`（多进程强制唯一）/ `BOT_ACTION` / `BOT_INDEX` / `CLUSTER_BACKENDS`，声明多 bot 时既有 `launch<Key>Bot` / `e2e<Key>` / `e2e<Key>WithBot` / `e2e<Key>Cluster` **起多个 bot 进程**并随场景结束按 pid 全部收尾（集群多 bot 收尾并入 `stop<Key>Cluster`）。与压测 FR-11「同质钉服」划清边界（压测场景禁用 `count` / 多 bot）。结果仍由桩按 username/index 聚合（结果文件唯一权威）。新增纯函数 `BotProcessPlanner`（`expand` 场景 bot 列表 → 每进程身份；`extraEnvironments` → 每进程追加 env：唯一名/序号/共享 `CLUSTER_BACKENDS`，均穷举单测）与配置期校验（`count>=1`、多 bot 须各有唯一 `role`、压测禁 `count`/多 bot，中文报错）。下游 AllinInventorySync 据此迁移「N 玩家切服不回档」与「管理 GUI admin/target 双角色」两个 E2E。见 docs/specs/fr-16-multi-bot-per-scenario.md、ADR-0009。向后兼容：现有单 `bot { }` 行为不变。
 
 ## [0.2.1] - 2026-06-23
 

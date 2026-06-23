@@ -54,6 +54,35 @@ class MultiBotFunctionalTest {
     }
 
     @Test
+    fun `集群多 bot 任务以 stopXCluster 收尾（finalizedBy，保证多 bot 全回收）`() {
+        write("settings.gradle.kts", """rootProject.name = "multibot-cluster"""")
+        write(
+            "build.gradle.kts",
+            """
+            plugins { id("top.wcpe.mc-testkit") }
+            mcTestkit {
+                backend("s1") { platform = paper; version = "1.20.1"; port = 25565 }
+                backend("s2") { platform = paper; version = "1.20.1"; port = 25566 }
+                proxy("wf") { platform = waterfall; port = 25577; routesTo("s1", "s2") }
+                scenario("g16") {
+                    backends("s1", "s2")
+                    via = "wf"
+                    bot { username = "P"; action = "cross-server"; count = 8 }
+                }
+            }
+            """.trimIndent(),
+        )
+        // dry-run 构建任务图：finalizedBy 的收尾任务会被列出（收尾全部后端/代理/bot pid）
+        val output = GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withPluginClasspath()
+            .withArguments("e2eG16Cluster", "--dry-run", "--stacktrace")
+            .build()
+            .output
+        assertTrue(":stopG16Cluster" in output, "集群任务应 finalizedBy stopG16Cluster（收尾全部后端/代理/多 bot）\n$output")
+    }
+
+    @Test
     fun `单后端双角色 bot 注册 launch e2e 与 withBot（不新增任务名）`() {
         write("settings.gradle.kts", """rootProject.name = "multibot-gui"""")
         write(

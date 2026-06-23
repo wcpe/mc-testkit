@@ -1,8 +1,10 @@
 package top.wcpe.mc.testkit.task
 
+import top.wcpe.mc.testkit.contract.McTestkitEnv
 import top.wcpe.mc.testkit.dsl.BotSpec
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -128,5 +130,103 @@ class BotProcessPlannerTest {
             ),
         )
         plans.forEach { assertEquals("E2E", it.env["SHOP"]) }
+    }
+
+    @Test
+    fun `混合：具名 count 复制 + 另一具名单进程，顺序与序号正确`() {
+        val plans = BotProcessPlanner.expand(
+            "raid",
+            listOf(
+                bot("worker") { count = 3 },
+                bot("boss") { username = "Boss" },
+            ),
+        )
+        assertEquals(4, plans.size)
+        assertEquals(listOf("worker-1", "worker-2", "worker-3", "boss"), plans.map { it.key })
+        assertEquals(listOf("worker1", "worker2", "worker3", "Boss"), plans.map { it.username })
+        assertEquals(listOf(1, 2, 3, null), plans.map { it.botIndex })
+    }
+
+    // ── extraEnvironments：每进程「追加 env」契约（FR-16 核心：唯一名 / 序号 / 共享 env）──
+
+    @Test
+    fun `单 bot 不强制下发 BOT_USERNAME 与 BOT_INDEX（保留消费方 override，向后兼容）`() {
+        val plans = BotProcessPlanner.expand(
+            "buy",
+            listOf(
+                bot {
+                    username = "BuyBot"
+                    action = "buy"
+                },
+            ),
+        )
+        val env = BotProcessPlanner.extraEnvironments(plans).single()
+        assertFalse(env.containsKey(McTestkitEnv.BOT_USERNAME), "单进程不应强制下发 BOT_USERNAME（留给 BotConnection 走消费方 override）")
+        assertFalse(env.containsKey(McTestkitEnv.BOT_INDEX), "单进程不应下发 BOT_INDEX")
+    }
+
+    @Test
+    fun `多 bot 每进程强制下发各自唯一 BOT_USERNAME`() {
+        val plans = BotProcessPlanner.expand(
+            "gui-edit",
+            listOf(
+                bot("admin") { username = "Admin" },
+                bot("target") { username = "Target" },
+            ),
+        )
+        val envs = BotProcessPlanner.extraEnvironments(plans)
+        assertEquals("Admin", envs[0][McTestkitEnv.BOT_USERNAME])
+        assertEquals("Target", envs[1][McTestkitEnv.BOT_USERNAME])
+    }
+
+    @Test
+    fun `同质复制每进程下发唯一 username 与 BOT_INDEX`() {
+        val plans = BotProcessPlanner.expand(
+            "g16",
+            listOf(
+                bot {
+                    username = "P"
+                    action = "cross-server"
+                    count = 3
+                },
+            ),
+        )
+        val envs = BotProcessPlanner.extraEnvironments(plans)
+        assertEquals(listOf("P1", "P2", "P3"), envs.map { it[McTestkitEnv.BOT_USERNAME] })
+        assertEquals(listOf("1", "2", "3"), envs.map { it[McTestkitEnv.BOT_INDEX] })
+    }
+
+    @Test
+    fun `共享 env（如 CLUSTER_BACKENDS）合入每个进程`() {
+        val plans = BotProcessPlanner.expand(
+            "g16",
+            listOf(
+                bot {
+                    username = "P"
+                    action = "cross-server"
+                    count = 2
+                },
+            ),
+        )
+        val envs = BotProcessPlanner.extraEnvironments(plans, mapOf(McTestkitEnv.CLUSTER_BACKENDS to "s1,s2"))
+        envs.forEach { assertEquals("s1,s2", it[McTestkitEnv.CLUSTER_BACKENDS]) }
+    }
+
+    @Test
+    fun `多 bot 时强制唯一名盖过业务 env 里的单值 BOT_USERNAME`() {
+        // 消费方在 bot env 里塞了单值 BOT_USERNAME：多进程时须被强制唯一名覆盖（先写业务 env、再写强制名）
+        val plans = BotProcessPlanner.expand(
+            "g16",
+            listOf(
+                bot {
+                    username = "P"
+                    action = "cross-server"
+                    count = 2
+                    env(McTestkitEnv.BOT_USERNAME, "Fixed")
+                },
+            ),
+        )
+        val envs = BotProcessPlanner.extraEnvironments(plans)
+        assertEquals(listOf("P1", "P2"), envs.map { it[McTestkitEnv.BOT_USERNAME] })
     }
 }

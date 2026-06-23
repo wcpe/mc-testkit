@@ -47,7 +47,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 | FR-12 | 每后端身份注入：编排起每个后端时下发本后端声明名 env `MC_TESTKIT_E2E_BACKEND_NAME`（与下发给 bot 的 `CLUSTER_BACKENDS` 同源、有序对应），消费方据此 per-backend 派生身份（如各服不同 `server-id`）；编排只负责告诉每个后端「它是谁」，不规定怎么用（见 docs/specs/fr-12-per-backend-identity.md）| P1 | 已交付@v0.2.0 |
 | FR-13 | 测试环境默认 peaceful 难度：最小 `server.properties` 默认写 `difficulty=peaceful` 保护测试玩家不被怪物/环境杀；消费方服务端模板已设 `difficulty` 则保留其值（不覆盖）| P2 | 已交付@v0.2.0 |
 | FR-14 | 桩兼容更新版 Kotlin 编译的被测插件 API：`template/harness` 加 `-Xskip-metadata-version-check`，使桩能 compileOnly 引用「元数据版本高于本工程编译器可读上限」的被测插件类（仅编译期跳过，运行期字节码仍兼容）| P2 | 已交付@v0.2.0 |
-| FR-15 | 集群代理崩溃接管 fallback：集群代理 listener `priorities` 改为**全部后端**有序列表（首个仍为默认服 + `force_default_server`，其余作 fallback），默认后端宕机时 bot 重连经代理回退到下一个存活后端，支撑「崩溃接管」类 E2E（某后端崩溃 → bot 落存活后端、由其在归属租约 TTL 过期后接管上线）；正常 `/server` 切换与 `force_default_server` 落默认服不受影响（集群编排加法增强，见 ADR-0008）| P3 | 开发中 |
+| FR-15 | 集群代理崩溃接管 fallback：集群代理 listener `priorities` 改为**全部后端**有序列表（首个仍为默认服 + `force_default_server`，其余作 fallback），默认后端宕机时 bot 重连经代理回退到下一个存活后端，支撑「崩溃接管」类 E2E（某后端崩溃 → bot 落存活后端、由其在归属租约 TTL 过期后接管上线）；正常 `/server` 切换与 `force_default_server` 落默认服不受影响（集群编排加法增强，见 ADR-0008）| P3 | 已交付@v0.2.1 |
 
 > 状态取值：计划 / 开发中 / 已交付@vX.Y.Z。优先级：P1(MVP 或阻断真实消费者接入的关键项) / P2 / P3。
 > 标 `已交付` 有门：该 FR 的 §6 / spec 验收标准全部满足、对应测试 / 实机验收通过后，才由 `sdd-release-version` 在发版时统一标 `已交付@vX.Y.Z`，过程中不得自行预标。

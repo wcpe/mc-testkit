@@ -11,10 +11,12 @@ scenario: "smoke"
 result-file: "e2e-result.properties"
 
 # 等待首个真实玩家（机器人）入服的超时（秒）；超时未见玩家则判 FAIL。
-wait-for-player-seconds: 180
+# 取 300 而非更短：CI（如 2 vCPU GitHub runner）上同时起多个后端 + 代理时，后端世界生成 / 启动较慢，
+# bot 连上需更久；本机通常几十秒即入服，超时只在慢环境兜底（快环境不受影响）。消费方可在自己 config 调小。
+wait-for-player-seconds: 300
 
 # 单个场景从开始驱动到判定完成的整体超时（秒）；超时未判定则判 FAIL。
-scenario-timeout-seconds: 240
+scenario-timeout-seconds: 360
 
 # 桩判定（PASS/FAIL）后到真正关服（Bukkit.shutdown）之间的延迟（ticks，20 ticks=1 秒）。
 # 留出窗口把结果文件落盘、让机器人收到末尾消息后再关服。

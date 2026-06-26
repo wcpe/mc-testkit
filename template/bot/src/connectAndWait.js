@@ -35,7 +35,9 @@ const config = {
   // 协议版本：经代理时由编排固定为后端 MC 版本；直连可留空让 mineflayer 自动协商
   version: optionalEnv('MC_TESTKIT_E2E_BOT_VERSION'),
   // ── 超时 / 重试 ──
-  connectTimeoutMs: envInt('MC_TESTKIT_E2E_BOT_CONNECT_TIMEOUT_MS', 180000),
+  // 连接总超时：CI 上多后端 + 代理慢启动时 bot 需更久重试到后端就绪，取 300s 兜底（本机通常几秒连上，
+  // 不受影响）；可经 env 覆盖
+  connectTimeoutMs: envInt('MC_TESTKIT_E2E_BOT_CONNECT_TIMEOUT_MS', 300000),
   retryDelayMs: envInt('MC_TESTKIT_E2E_BOT_RETRY_DELAY_MS', 3000),
   readyTimeoutMs: envInt('MC_TESTKIT_E2E_BOT_READY_TIMEOUT_MS', 60000),
   // ── 压测维度（FR-11；仅 continuous-stress 场景用）──

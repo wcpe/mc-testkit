@@ -21,7 +21,7 @@ jobs:
   e2e:
     name: 自举实机 E2E（smoke + 集群 + 压测）
     runs-on: ubuntu-latest
-    timeout-minutes: 40        # 含首跑下载 Paper/Waterfall 的时间
+    timeout-minutes: 60        # 含首跑下载各后端/代理 jar + 跑完整矩阵（多场景顺序起服，慢 runner 留余量）
     steps:
       - name: 检出代码
         uses: actions/checkout@v4

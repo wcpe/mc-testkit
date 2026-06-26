@@ -121,4 +121,4 @@ npm run connect-and-wait
 - 运行期产物（`node_modules/`、`run/`、`*.log`、结果文件目录）应被你项目的 `.gitignore` 排除，不要入库。
 - 桩的 `config.yml` 由编排在 prepare 阶段覆盖写入（场景名、结果文件路径）；仓库里这份只是默认占位与字段说明。
 - 模板刻意做到最薄：示例机器人不点 GUI、不断言背包，避免把任何业务玩法固化进骨架。窗口点击 / 背包断言等辅助按你的真实场景自行补。
-- 桩骨架已**兼容 Folia**：运行期探测到 Folia 时改用 `GlobalRegionScheduler` 调度（否则用 Bukkit 调度器），同一份桩可直接用于 Paper 或 Folia 后端、无需改代码（用反射调用，不引入对 Folia 专有 API 的编译依赖）。
+- 桩骨架已**兼容 Folia**：`plugin.yml` 声明 `folia-supported: true`（否则 Folia 拒绝加载插件），运行期探测到 Folia 时改用 `GlobalRegionScheduler` 调度（否则用 Bukkit 调度器），同一份桩可直接用于 Paper 或 Folia 后端、无需改代码（用反射调用，不引入对 Folia 专有 API 的编译依赖）。仅在 Paper 上跑可删 `folia-supported`（Paper 忽略它）。

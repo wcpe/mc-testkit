@@ -9,6 +9,10 @@ main: com.example.e2e.McTestkitE2eHarnessPlugin
 version: 1.0.0-SNAPSHOT
 # Bukkit API 版本基线（匹配后端 Minecraft 版本，如 1.20.x 用 '1.20'）
 api-version: '1.20'
+# 声明支持 Folia（区域化线程）：否则 Folia 拒绝加载本插件（「not marked as supporting Folia」）。
+# 桩的调度已做 Folia 兼容（运行期反射走 GlobalRegionScheduler，见 McTestkitE2eHarnessPlugin）；
+# 仅在 Paper 上跑可删此行（Paper 忽略它），但留着无害。
+folia-supported: true
 # 依赖的其它插件（通用骨架为空；消费方按需添加被测/依赖插件名，控制加载顺序）
 # depend:
 #   - YourPluginUnderTest

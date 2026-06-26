@@ -8,6 +8,7 @@
 
 ### 新增
 - **`template/` 通用薄 `multi-bot` 示例场景（FR-16 自举覆盖）**：桩骨架新增 `ScenarioName.MULTI_BOT` + 多 bot 入服聚合分支——多个各唯一 username 的 bot 直连入服，桩按入服玩家名收集、settle 窗口（15s）末聚合写 PASS（details 含 `count` / `joinedBots`），不含业务玩法，与既有 `cross-server` / `continuous-stress` 薄示例同族；bot 内核加 `multi-bot` action 分发（`scenarios/multiBot.js`）。配合 `e2e.yml` 新增 `e2eMultiBotWithBot` 自举路径 + CI 唯一 username（P1/P2/P3）断言，真机验证 FR-16「多进程唯一身份注入 + 全回收」链路。补充 v0.2.2「不预置多 bot 示例到 template」决策：业务形态多 bot 仍由消费方自加，仅预置此通用薄示例供自举（见 docs/specs/fr-16）。
+- **`template/` 桩骨架 Folia 调度兼容（Folia 后端自举覆盖）**：Folia（区域化线程）不支持 Bukkit 全局调度器（`server.scheduler.runTask*` 抛 `UnsupportedOperationException`）。桩改为运行期**反射探测** Folia（存在 `io.papermc.paper.threadedregions.RegionizedServer` 即 Folia）——是则经 `GlobalRegionScheduler.run/runDelayed` 调度，否则走原 Bukkit 调度器；编译期不依赖 Folia 专有 API（反射），对各版本 `paper-api` 均可编译，**Paper 行为不变**。使同一份桩可直接用于 Paper 或 Folia 后端（FR-02/03 支持的后端平台）。配合 `e2e.yml` 新增 `e2eSmoke -Pe2e.backend=folia` 自举路径（Folia 1.20.1）。
 
 ### 变更
 - **自举实机 E2E 矩阵扩展（CI）**：`e2e.yml` 一次性消费者工程改为按 `-Pe2e.proxy`（waterfall/bungeecord/velocity）与 `-Pe2e.backend`（paper/folia）+ `-Pe2e.backendVersion` **参数化平台**，同一套场景/任务名跑遍「代理 × 后端」矩阵，避免为每个平台另起消费者工程。新增三条自举路径：单服 + bot 直连（`e2eExampleBotWithBot`）、经 Waterfall 代理单后端 + bot（`e2eExampleBotViaPx`，补 FR-08 金标准路径的自举覆盖）、经 BungeeCord 代理集群跨服（`e2eCrossServerCluster -Pe2e.proxy=bungeecord`）。Velocity 维度因单端口不支持压测钉服，消费者按 `-Pe2e.proxy` 自动跳过压测场景。纯 CI / 自举测试增强，不改插件与 `template/`。

@@ -44,6 +44,7 @@
   - `ScenarioName`：通用场景枚举，只放 `smoke`、`example-bot`（示例），`from()` 容错。
   - `ScenarioResultWriter`：把 `status`/`message`/明细写成 `<scenario>.properties`，键名取自契约（与编排 verify 读取约定一致）。
   - `McTestkitE2eHarnessPlugin`：`JavaPlugin` + `Listener`，入服派发、控制消息发送、超时兜底、PASS/FAIL 写文件后延迟 `Bukkit.shutdown()`。
+  - **Folia 兼容调度**（后续增强）：Folia 不支持 Bukkit 全局调度器，桩用反射探测 Folia 运行时（`io.papermc.paper.threadedregions.RegionizedServer` 存在即 Folia）——是则经 `GlobalRegionScheduler.run/runDelayed` 调度，否则走原 Bukkit 调度器。反射调用使编译期不依赖 Folia 专有 API（各版本 `paper-api` 均可编译）、Paper 行为不变，让同一份桩可直接用于 Folia 后端（FR-02/03 支持的后端平台）。
 - `template/bot/` 结构对齐参考实现但**剥薄**：`src/connectAndWait.js`（入口 + 集中读 env + action 分发）、`src/lib/{env,messages,normalize}.js`（可单测纯函数）、`src/scenarios/exampleBot.js`（示例）。
   - env 名严格用契约常量字面量：动作用 `MC_TESTKIT_E2E_BOT_ACTION`，连接用 `MC_TESTKIT_E2E_BOT_HOST/PORT/USERNAME/AUTH/VERSION`，超时用 `…_CONNECT_TIMEOUT_MS` / `…_RETRY_DELAY_MS` / `…_READY_TIMEOUT_MS`。
   - eslint（standard 风格的最小自带规则，零额外依赖，纯 `eslint:recommended` + node env）+ prettier 配置文件，版本固定。

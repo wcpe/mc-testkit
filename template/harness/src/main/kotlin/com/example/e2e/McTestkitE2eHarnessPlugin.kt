@@ -7,10 +7,12 @@ import org.bukkit.event.Listener
 import org.bukkit.event.player.PlayerJoinEvent
 import org.bukkit.event.player.PlayerQuitEvent
 import org.bukkit.permissions.PermissionAttachment
+import org.bukkit.plugin.Plugin
 import org.bukkit.plugin.java.JavaPlugin
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.function.Consumer
 
 /**
  * mc-testkit E2E 桩插件骨架（照抄物，框架无关）。
@@ -68,7 +70,7 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
         server.pluginManager.registerEvents(this, this)
 
         // 延迟少量 tick 再 bootstrap，给被测插件留出 onEnable 完成的时间
-        server.scheduler.runTaskLater(this, Runnable { bootstrapScenario() }, BOOTSTRAP_DELAY_TICKS)
+        runLater(BOOTSTRAP_DELAY_TICKS) { bootstrapScenario() }
     }
 
     /** 场景启动：无机器人的 smoke 直接判定；需要玩家的场景挂等待超时。 */
@@ -78,40 +80,28 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
             ScenarioName.CONTINUOUS_STRESS -> {
                 // 压测计时在「首个 bot 加入」时启动（见 onPlayerJoin）；此处只挂「迟迟无 bot」失败兜底
                 logger.info("[E2E] 持续压测场景，等待首个 bot 加入后开始 ${harnessConfig.stressDurationSeconds}s 计时")
-                server.scheduler.runTaskLater(
-                    this,
-                    Runnable {
-                        if (!stressClockStarted.get() && !completed.get()) {
-                            failScenario("持续压测等待首个 bot 加入超时，场景=${harnessConfig.scenario.id}")
-                        }
-                    },
-                    harnessConfig.waitForPlayerSeconds * TICKS_PER_SECOND,
-                )
+                runLater(harnessConfig.waitForPlayerSeconds * TICKS_PER_SECOND) {
+                    if (!stressClockStarted.get() && !completed.get()) {
+                        failScenario("持续压测等待首个 bot 加入超时，场景=${harnessConfig.scenario.id}")
+                    }
+                }
             }
             ScenarioName.MULTI_BOT -> {
                 // settle 计时在「首个 bot 加入」时启动（见 onPlayerJoin）；此处只挂「迟迟无 bot」失败兜底
                 logger.info("[E2E] 单场景多 bot，等待各 bot 入服后 settle 聚合")
-                server.scheduler.runTaskLater(
-                    this,
-                    Runnable {
-                        if (!multiBotClockStarted.get() && !completed.get()) {
-                            failScenario("单场景多 bot 等待首个 bot 加入超时，场景=${harnessConfig.scenario.id}")
-                        }
-                    },
-                    harnessConfig.waitForPlayerSeconds * TICKS_PER_SECOND,
-                )
+                runLater(harnessConfig.waitForPlayerSeconds * TICKS_PER_SECOND) {
+                    if (!multiBotClockStarted.get() && !completed.get()) {
+                        failScenario("单场景多 bot 等待首个 bot 加入超时，场景=${harnessConfig.scenario.id}")
+                    }
+                }
             }
             else -> {
                 logger.info("[E2E] 场景 ${harnessConfig.scenario.id} 等待首个玩家加入，超时 ${harnessConfig.waitForPlayerSeconds}s")
-                server.scheduler.runTaskLater(
-                    this,
-                    Runnable {
-                        if (!started.get() && !completed.get()) {
-                            failScenario("等待玩家加入超时，场景=${harnessConfig.scenario.id}")
-                        }
-                    },
-                    harnessConfig.waitForPlayerSeconds * TICKS_PER_SECOND,
-                )
+                runLater(harnessConfig.waitForPlayerSeconds * TICKS_PER_SECOND) {
+                    if (!started.get() && !completed.get()) {
+                        failScenario("等待玩家加入超时，场景=${harnessConfig.scenario.id}")
+                    }
+                }
             }
         }
     }
@@ -140,11 +130,7 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
             prepareContinuousStressBot(event.player)
             if (stressClockStarted.compareAndSet(false, true)) {
                 logger.info("[E2E] 首个压测 bot 已加入，开始 ${harnessConfig.stressDurationSeconds}s 计时")
-                server.scheduler.runTaskLater(
-                    this,
-                    Runnable { finalizeContinuousStress() },
-                    harnessConfig.stressDurationSeconds * TICKS_PER_SECOND,
-                )
+                runLater(harnessConfig.stressDurationSeconds * TICKS_PER_SECOND) { finalizeContinuousStress() }
             }
             return
         }
@@ -158,11 +144,7 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
             sendControlMessage(event.player, "$CONTROL_READY:${harnessConfig.scenario.id}")
             if (multiBotClockStarted.compareAndSet(false, true)) {
                 logger.info("[E2E] 首个多 bot 已加入，${MULTI_BOT_SETTLE_SECONDS}s settle 窗口后聚合判定")
-                server.scheduler.runTaskLater(
-                    this,
-                    Runnable { finalizeMultiBot() },
-                    MULTI_BOT_SETTLE_SECONDS * TICKS_PER_SECOND,
-                )
+                runLater(MULTI_BOT_SETTLE_SECONDS * TICKS_PER_SECOND) { finalizeMultiBot() }
             }
             return
         }
@@ -265,18 +247,14 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
         // 示例场景没有服务端侧的成功判据，统一用「机器人完成最小动作」的预期：
         // 直接挂一个较短的成功延时演示「桩判 PASS」的位置。真实场景应改为由
         // 业务事件 / 控制消息回报触发 passScenario，并删掉这段无条件 PASS。
-        server.scheduler.runTaskLater(
-            this,
-            Runnable {
-                if (!completed.get()) {
-                    passScenario(
-                        message = "机器人驱动示例场景通过（示例：请替换为真实判定）",
-                        details = mapOf("player" to player.name),
-                    )
-                }
-            },
-            EXAMPLE_PASS_DELAY_TICKS,
-        )
+        runLater(EXAMPLE_PASS_DELAY_TICKS) {
+            if (!completed.get()) {
+                passScenario(
+                    message = "机器人驱动示例场景通过（示例：请替换为真实判定）",
+                    details = mapOf("player" to player.name),
+                )
+            }
+        }
         armScenarioTimeout()
     }
 
@@ -319,22 +297,19 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
             return
         }
         val playerName = event.player.name
-        // 异步聊天事件：切回主线程写结果 + 关服
-        server.scheduler.runTask(
-            this,
-            Runnable {
-                passScenario(
-                    message = "机器人经代理切到本服并确认跨服切换，集群跨服链路通",
-                    // backendName 即本到达服的声明名（编排下发 MC_TESTKIT_E2E_BACKEND_NAME，FR-12）：消费方据此判断「切到了哪台」
-                    details =
-                        mapOf(
-                            "player" to playerName,
-                            "arrivedServer" to Bukkit.getServer().name,
-                            "backendName" to harnessConfig.backendName,
-                        ),
-                )
-            },
-        )
+        // 异步聊天事件：切回主线程 / 全局区域写结果 + 关服（Folia 兼容）
+        runSync {
+            passScenario(
+                message = "机器人经代理切到本服并确认跨服切换，集群跨服链路通",
+                // backendName 即本到达服的声明名（编排下发 MC_TESTKIT_E2E_BACKEND_NAME，FR-12）：消费方据此判断「切到了哪台」
+                details =
+                    mapOf(
+                        "player" to playerName,
+                        "arrivedServer" to Bukkit.getServer().name,
+                        "backendName" to harnessConfig.backendName,
+                    ),
+            )
+        }
     }
 
     /** 发送就绪信号（幂等）：`E2E_READY:<scenario>`，通知机器人可开始驱动。 */
@@ -356,15 +331,11 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
 
     /** 挂场景整体超时：到时仍未判定则判 FAIL。 */
     private fun armScenarioTimeout() {
-        server.scheduler.runTaskLater(
-            this,
-            Runnable {
-                if (!completed.get()) {
-                    failScenario("场景执行超时: ${harnessConfig.scenario.id}")
-                }
-            },
-            harnessConfig.scenarioTimeoutSeconds * TICKS_PER_SECOND,
-        )
+        runLater(harnessConfig.scenarioTimeoutSeconds * TICKS_PER_SECOND) {
+            if (!completed.get()) {
+                failScenario("场景执行超时: ${harnessConfig.scenario.id}")
+            }
+        }
     }
 
     /** 判 PASS：写结果文件后延迟关服（幂等）。 */
@@ -389,7 +360,50 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
 
     /** 延迟关服，回收前台 runServer 线程；延迟由配置控制以留结果落盘窗口。 */
     private fun scheduleShutdown() {
-        server.scheduler.runTaskLater(this, Runnable { Bukkit.shutdown() }, harnessConfig.shutdownDelayTicks)
+        runLater(harnessConfig.shutdownDelayTicks) { Bukkit.shutdown() }
+    }
+
+    // ── Folia 兼容调度 ──
+    // Folia（区域化线程）不支持 Bukkit 全局调度器：`server.scheduler.runTask*` 会抛
+    // UnsupportedOperationException，须改用 GlobalRegionScheduler。为让**同一份桩**既能在 Paper 又能在
+    // Folia 跑，且编译期不依赖 Folia 专有 API（对各版本 paper-api 都能编译），这里用反射探测并调用 Folia 的
+    // GlobalRegionScheduler；非 Folia（Paper）保持原 Bukkit 调度器、行为不变。
+
+    /** Folia 全局区域调度器（仅 Folia 运行时非 null；用反射取，避免编译期依赖 Folia 专有类）。 */
+    private val foliaGlobalScheduler: Any? by lazy {
+        try {
+            // `RegionizedServer` 是 Folia 专有类：存在即判定为 Folia 运行时（Paper 无此类）
+            Class.forName("io.papermc.paper.threadedregions.RegionizedServer")
+            Bukkit.getServer().javaClass.getMethod("getGlobalRegionScheduler").invoke(Bukkit.getServer())
+        } catch (ignored: Throwable) {
+            null
+        }
+    }
+
+    /** 延迟在主线程 / 全局区域执行（Folia 走 GlobalRegionScheduler.runDelayed，否则 Bukkit runTaskLater）。 */
+    private fun runLater(delayTicks: Long, task: () -> Unit) {
+        val folia = foliaGlobalScheduler
+        if (folia != null) {
+            // GlobalRegionScheduler.runDelayed(Plugin, Consumer<ScheduledTask>, long)；delay 须 >=1
+            folia.javaClass
+                .getMethod("runDelayed", Plugin::class.java, Consumer::class.java, Long::class.javaPrimitiveType)
+                .invoke(folia, this, Consumer<Any?> { task() }, maxOf(1L, delayTicks))
+        } else {
+            server.scheduler.runTaskLater(this, Runnable { task() }, delayTicks)
+        }
+    }
+
+    /** 立即在主线程 / 全局区域执行（Folia 走 GlobalRegionScheduler.run，否则 Bukkit runTask）。 */
+    private fun runSync(task: () -> Unit) {
+        val folia = foliaGlobalScheduler
+        if (folia != null) {
+            // GlobalRegionScheduler.run(Plugin, Consumer<ScheduledTask>)
+            folia.javaClass
+                .getMethod("run", Plugin::class.java, Consumer::class.java)
+                .invoke(folia, this, Consumer<Any?> { task() })
+        } else {
+            server.scheduler.runTask(this, Runnable { task() })
+        }
     }
 
     private companion object {

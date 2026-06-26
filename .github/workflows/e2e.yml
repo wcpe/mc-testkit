@@ -149,6 +149,9 @@ jobs:
       - name: E2E · 经 BungeeCord 代理集群跨服（e2eCrossServerCluster，-Pe2e.proxy=bungeecord）
         run: ./gradlew -p "$CONSUMER" e2eCrossServerCluster -Pe2e.proxy=bungeecord -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
+      - name: E2E · Folia 后端烟雾（e2eSmoke，-Pe2e.backend=folia）
+        run: ./gradlew -p "$CONSUMER" e2eSmoke -Pe2e.backend=folia -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
+
       - name: 归档运行日志与结果（失败排查）
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

@@ -16,7 +16,7 @@ template/
     src/main/kotlin/com/example/e2e/
       McTestkitE2eHarnessPlugin.kt  # 桩主体：入服派发场景、发控制消息、写结果文件、收尾关服
       HarnessConfig.kt              # 读 config.yml 的场景配置（纯数据）
-      ScenarioName.kt               # 场景枚举（内置 smoke / example-bot）
+      ScenarioName.kt               # 场景枚举（内置 smoke / example-bot / cross-server / continuous-stress / multi-bot）
       ScenarioResultWriter.kt       # 把 PASS/FAIL 写成 <scenario>.properties（测试结论真源）
     src/main/resources/
       plugin.yml                    # 桩插件描述
@@ -27,7 +27,7 @@ template/
     src/
       connectAndWait.js          # 入口：探测端口 → 登录 → 按 action 分发场景 → 等结果；集中读环境变量
       lib/{env,messages,normalize}.js  # 环境变量读取 / 消息等待 / 文本归一（纯函数）
-      scenarios/exampleBot.js    # 机器人驱动示例场景
+      scenarios/exampleBot.js    # 机器人驱动示例（同目录还有 crossServerBot / continuousStress / multiBot）
   README.md       # 本文件
 ```
 

@@ -107,6 +107,11 @@ jobs:
                       bot { username = "Stress"; action = "continuous-stress" }
                   }
               }
+              // 单场景多 bot（FR-16）：单后端直连 3 个各唯一 username 的 bot（P1/P2/P3，经 BOT_INDEX 区分）
+              scenario("multi-bot") {
+                  backend = "s1"
+                  bot { username = "P"; action = "multi-bot"; count = 3 }
+              }
               // 自举：桩骨架自身即被测对象（经 HARNESS_JAR 注入两后端）
               dependencies { pluginUnderTest = "HARNESS_JAR" }
           }
@@ -124,6 +129,16 @@ jobs:
 
       - name: E2E · 经 Waterfall 代理单后端 + bot（e2eExampleBotViaPx）
         run: ./gradlew -p "$CONSUMER" e2eExampleBotViaPx -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
+
+      - name: E2E · 单场景多 bot（e2eMultiBotWithBot + 唯一 username 断言）
+        run: |
+          ./gradlew -p "$CONSUMER" e2eMultiBotWithBot -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
+          RESULT="$CONSUMER/build/mc-testkit/results/multi-bot.properties"
+          echo "结果文件内容："; cat "$RESULT"
+          for u in P1 P2 P3; do
+            grep -q "$u" "$RESULT" || { echo "::error::单场景多 bot 缺少唯一 username $u（FR-16 多进程身份注入未生效）"; exit 1; }
+          done
+          echo "单场景多 bot 唯一 username P1/P2/P3 均入服 ✓"
 
       - name: E2E · 集群跨服（e2eCrossServerCluster）
         run: ./gradlew -p "$CONSUMER" e2eCrossServerCluster -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace

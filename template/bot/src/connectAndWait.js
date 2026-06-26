@@ -8,6 +8,7 @@ const { normalizeText, formatReason } = require('./lib/normalize')
 const runExampleBot = require('./scenarios/exampleBot')
 const runCrossServer = require('./scenarios/crossServerBot')
 const runContinuousStress = require('./scenarios/continuousStress')
+const runMultiBot = require('./scenarios/multiBot')
 
 // mc-testkit E2E 机器人入口（照抄物）：探测端口 → mineflayer 登录 → spawn 后按 action 分发场景
 // → 驱动完成后保持在线，等待服务端侧（桩）判定并关服。连接失败按重试间隔重连直到总超时。
@@ -107,6 +108,8 @@ function scenarioRunner() {
       return runCrossServer
     case 'continuous-stress':
       return runContinuousStress
+    case 'multi-bot':
+      return runMultiBot
     default:
       return async () => {
         log('当前 action 未配置专门驱动，保持在线等待服务器关闭')

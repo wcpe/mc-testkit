@@ -50,6 +50,16 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
     /** 压测计时是否已开始（首个 bot 加入 CAS，避免多 bot 重复挂计时）。 */
     private val stressClockStarted = AtomicBoolean(false)
 
+    // ── 单场景多 bot 场景（FR-16）状态 ──
+    /** 已入服的各 bot 玩家名（多 bot 各唯一 username，FR-16）。 */
+    private val multiBotJoined: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** 多 bot settle 计时是否已开始（首个 bot 加入 CAS）。 */
+    private val multiBotClockStarted = AtomicBoolean(false)
+
+    /** 多 bot 是否已聚合收尾（幂等门）。 */
+    private val multiBotFinalized = AtomicBoolean(false)
+
     override fun onEnable() {
         saveDefaultConfig()
         reloadConfig()
@@ -73,6 +83,19 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
                     Runnable {
                         if (!stressClockStarted.get() && !completed.get()) {
                             failScenario("持续压测等待首个 bot 加入超时，场景=${harnessConfig.scenario.id}")
+                        }
+                    },
+                    harnessConfig.waitForPlayerSeconds * TICKS_PER_SECOND,
+                )
+            }
+            ScenarioName.MULTI_BOT -> {
+                // settle 计时在「首个 bot 加入」时启动（见 onPlayerJoin）；此处只挂「迟迟无 bot」失败兜底
+                logger.info("[E2E] 单场景多 bot，等待各 bot 入服后 settle 聚合")
+                server.scheduler.runTaskLater(
+                    this,
+                    Runnable {
+                        if (!multiBotClockStarted.get() && !completed.get()) {
+                            failScenario("单场景多 bot 等待首个 bot 加入超时，场景=${harnessConfig.scenario.id}")
                         }
                     },
                     harnessConfig.waitForPlayerSeconds * TICKS_PER_SECOND,
@@ -125,6 +148,24 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
             }
             return
         }
+        // 单场景多 bot：每个 bot 都装备 + 发就绪信号（不走单次 started 门）；首个 bot 加入起 settle 计时
+        if (harnessConfig.scenario == ScenarioName.MULTI_BOT) {
+            if (multiBotFinalized.get()) {
+                return
+            }
+            prepareTestPlayer(event.player)
+            multiBotJoined.add(event.player.name)
+            sendControlMessage(event.player, "$CONTROL_READY:${harnessConfig.scenario.id}")
+            if (multiBotClockStarted.compareAndSet(false, true)) {
+                logger.info("[E2E] 首个多 bot 已加入，${MULTI_BOT_SETTLE_SECONDS}s settle 窗口后聚合判定")
+                server.scheduler.runTaskLater(
+                    this,
+                    Runnable { finalizeMultiBot() },
+                    MULTI_BOT_SETTLE_SECONDS * TICKS_PER_SECOND,
+                )
+            }
+            return
+        }
         if (completed.get()) {
             return
         }
@@ -141,8 +182,9 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
         when (harnessConfig.scenario) {
             ScenarioName.EXAMPLE_BOT -> prepareExampleBotScenario(player)
             ScenarioName.CROSS_SERVER -> prepareCrossServerScenario(player)
-            // 持续压测在 onPlayerJoin 前置分支处理（多 bot 不走单次 started 门），不到此
+            // 持续压测 / 单场景多 bot 在 onPlayerJoin 前置分支处理（不走单次 started 门），不到此
             ScenarioName.CONTINUOUS_STRESS -> Unit
+            ScenarioName.MULTI_BOT -> Unit
             // smoke 不经玩家驱动；其余场景由消费方补充分支
             ScenarioName.SMOKE -> Unit
         }
@@ -190,6 +232,25 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
         logger.info("[E2E][STRESS] 持续压测收尾：在线=$onlineCount 上报 bot 数=$reportedBots")
         // 薄示例：本服跑完压测即 PASS + 收集各 bot 摘要。真实「不超卖」等业务不变量请在此查共享 DB 改判。
         passScenario("持续压测场景收尾完成（示例：真实不变量请查共享 DB 断言）", details)
+    }
+
+    /**
+     * 单场景多 bot settle 收尾（FR-16，首个 bot 加入后 settle 窗口末，幂等）：聚合各 bot username + 写 PASS + 关服。
+     *
+     * 薄示例只校验「多个各唯一 username 的 bot 都入服」（演示 FR-16 多进程身份注入 + 全回收的真机链路通），
+     * 不做业务断言；唯一 username 的精确断言由 CI 步骤 grep 结果文件完成（不把期望数 N 硬塞进通用骨架）。
+     */
+    private fun finalizeMultiBot() {
+        if (!multiBotFinalized.compareAndSet(false, true)) {
+            return
+        }
+        val joined = multiBotJoined.toSortedSet()
+        val details = linkedMapOf(
+            "count" to joined.size.toString(),
+            "joinedBots" to joined.joinToString(","),
+        )
+        logger.info("[E2E][MULTI-BOT] 多 bot 聚合：count=${joined.size} joinedBots=${joined.joinToString(",")}")
+        passScenario("单场景多 bot 全部入服（示例：唯一 username 由 CI 断言）", details)
     }
 
     /**
@@ -337,6 +398,9 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
 
         /** onEnable 后到 bootstrap 的延迟，给被测插件留启动时间。 */
         const val BOOTSTRAP_DELAY_TICKS = 40L
+
+        /** 单场景多 bot settle 窗口（秒，FR-16）：首个 bot 加入后等这么久收集其余 bot 再聚合判定。 */
+        const val MULTI_BOT_SETTLE_SECONDS = 15L
 
         /** 示例场景无条件 PASS 的延时（仅演示，真实场景应删除）。 */
         const val EXAMPLE_PASS_DELAY_TICKS = 40L

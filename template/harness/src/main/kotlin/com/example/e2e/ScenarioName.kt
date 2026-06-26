@@ -20,6 +20,9 @@ enum class ScenarioName(val id: String) {
 
     /** 持续压测示例场景（FR-11）：每 bot 入服发就绪信号、收集各 bot 上报，到时聚合写 PASS（薄示例不做业务断言）。 */
     CONTINUOUS_STRESS("continuous-stress"),
+
+    /** 单场景多 bot 示例场景（FR-16）：多个各唯一 username 的 bot 直连入服，桩收齐 + settle 窗口后聚合写 PASS（薄示例）。 */
+    MULTI_BOT("multi-bot"),
     ;
 
     companion object {

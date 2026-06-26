@@ -28,7 +28,10 @@ mc-testkit 现状：每个 `scenario { }` 最多一个 `bot { }`——
   - **不复用压测 `stress {}` 形态**——压测是「大量同质钉服 bot」，本需求是「少量/批量、可切服、可分角色」，是不同维度（ADR-0009）。压测场景禁用 `count` / 多 bot（规模用 `botsPerServer` 表达）。
   - **不新增 env 名 / 任务名**——复用既有 `BOT_USERNAME` / `BOT_ACTION` / `BOT_INDEX` / `CLUSTER_BACKENDS` 与现有 `e2e<Key>` / `e2e<Key>Cluster` / `launch<Key>Bot` / `e2e<Key>WithBot`（声明多 bot 时这些任务**起多个 bot 进程**）。
   - 不实现真实游戏客户端；不碰后端 `connection-throttle`（消费方后端模板已 `connection-throttle=-1`；代理侧本就 `connection_throttle: -1`，见 ProxyConfig）。
-  - 不预置多 bot 示例桩/机器人到 `template/`（消费方自加 g16 / gui-edit 场景）。
+  - 不预置多 bot **业务**示例桩/机器人到 `template/`（g16 跨服数据、gui-edit admin/target 等业务场景由消费方自加）。
+    〔后续（未发布版本）补充：为把 FR-16 纳入**自举实机 E2E**，`template/` 增设了一个**通用薄** `multi-bot` 示例场景——
+    同质 `count=N` 直连、桩按入服 username 聚合（settle 窗口）写 PASS，不含任何业务玩法，与既有 `cross-server` /
+    `continuous-stress` 薄示例同族；唯一 username 的精确断言由 CI grep 完成。见 CHANGELOG 未发布段与 `.github/workflows/e2e.yml`。〕
 
 ## 3. 设计（怎么做）
 

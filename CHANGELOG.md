@@ -7,6 +7,22 @@
 ## 未发布版本
 
 ### 新增
+_（暂无）_
+
+### 变更
+_（暂无）_
+
+### 修复
+_（暂无）_
+
+### 移除
+_（暂无）_
+
+## [0.3.0] - 2026-06-26
+
+> 第三期推进：把自举实机 E2E 从「单服 / 集群 / 压测」三条扩成**全矩阵**——单服(±bot) / 经代理（Waterfall·BungeeCord·**Velocity**）/ 集群 / 压测 / 单场景多 bot（FR-16）/ 崩溃接管（FR-15）/ **Folia 后端**，平台经 `-P` 参数化跑遍「代理 × 后端」；并**实装 Velocity modern forwarding**（补齐 ADR-0003 三代理平台，消除「声明支持却跑不通」的漂移）。集群/压测起 bot 前加端口就绪门，让慢 CI（2 vCPU runner）也稳。全矩阵已本地实机 + CI 实机跑通。向后兼容 0.2.3（任务名 / env / DSL 均加法、无破坏）。
+
+### 新增
 - **`template/` 通用薄 `multi-bot` 示例场景（FR-16 自举覆盖）**：桩骨架新增 `ScenarioName.MULTI_BOT` + 多 bot 入服聚合分支——多个各唯一 username 的 bot 直连入服，桩按入服玩家名收集、settle 窗口（15s）末聚合写 PASS（details 含 `count` / `joinedBots`），不含业务玩法，与既有 `cross-server` / `continuous-stress` 薄示例同族；bot 内核加 `multi-bot` action 分发（`scenarios/multiBot.js`）。配合 `e2e.yml` 新增 `e2eMultiBotWithBot` 自举路径 + CI 唯一 username（P1/P2/P3）断言，真机验证 FR-16「多进程唯一身份注入 + 全回收」链路。补充 v0.2.2「不预置多 bot 示例到 template」决策：业务形态多 bot 仍由消费方自加，仅预置此通用薄示例供自举（见 docs/specs/fr-16）。
 - **`template/` 桩骨架 Folia 调度兼容（Folia 后端自举覆盖）**：Folia（区域化线程）不支持 Bukkit 全局调度器（`server.scheduler.runTask*` 抛 `UnsupportedOperationException`）。桩改为运行期**反射探测** Folia（存在 `io.papermc.paper.threadedregions.RegionizedServer` 即 Folia）——是则经 `GlobalRegionScheduler.run/runDelayed` 调度，否则走原 Bukkit 调度器；编译期不依赖 Folia 专有 API（反射），对各版本 `paper-api` 均可编译，**Paper 行为不变**。并在 `plugin.yml` 声明 `folia-supported: true`——否则 Folia 直接拒绝加载本插件（`not marked as supporting Folia`），桩根本不会启动。使同一份桩可直接用于 Paper 或 Folia 后端（FR-02/03 支持的后端平台）。配合 `e2e.yml` 新增 `e2eSmoke -Pe2e.backend=folia` 自举路径（Folia 1.20.1，已本地实机跑通）。
 - **`template/` 崩溃接管 `crash-takeover` 示例场景（FR-15 自举覆盖）**：桩骨架新增 `ScenarioName.CRASH_TAKEOVER`——默认后端收到 bot 发的 `E2E_TRIGGER_CRASH`（template 约定标记）即 `Runtime.halt` 模拟宕机（不写结果）；bot 内核加「场景级断线重连」（`reconnectOnDisconnect`，默认行为不变），断线后经代理 fallback 重连到存活后端，发 `E2E_CLUSTER_ARRIVED`，存活桩判 PASS；新增 `scenarios/crashTakeover.js`。验证 FR-15「默认后端宕机 → bot 经代理回退到存活后端」的**框架层** fallback 路由（业务层租约 TTL 接管仍由消费方桩在存活后端查共享 DB 改判）。配合 `e2e.yml` 新增 `e2eCrashTakeoverCluster` 自举路径（复用现成集群编排，插件零改）。
@@ -15,12 +31,6 @@
 ### 变更
 - **集群/压测起 bot 前加端口就绪门（编排稳定性）**：起 bot 前先轮询等全部后端 + 代理端口可 TCP 连接再放 bot（Paper 启动末尾才绑监听端口≈服务端就绪、桩已起），**确定性**等进程就位再连——取代「bot 盲目重试去赛进程启动」的时序竞态。慢 CI（2 vCPU runner 上多服顺序起服、CPU 紧张、后端世界生成慢）上不再间歇性「等待玩家加入超时」；快环境几秒就绪、不受影响。端口迟迟不开（启动失败）则到就绪门上限（300s）报清晰中文错误，而非含糊的「等待玩家超时」。同时放宽 `wait-for-player` / bot `connectTimeout` / workflow `timeout-minutes` 作失败兜底。
 - **自举实机 E2E 矩阵扩展（CI）**：`e2e.yml` 一次性消费者工程改为按 `-Pe2e.proxy`（waterfall/bungeecord/velocity）与 `-Pe2e.backend`（paper/folia）+ `-Pe2e.backendVersion` **参数化平台**，同一套场景/任务名跑遍「代理 × 后端」矩阵，避免为每个平台另起消费者工程。新增三条自举路径：单服 + bot 直连（`e2eExampleBotWithBot`）、经 Waterfall 代理单后端 + bot（`e2eExampleBotViaPx`，补 FR-08 金标准路径的自举覆盖）、经 BungeeCord 代理集群跨服（`e2eCrossServerCluster -Pe2e.proxy=bungeecord`）。Velocity 维度因单端口不支持压测钉服，消费者按 `-Pe2e.proxy` 自动跳过压测场景。纯 CI / 自举测试增强，不改插件与 `template/`。
-
-### 修复
-_（暂无）_
-
-### 移除
-_（暂无）_
 
 ## [0.2.3] - 2026-06-23
 

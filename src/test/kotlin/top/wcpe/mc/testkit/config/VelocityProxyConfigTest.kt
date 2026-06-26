@@ -30,6 +30,8 @@ class VelocityProxyConfigTest {
         assertTrue(toml.contains("\"s1\" = \"127.0.0.1:25565\""), "应有具名 server s1：\n$toml")
         // try 含该 server
         assertTrue(Regex("(?ms)try = \\[.*\"s1\".*]").containsMatchIn(toml), "try 应含 s1：\n$toml")
+        // 必须显式写空 [forced-hosts] 覆盖 Velocity 默认示例（否则引用不存在的 server 致 Velocity 拒绝启动）
+        assertTrue(toml.contains("[forced-hosts]"), "应显式写空 [forced-hosts] 覆盖默认示例：\n$toml")
     }
 
     @Test

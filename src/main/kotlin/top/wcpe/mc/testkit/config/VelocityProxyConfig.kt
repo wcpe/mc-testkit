@@ -58,5 +58,9 @@ fun velocityProxyConfigToml(
     // 连接超时给足；关登录限流（并发 bot 入服不被节流踢出）
     sb.appendLine("connection-timeout = 30000")
     sb.appendLine("login-ratelimit = 0")
+    sb.appendLine()
+    // 必须显式写**空** [forced-hosts]：否则 Velocity 用其默认示例 forced-hosts（lobby/factions/minigames），
+    // 这些引用本配置不存在的 server，会让 Velocity 校验失败、拒绝启动（端口不开 → bot 连不上、桩超时）。
+    sb.appendLine("[forced-hosts]")
     return sb.toString()
 }

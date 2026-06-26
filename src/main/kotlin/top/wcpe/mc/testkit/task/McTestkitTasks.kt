@@ -54,6 +54,14 @@ private const val BACKEND_WAIT_TIMEOUT_SECONDS = 600L
 private const val BACKEND_SELF_STOP_GRACE_SECONDS = 30L
 
 /**
+ * 起 bot 前等后端 / 代理端口可连的就绪门上限（秒）。
+ *
+ * 这是**确定性就绪门**而非定时等待：等多久取决于进程何时真正接受连接（快环境几秒、慢 CI 久些），
+ * 到点才放 bot——不靠 bot 盲重试去赛进程启动，慢 runner 上也稳；端口迟迟不开（启动失败）则到此上限报错。
+ */
+private const val PORT_READINESS_TIMEOUT_SECONDS = 300L
+
+/**
  * 任务编排装配入口（FR-04 整合器）。
  *
  * 在 [McTestkitPlugin][top.wcpe.mc.testkit.McTestkitPlugin] 的 `apply()` 末尾、`afterEvaluate` 里调用：
@@ -358,6 +366,9 @@ object McTestkitTasks {
                     }
                     // ② 后台起集群代理（单 listener + N 具名 server）
                     proxyProcess = startClusterProxyBackground(project, proxy, clusterBackends)
+                    // ②' 确定性就绪门：等全部后端 + 代理端口可连再起 bot（不靠 bot 盲重试赛慢启动，慢 CI 上稳）
+                    clusterBackends.forEach { awaitPortOpen(project, it.port, "集群后端 ${it.name}") }
+                    awaitPortOpen(project, proxy.port, "集群代理 ${proxy.name}")
                     // ③ 起全部 bot：经代理端口，CLUSTER_BACKENDS 下发 /server 切换目标（每个 bot 都能切），
                     //    协议版本固定为后端版本；多 bot 各唯一 username、同质复制下发 BOT_INDEX（FR-16）
                     botProcesses += launchScenarioBots(
@@ -460,6 +471,35 @@ object McTestkitTasks {
         return process
     }
 
+    /**
+     * 确定性就绪门：轮询等某端口可 TCP 连接再返回（Paper 在启动末尾才绑监听端口，端口可连≈服务端就绪、桩已起）。
+     *
+     * 用于在起 bot **之前**确认后端 / 代理真正接受连接，避免 bot 在进程尚未就绪时盲目重试去赛启动——慢 CI
+     * （多服顺序起服、CPU 紧张）上靠拉长超时碰运气不稳，靠就绪门则确定性等到位再连。端口迟迟不开则报错收尾。
+     */
+    private fun awaitPortOpen(
+        project: Project,
+        port: Int,
+        label: String,
+        timeoutSeconds: Long = PORT_READINESS_TIMEOUT_SECONDS,
+    ) {
+        val deadlineMs = System.currentTimeMillis() + timeoutSeconds * 1000L
+        while (System.currentTimeMillis() < deadlineMs) {
+            try {
+                java.net.Socket().use { socket ->
+                    socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 2000)
+                }
+                project.logger.lifecycle("[mc-testkit] $label 端口 $port 已就绪")
+                return
+            } catch (ex: Exception) {
+                Thread.sleep(1000)
+            }
+        }
+        throw GradleException(
+            "$label 端口 $port 在 ${timeoutSeconds}s 内未就绪（进程启动失败 / 过慢）；将收尾全部进程。",
+        )
+    }
+
     /** 轮询等集群结果文件写出（任一桩写出即完成）；超时仍无即抛中文错误（收尾由 finally / finalizedBy 兜）。 */
     private fun awaitClusterResult(project: Project, resultFile: File, scenario: String) {
         project.logger.lifecycle("[mc-testkit] 集群场景 $scenario 已全部起服，等待桩写出结果文件…")
@@ -549,6 +589,12 @@ object McTestkitTasks {
                     }
                     if (proxy != null) {
                         proxyProcess = startStressProxyBackground(project, proxy, bindings, stressBackends.first().version)
+                    }
+
+                    // ②' 确定性就绪门：等后端（+ 代理各 listener）端口可连再起 bot（不靠盲重试赛慢启动，慢 CI 上稳）
+                    stressBackends.forEach { awaitPortOpen(project, it.port, "压测后端 ${it.name}") }
+                    if (proxy != null) {
+                        bindings.forEach { awaitPortOpen(project, it.listenPort, "压测代理 listener->${it.backendName}") }
                     }
 
                     // ③ 每服起 M 个 bot 钉本服（via 用对应 listener 端口、直连用后端端口；协议版本经代理固定为后端版本）

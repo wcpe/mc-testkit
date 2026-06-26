@@ -1,5 +1,6 @@
-# mc-testkit 实机 E2E：自举跑通 smoke + 集群跨服 + 持续压测三类场景。
-# 「自举」= 以 template/ 的桩与 bot 作消费者，真实下载并拉起 Paper + Waterfall，按结果文件判定、收尾。
+# mc-testkit 实机 E2E：自举跑通核心矩阵——单服(±bot) / 经代理 / 集群 / 压测。
+# 「自举」= 以 template/ 的桩与 bot 作消费者，真实下载并拉起后端 + 代理，按结果文件判定、收尾。
+# 同一套场景/任务名经 -P 选平台跑遍「代理 × 后端」矩阵（不为每个平台另起消费者工程）。
 # 重且需联网（下载服务端/代理），故不在每次 PR 跑——手动触发，或打版本 tag 时跑（发版前 E2E，
 # 见 .claude/rules/testing-and-quality.md「E2E 在发版前至少跑一遍」）。
 name: E2E
@@ -49,7 +50,7 @@ jobs:
         working-directory: template/bot
         run: npm install --no-audit --no-fund
 
-      - name: 生成一次性消费者工程（经 mavenLocal 引用插件，声明三类场景）
+      - name: 生成一次性消费者工程（经 mavenLocal 引用插件，平台经 -P 参数化）
         run: |
           set -euo pipefail
           VERSION="$(cat VERSION)"
@@ -68,22 +69,43 @@ jobs:
           cat > "$CONSUMER/build.gradle.kts" <<EOF
           plugins { id("top.wcpe.mc-testkit") version "$VERSION" }
 
+          // CI 经 -P 选平台，同一套场景/任务名跑遍「代理 × 后端」矩阵（缺省 Paper + Waterfall）。
+          val e2eProxy = (findProperty("e2e.proxy") as String?) ?: "waterfall"
+          val e2eBackend = (findProperty("e2e.backend") as String?) ?: "paper"
+          val e2eBackendVersion = (findProperty("e2e.backendVersion") as String?) ?: "1.20.1"
+
           mcTestkit {
-              backend("s1") { platform = paper; version = "1.20.1"; port = 25565 }
-              backend("s2") { platform = paper; version = "1.20.1"; port = 25566 }
-              proxy("wf") { platform = waterfall; port = 25577; routesTo("s1", "s2") }
-              // 单后端烟雾：无 bot、无代理，最轻
+              backend("s1") {
+                  platform = if (e2eBackend == "folia") folia else paper
+                  version = e2eBackendVersion; port = 25565
+              }
+              backend("s2") {
+                  platform = if (e2eBackend == "folia") folia else paper
+                  version = e2eBackendVersion; port = 25566
+              }
+              proxy("px") {
+                  platform = when (e2eProxy) { "bungeecord" -> bungeecord; "velocity" -> velocity; else -> waterfall }
+                  port = 25577; routesTo("s1", "s2")
+              }
+              // 单后端烟雾：无 bot、无代理，最轻（Folia 自举亦跑此，-Pe2e.backend=folia）
               scenario("smoke") { backend = "s1" }
+              // 机器人驱动单后端：注册 e2eExampleBotWithBot（直连）+ e2eExampleBotViaPx（经代理，平台由 -Pe2e.proxy 定）
+              scenario("example-bot") {
+                  backend = "s1"; via = "px"
+                  bot { username = "ProbeBot"; action = "example-bot" }
+              }
               // 集群跨服：2 后端 + 代理单 listener + bot 经代理 /server 切换
               scenario("cross-server") {
-                  backends("s1", "s2"); via = "wf"
+                  backends("s1", "s2"); via = "px"
                   bot { username = "Switcher"; action = "cross-server" }
               }
-              // 持续压测：2 服 + 代理 N-listener 钉服 + 每服 2 bot 短时施压
-              scenario("continuous-stress") {
-                  backends("s1", "s2"); via = "wf"
-                  stress { botsPerServer = 2; durationSeconds = 20 }
-                  bot { username = "Stress"; action = "continuous-stress" }
+              // 持续压测：2 服 + 代理 N-listener 钉服 + 每服 2 bot 短时施压（Velocity 单端口不支持钉服，跳过）
+              if (e2eProxy != "velocity") {
+                  scenario("continuous-stress") {
+                      backends("s1", "s2"); via = "px"
+                      stress { botsPerServer = 2; durationSeconds = 20 }
+                      bot { username = "Stress"; action = "continuous-stress" }
+                  }
               }
               // 自举：桩骨架自身即被测对象（经 HARNESS_JAR 注入两后端）
               dependencies { pluginUnderTest = "HARNESS_JAR" }
@@ -97,11 +119,20 @@ jobs:
       - name: E2E · 单后端烟雾（e2eSmoke）
         run: ./gradlew -p "$CONSUMER" e2eSmoke -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
+      - name: E2E · 单服 + bot 直连（e2eExampleBotWithBot）
+        run: ./gradlew -p "$CONSUMER" e2eExampleBotWithBot -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
+
+      - name: E2E · 经 Waterfall 代理单后端 + bot（e2eExampleBotViaPx）
+        run: ./gradlew -p "$CONSUMER" e2eExampleBotViaPx -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
+
       - name: E2E · 集群跨服（e2eCrossServerCluster）
         run: ./gradlew -p "$CONSUMER" e2eCrossServerCluster -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
       - name: E2E · 持续压测（e2eContinuousStressStress）
         run: ./gradlew -p "$CONSUMER" e2eContinuousStressStress -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
+
+      - name: E2E · 经 BungeeCord 代理集群跨服（e2eCrossServerCluster，-Pe2e.proxy=bungeecord）
+        run: ./gradlew -p "$CONSUMER" e2eCrossServerCluster -Pe2e.proxy=bungeecord -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
       - name: 归档运行日志与结果（失败排查）
         if: ${{ always() }}

@@ -10,7 +10,7 @@
 _（暂无）_
 
 ### 变更
-_（暂无）_
+- **自举实机 E2E 矩阵扩展（CI）**：`e2e.yml` 一次性消费者工程改为按 `-Pe2e.proxy`（waterfall/bungeecord/velocity）与 `-Pe2e.backend`（paper/folia）+ `-Pe2e.backendVersion` **参数化平台**，同一套场景/任务名跑遍「代理 × 后端」矩阵，避免为每个平台另起消费者工程。新增三条自举路径：单服 + bot 直连（`e2eExampleBotWithBot`）、经 Waterfall 代理单后端 + bot（`e2eExampleBotViaPx`，补 FR-08 金标准路径的自举覆盖）、经 BungeeCord 代理集群跨服（`e2eCrossServerCluster -Pe2e.proxy=bungeecord`）。Velocity 维度因单端口不支持压测钉服，消费者按 `-Pe2e.proxy` 自动跳过压测场景。纯 CI / 自举测试增强，不改插件与 `template/`。
 
 ### 修复
 _（暂无）_

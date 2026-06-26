@@ -35,6 +35,10 @@ fun velocityProxyConfigToml(
     sb.appendLine("show-max-players = $VELOCITY_SHOW_MAX_PLAYERS")
     // 离线模式：放行离线机器人（与后端 online-mode=false 配套）
     sb.appendLine("online-mode = false")
+    // 关强制密钥认证：放行无 Mojang 签名 profile key 的离线机器人。Velocity 3.1.2+ 此项默认 true，会把
+    // 1.19+ 无签名 key 的离线客户端在登录 / 发命令时踢掉（含经代理 /server 切服的命令）——离线测试机器人
+    // 没有签名 key，必须关，否则 bot 入不了服 / 切不了服（表现为桩「等待玩家加入超时」）。
+    sb.appendLine("force-key-authentication = false")
     // modern forwarding：经共享 secret 把真实玩家身份 / UUID 转发给后端
     sb.appendLine("player-info-forwarding-mode = \"modern\"")
     sb.appendLine("forwarding-secret-file = \"$VELOCITY_FORWARDING_SECRET_FILE\"")

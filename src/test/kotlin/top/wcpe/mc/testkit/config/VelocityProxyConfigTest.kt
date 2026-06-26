@@ -24,6 +24,8 @@ class VelocityProxyConfigTest {
         assertTrue(toml.contains("forwarding-secret-file = \"forwarding.secret\""), "应引用 forwarding.secret 文件")
         // 离线放行机器人
         assertTrue(toml.contains("online-mode = false"), "应离线模式放行 bot")
+        // 关强制密钥认证：放行无签名 key 的离线机器人（否则 1.19+ 离线 bot 入服/发命令被踢）
+        assertTrue(toml.contains("force-key-authentication = false"), "应关强制密钥认证放行离线 bot")
         // 具名 server + 地址
         assertTrue(toml.contains("\"s1\" = \"127.0.0.1:25565\""), "应有具名 server s1：\n$toml")
         // try 含该 server

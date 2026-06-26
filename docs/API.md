@@ -81,6 +81,8 @@ mcTestkit {
 
 > 平台枚举只含后端 Paper/Folia、代理 Velocity/Waterfall/BungeeCord，不含 Spigot/Bukkit/Sponge（不列入计划，scope-discipline）。DSL 字段细节可能随 FR-03/04 在 `dsl/` 包内微调，但四个顶层块形态已冻结。集群（FR-10）经 scenario 块**加法新增** `backends(...)` 声明、压测（FR-11）加 `stress {}` 维度，均为加法扩展，不新增顶层块、不改既有字段语义（ADR-0008）。单场景多 bot（FR-16）经 **bot 声明加法扩展**：一个场景可声明多个 bot——具名 `bot("角色") { }`（异质，各自 `username`/`action`/`env`）与 `bot { count = N }`（同质复制 N 份），复用既有 env / 任务名、不新增顶层块；同场景声明 ≥2 个 bot 时每个须有唯一角色名，`count` 须 >0，压测场景禁用 `count`/多 bot（规模用 `botsPerServer`），违反配置期中文报错（ADR-0009）。
 
+> 经 **Velocity 代理**走 modern forwarding（代理 `velocity.toml` + 后端 `paper-global proxies.velocity`，共享 forwarding secret，见 ADR-0010）：支持单后端经代理 / 集群 `/server` 切换 / 崩溃接管 fallback；**不支持压测钉服**（Velocity 单端口无「一端口对一后端」，`stress + via=velocity` 配置期中文报错）。Velocity 用自有版本号（env `…VELOCITY_VERSION` 缺省 `3.3.0-SNAPSHOT`，非后端 MC 版本）；Waterfall/BungeeCord 经代理写 `config.yml`、Velocity 写 `velocity.toml` + `forwarding.secret`。
+
 **机器人目录定位（Gradle 属性，非 DSL 块）**：消费方照抄 `template/bot` 到其项目；编排经 Gradle 属性 `mcTestkit.botDir` 定位（缺省相对**根工程**的 `e2e-bot`，入口脚本固定 `<botDir>/src/connectAndWait.js`）。目录命名不同的用 `-PmcTestkit.botDir=<目录>` 覆盖（相对路径相对根工程解析，绝对路径直接采用），保证可移植、不写死本机绝对路径。这是 FR-04 唯一新增可配项，刻意走 Gradle 属性而非新增 DSL 顶层块（保持 §3.1 冻结形态不变）。
 
 ### 3.2 生成的任务（命名约定已冻结）

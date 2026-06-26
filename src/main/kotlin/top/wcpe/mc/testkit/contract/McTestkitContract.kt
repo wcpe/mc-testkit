@@ -22,4 +22,17 @@ object McTestkitDefaults {
 
     /** 压测默认随机种子（各 bot 用 seed ^ botIndex 播种，行为可复现）。可经 `stress { randomSeed }` 覆盖。 */
     const val STRESS_RANDOM_SEED = 20260622L
+
+    /**
+     * 代理 Velocity 缺省版本（Velocity 自有版本号、非 MC 版本；PaperMC 发布、Java 17 兼容，见 ADR-0010）。
+     * 可经环境变量 [McTestkitEnv.VELOCITY_VERSION] 覆盖。
+     */
+    const val VELOCITY_VERSION = "3.3.0-SNAPSHOT"
+
+    /**
+     * Velocity modern forwarding 的共享 secret：代理 `forwarding.secret` 文件与后端 `paper-global.yml`
+     * 的 `proxies.velocity.secret` 取同值，二者匹配后端才接受代理转发的玩家身份（见 ADR-0010）。
+     * 仅用于 localhost 临时测试环境，非安全敏感项。
+     */
+    const val VELOCITY_FORWARDING_SECRET = "mc-testkit-e2e-velocity-secret"
 }

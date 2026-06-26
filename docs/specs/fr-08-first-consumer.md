@@ -37,4 +37,4 @@
 ## 6. 风险 / 待定
 
 - buy 场景需真实依赖（某依赖插件等）+ DB/Redis + 业务 bot env，接入工作量大且会再暴露集成缝（缝③等），按 FR-08 capstone 预期逐个修。
-- Velocity 经代理的 modern-forwarding 配置未生成（Waterfall 路径完整），与 buy 验收无关（buy 经 Waterfall）。
+- ~~Velocity 经代理的 modern-forwarding 配置未生成（Waterfall 路径完整）~~ → **已实现**（见 ADR-0010：`velocity.toml` modern forwarding + 共享 secret + 后端 `proxies.velocity`；FR-08 当时 buy 验收经 Waterfall，Velocity 单后端 / 集群 / 崩溃接管路径后续补齐并纳入自举 E2E 矩阵）。

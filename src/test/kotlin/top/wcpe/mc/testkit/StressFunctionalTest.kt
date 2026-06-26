@@ -78,4 +78,34 @@ class StressFunctionalTest {
             "压测 botsPerServer 非正应配置期中文报错",
         )
     }
+
+    @Test
+    fun `压测经 Velocity 代理配置期中文报错`() {
+        write("settings.gradle.kts", """rootProject.name = "stress-velocity"""")
+        write(
+            "build.gradle.kts",
+            """
+            plugins { id("top.wcpe.mc-testkit") }
+            mcTestkit {
+                backend("s1") { port = 25565 }
+                backend("s2") { port = 25566 }
+                proxy("vel") { platform = velocity; port = 25577; routesTo("s1", "s2") }
+                scenario("load") {
+                    backends("s1", "s2"); via = "vel"
+                    stress { botsPerServer = 2; durationSeconds = 30 }
+                }
+            }
+            """.trimIndent(),
+        )
+        val result = GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withPluginClasspath()
+            .withArguments("help")
+            .buildAndFail()
+
+        assertTrue(
+            result.output.contains("Velocity") || result.output.contains("钉服"),
+            "压测经 Velocity 单端口应在配置期抛中文错误",
+        )
+    }
 }

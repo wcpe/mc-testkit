@@ -16,6 +16,9 @@
     1. `server.properties`：`online-mode=false` + `enforce-secure-profile=false`（离线 bot 经离线代理进服）。
     2. `spigot.yml`：`settings.bungeecord: true`（接受代理转发握手）。
     3. `config/paper-global.yml`：`proxies.bungee-cord.online-mode: false`（按转发 UUID 处理）。
+  - **Velocity modern forwarding 两件套**（经 Velocity 代理必需，与 BungeeCord 三件套**二选一**，后续补，见 ADR-0010）：
+    1. `server.properties`：`online-mode=false` + `enforce-secure-profile=false`（同 BungeeCord）。
+    2. `config/paper-global.yml`：`proxies.velocity.{enabled=true, online-mode=false, secret=<共享>}`——secret 与代理 `forwarding.secret` 同值。**不写** `spigot.yml settings.bungeecord`（Velocity 与 BungeeCord 模式互斥）。
   - **经代理机器人协议版本固定规则**：一个纯函数 / 常量决策——「经代理时机器人 mineflayer 协议版本 = 后端 MC 版本」，返回该版本字符串供 FR-04 接线时喂给 FR-06 的 `BotConnection.version`（FR-05 只给规则，不起机器人）。
   - **依赖注入缺失校验**：通用助手——给定「必需注入项（名→是否已提供）」，缺失时抛**中文** `GradleException`，说明缺什么、怎么补（提示对应 `MC_TESTKIT_E2E_*_JAR` / `SERVER_TEMPLATE_DIR` 等逃生口）；不绑定具体依赖插件 / Redis 名（那是消费方声明的）。
 - 不做（范围外）：

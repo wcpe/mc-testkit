@@ -13,12 +13,16 @@ import top.wcpe.mc.testkit.bot.BotProcessContext
 import top.wcpe.mc.testkit.bot.botPidFile
 import top.wcpe.mc.testkit.bot.stopProcessByPidFile
 import top.wcpe.mc.testkit.config.BackendBungeeCordConfig
+import top.wcpe.mc.testkit.config.BackendVelocityConfig
 import top.wcpe.mc.testkit.config.ProxyProtocolVersion
 import top.wcpe.mc.testkit.config.ServerProperties
 import top.wcpe.mc.testkit.config.StressProxyBinding
+import top.wcpe.mc.testkit.config.VELOCITY_FORWARDING_SECRET_FILE
 import top.wcpe.mc.testkit.config.bungeeClusterProxyConfigYml
 import top.wcpe.mc.testkit.config.bungeeProxyConfigYml
 import top.wcpe.mc.testkit.config.bungeeStressProxyConfigYml
+import top.wcpe.mc.testkit.config.velocityProxyConfigToml
+import top.wcpe.mc.testkit.contract.McTestkitDefaults
 import top.wcpe.mc.testkit.contract.McTestkitEnv
 import top.wcpe.mc.testkit.contract.McTestkitResultFile
 import top.wcpe.mc.testkit.contract.McTestkitTaskNames
@@ -140,6 +144,13 @@ object McTestkitTasks {
                 topology.backends.first { it.name == name } // 已由 TopologyResolver 校验存在
             }
             val proxy = scenario.via?.let { via -> topology.proxies.first { it.name == via } } // 压测 via 可选
+            // Velocity 单端口、无「N-listener 一端口对一后端」钉服能力（见 ADR-0010）：压测经 Velocity 配置期即报错，不静默
+            if (proxy?.platform == ProxyPlatform.VELOCITY) {
+                throw GradleException(
+                    "mcTestkit 压测场景「${scenario.name}」不支持经 Velocity 代理：Velocity 是单端口代理，无法做" +
+                        "「N-listener 一端口对一后端」钉服。请改用 Waterfall / BungeeCord 代理，或去掉 via 直连后端。",
+                )
+            }
             registerStressTask(project, extension, scenario, stress, stressBackends, proxy)
             return
         }
@@ -254,9 +265,11 @@ object McTestkitTasks {
             task.doLast {
                 var proxyProcess: Process? = null
                 try {
-                    // ① 后端切到 BungeeCord 代理模式（Velocity 走 modern forwarding，不需要这三件套）
+                    // ① 后端切到代理模式：BungeeCord 系走三件套，Velocity 走 modern forwarding 两件套（含共享 secret）
                     if (isBungeeMode) {
                         BackendBungeeCordConfig.apply(layout.runDir)
+                    } else {
+                        BackendVelocityConfig.apply(layout.runDir)
                     }
                     // ② 后台起代理（写 pid 供收尾）
                     proxyProcess = startProxyBackground(project, proxy, backend)
@@ -334,7 +347,12 @@ object McTestkitTasks {
                     clusterBackends.forEach { backend ->
                         val runDir = layout.clusterBackendRunDir(backend.name)
                         prepareRunDirectory(project, extension, backend, runDir)
-                        BackendBungeeCordConfig.apply(runDir)
+                        // 后端切到代理模式：Velocity 走 modern forwarding 两件套，否则 BungeeCord 三件套
+                        if (proxy.platform == ProxyPlatform.VELOCITY) {
+                            BackendVelocityConfig.apply(runDir)
+                        } else {
+                            BackendBungeeCordConfig.apply(runDir)
+                        }
                         backendProcesses[backend.name] =
                             startBackendBackground(project, backend, runDir, scenario.name, resultFile)
                     }
@@ -420,14 +438,12 @@ object McTestkitTasks {
                     ),
                 )
             ProxyPlatform.VELOCITY ->
-                project.logger.warn(
-                    "[mc-testkit] 集群代理 ${proxy.name} 为 Velocity：本期未生成 Velocity 集群配置（modern forwarding 差异）。",
-                )
+                writeVelocityProxyFiles(project, proxyRunDir, proxy.port, clusterBackends.map { it.name to "127.0.0.1:${it.port}" })
         }
         val provisioner = ServerJarProvisioner.create(layout.jarCacheRoot) {
             project.providers.environmentVariable(it).orNull
         }
-        val jar = provisioner.resolve(proxy.platform.name.lowercase(), clusterBackends.first().version) {
+        val jar = provisioner.resolve(proxy.platform.name.lowercase(), proxyDownloadVersion(proxy.platform, clusterBackends.first().version)) {
             project.logger.lifecycle("[mc-testkit] $it")
         }
         val process = ServerLauncher.launch(
@@ -571,10 +587,9 @@ object McTestkitTasks {
         when (proxy.platform) {
             ProxyPlatform.WATERFALL, ProxyPlatform.BUNGEECORD ->
                 File(proxyRunDir, "config.yml").writeText(bungeeStressProxyConfigYml(bindings))
+            // 压测经 Velocity 已在配置期被拦截（见 registerScenarioTasks 的 stress 分支）；此处兜底，正常不可达
             ProxyPlatform.VELOCITY ->
-                project.logger.warn(
-                    "[mc-testkit] 压测代理 ${proxy.name} 为 Velocity：本期未生成 Velocity 压测配置（modern forwarding 差异）。",
-                )
+                error("压测不支持经 Velocity 代理（单端口无法钉服）：应在配置期已拦截，不应到此。")
         }
         val provisioner = ServerJarProvisioner.create(layout.jarCacheRoot) {
             project.providers.environmentVariable(it).orNull
@@ -844,18 +859,16 @@ object McTestkitTasks {
                     bungeeProxyConfigYml(listenPort = proxy.port, backendAddress = "127.0.0.1:${backend.port}"),
                 )
             ProxyPlatform.VELOCITY ->
-                project.logger.warn(
-                    "[mc-testkit] 代理 ${proxy.name} 为 Velocity：本期未生成 Velocity 配置（modern forwarding 差异），经 Velocity 跑通留 FR-08 实机。",
-                )
+                writeVelocityProxyFiles(project, proxyRunDir, proxy.port, listOf(backend.name to "127.0.0.1:${backend.port}"))
         }
 
         val provisioner = ServerJarProvisioner.create(layout.jarCacheRoot) {
             project.providers.environmentVariable(it).orNull
         }
-        // 代理下载版本默认取后端版本（与经代理机器人协议版本同源）；Waterfall 在 PaperMC 按 major.minor
-        // 发布，由 provision 层按平台粒度归一（1.20.1 → 1.20），避免请求带补丁号的版本 404。
+        // 代理下载版本：BungeeCord 系取后端版本（与经代理机器人协议版本同源；Waterfall 经 provision 层归一为
+        // major.minor，避免带补丁号 404）；Velocity 用自有版本号（非 MC 版本，见 [proxyDownloadVersion]）。
         // env `*_VERSION` 覆盖仍优先（见 ServerJarProvisioner.resolveVersion）。
-        val jar = provisioner.resolve(proxy.platform.name.lowercase(), backend.version) {
+        val jar = provisioner.resolve(proxy.platform.name.lowercase(), proxyDownloadVersion(proxy.platform, backend.version)) {
             project.logger.lifecycle("[mc-testkit] $it")
         }
         val process = ServerLauncher.launch(
@@ -1020,6 +1033,34 @@ object McTestkitTasks {
     /** 跨平台 npm 可执行名（Windows 为 `npm.cmd`）。 */
     private fun npmExecutable(): String =
         if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "npm.cmd" else "npm"
+
+    /**
+     * 代理下载版本：Velocity 用自有版本号（[McTestkitDefaults.VELOCITY_VERSION]，非 MC 版本），
+     * 其余（Waterfall/BungeeCord）取后端 MC 版本（Waterfall 由 provision 层再归一为 major.minor）。
+     * env `*_VERSION` 覆盖在 provision 层仍优先（见 ServerJarProvisioner.resolveVersion）。
+     */
+    private fun proxyDownloadVersion(platform: ProxyPlatform, backendVersion: String): String =
+        if (platform == ProxyPlatform.VELOCITY) McTestkitDefaults.VELOCITY_VERSION else backendVersion
+
+    /**
+     * 写 Velocity 代理运行目录的两个文件：`velocity.toml`（modern forwarding + N server + try）+
+     * `forwarding.secret`（共享 secret，与后端 paper-global velocity.secret 同值，见 [BackendVelocityConfig]）。
+     *
+     * @param servers 有序 (server 名, 地址) 列表，首个为默认落地服、全部入 try 作 fallback（FR-15）。
+     */
+    private fun writeVelocityProxyFiles(
+        project: Project,
+        proxyRunDir: File,
+        listenPort: Int,
+        servers: List<Pair<String, String>>,
+    ) {
+        File(proxyRunDir, "velocity.toml").writeText(velocityProxyConfigToml(listenPort, servers))
+        File(proxyRunDir, VELOCITY_FORWARDING_SECRET_FILE).writeText(McTestkitDefaults.VELOCITY_FORWARDING_SECRET)
+        project.logger.lifecycle(
+            "[mc-testkit] 已写 Velocity 代理配置：velocity.toml + $VELOCITY_FORWARDING_SECRET_FILE" +
+                "（servers: ${servers.joinToString(",") { it.first }}）",
+        )
+    }
 
     /** 温和停一个进程并删除其 pid 文件（try/finally 双保险用，吞掉收尾异常不影响主流程结论）。 */
     private fun stopProcessQuietly(project: Project, process: Process, pidFile: File) {

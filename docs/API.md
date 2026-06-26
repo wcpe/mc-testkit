@@ -132,7 +132,7 @@ mcTestkit {
 - `E2E_DISCONNECT_NOW:<…>`：触发机器人在购买中主动断线（中断恢复场景）。
 - `E2E_UI_TOKEN:<uuid>`：经插件消息 UI 通道驱动时下发的会话 token。
 
-> 以上 4 条为**冻结的框架核心协议**。集群等场景的桩↔bot 还可约定**场景特定标记**（如 `template/harness` 跨服示例里 bot 切到目标服后发的「到达确认」标记 `E2E_CLUSTER_ARRIVED`），属 template / 消费方约定、**不进**冻结协议——真实跨服一致性判定由消费方桩按业务替换。
+> 以上 4 条为**冻结的框架核心协议**。集群 / 崩溃接管等场景的桩↔bot 还可约定**场景特定标记**——如 `template/harness` 里 bot 到达 / 落到目标后端后发的「到达确认」标记 `E2E_CLUSTER_ARRIVED`，及崩溃接管（FR-15）示例里 bot 触发默认后端模拟宕机的 `E2E_TRIGGER_CRASH`（桩收到即 `Runtime.halt`）——均属 template / 消费方约定、**不进**冻结协议；真实跨服一致性 / 接管判定由消费方桩按业务替换。
 
 ### 3.5 结果文件（测试结论真源，已冻结）
 

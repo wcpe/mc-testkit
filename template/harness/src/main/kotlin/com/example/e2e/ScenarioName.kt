@@ -23,6 +23,9 @@ enum class ScenarioName(val id: String) {
 
     /** 单场景多 bot 示例场景（FR-16）：多个各唯一 username 的 bot 直连入服，桩收齐 + settle 窗口后聚合写 PASS（薄示例）。 */
     MULTI_BOT("multi-bot"),
+
+    /** 崩溃接管 fallback 示例场景（FR-15）：默认后端收崩溃触发即模拟宕机；bot 经代理回退到存活后端、确认到达即 PASS（薄示例）。 */
+    CRASH_TAKEOVER("crash-takeover"),
     ;
 
     companion object {

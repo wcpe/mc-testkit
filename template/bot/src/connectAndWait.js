@@ -9,6 +9,7 @@ const runExampleBot = require('./scenarios/exampleBot')
 const runCrossServer = require('./scenarios/crossServerBot')
 const runContinuousStress = require('./scenarios/continuousStress')
 const runMultiBot = require('./scenarios/multiBot')
+const runCrashTakeover = require('./scenarios/crashTakeover')
 
 // mc-testkit E2E 机器人入口（照抄物）：探测端口 → mineflayer 登录 → spawn 后按 action 分发场景
 // → 驱动完成后保持在线，等待服务端侧（桩）判定并关服。连接失败按重试间隔重连直到总超时。
@@ -19,6 +20,9 @@ const runMultiBot = require('./scenarios/multiBot')
 const STRESS_BOT_EARLY_STOP_SECONDS = 10
 // 压测 bot 最短施压秒数下限（避免极短时长配置把施压窗口压到 0）
 const STRESS_BOT_MIN_DURATION_SECONDS = 5
+// 崩溃接管（FR-15）：当前后端宕机断线后，等这么久再经代理重连——给宕机后端端口关闭 + 代理感知留时间，
+// 避免重连又落回正在退出的后端
+const RECONNECT_AFTER_CRASH_DELAY_MS = 3000
 
 const config = {
   // 场景动作：决定分发到哪个场景驱动，须与桩侧场景 id、编排声明一致
@@ -46,13 +50,16 @@ const config = {
     ) * 1000
 }
 
-const startedAt = Date.now()
+let startedAt = Date.now()
 let currentBot = null
 let spawned = false
 let exiting = false
 let retryTimer = null
 let scenarioStarted = false
 let portProbeInFlight = false
+// 崩溃接管（FR-15）：场景登记期望重连后，下面两个变量驱动「断线 → 经代理 fallback 重连到存活后端」
+let reconnectExpected = false
+let reconnectPending = null
 
 function log(message) {
   console.log(`[E2E-BOT][${config.action}] ${message}`)
@@ -110,11 +117,22 @@ function scenarioRunner() {
       return runContinuousStress
     case 'multi-bot':
       return runMultiBot
+    case 'crash-takeover':
+      return runCrashTakeover
     default:
       return async () => {
         log('当前 action 未配置专门驱动，保持在线等待服务器关闭')
       }
   }
+}
+
+// 场景登记「断线后重连」（崩溃接管 FR-15）：设置期望并返回一个在「重连后再次 spawn」时 resolve（带新 bot）
+// 的 Promise。默认后端宕机会断开本连接，经代理 fallback 重连到存活后端后，新 bot 经此 Promise 交回场景。
+function reconnectOnDisconnect() {
+  reconnectExpected = true
+  return new Promise((resolve) => {
+    reconnectPending = resolve
+  })
 }
 
 async function startScenario(bot) {
@@ -123,7 +141,7 @@ async function startScenario(bot) {
   }
   scenarioStarted = true
   try {
-    await scenarioRunner()({ bot, config, log })
+    await scenarioRunner()({ bot, config, log, reconnectOnDisconnect })
     log('场景驱动步骤执行完成，继续等待服务器侧结果')
   } catch (error) {
     log(`场景驱动失败: ${error?.stack || error?.message || String(error)}`)
@@ -177,6 +195,15 @@ function connectMineflayer() {
   bot.once('spawn', () => {
     spawned = true
     settledBeforeSpawn = true
+    if (reconnectPending) {
+      // 重连后的再次 spawn（崩溃接管 fallback 落到存活后端）：把新 bot 交回等待的场景，不重启场景驱动
+      reconnectExpected = false
+      const resolveReconnect = reconnectPending
+      reconnectPending = null
+      log('重连后已重新进入服务器（经代理落到存活后端）')
+      resolveReconnect(bot)
+      return
+    }
     log('已进入服务器，启动场景驱动')
     startScenario(bot)
   })
@@ -233,6 +260,18 @@ function connectMineflayer() {
       return
     }
     log(`连接结束: ${formatted}`)
+    if (reconnectExpected && !exiting) {
+      // 场景期望重连（崩溃接管）：当前后端已宕机，刷新重试预算后经代理重连——代理 fallback 到存活后端
+      spawned = false
+      startedAt = Date.now()
+      log(`连接结束，${RECONNECT_AFTER_CRASH_DELAY_MS}ms 后经代理重连到存活后端…`)
+      setTimeout(() => {
+        if (!exiting) {
+          waitForServerPort()
+        }
+      }, RECONNECT_AFTER_CRASH_DELAY_MS)
+      return
+    }
     shutdown(0)
   })
 }

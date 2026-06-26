@@ -16,7 +16,7 @@ template/
     src/main/kotlin/com/example/e2e/
       McTestkitE2eHarnessPlugin.kt  # 桩主体：入服派发场景、发控制消息、写结果文件、收尾关服
       HarnessConfig.kt              # 读 config.yml 的场景配置（纯数据）
-      ScenarioName.kt               # 场景枚举（内置 smoke / example-bot / cross-server / continuous-stress / multi-bot）
+      ScenarioName.kt               # 场景枚举（内置 smoke / example-bot / cross-server / continuous-stress / multi-bot / crash-takeover）
       ScenarioResultWriter.kt       # 把 PASS/FAIL 写成 <scenario>.properties（测试结论真源）
     src/main/resources/
       plugin.yml                    # 桩插件描述
@@ -27,7 +27,7 @@ template/
     src/
       connectAndWait.js          # 入口：探测端口 → 登录 → 按 action 分发场景 → 等结果；集中读环境变量
       lib/{env,messages,normalize}.js  # 环境变量读取 / 消息等待 / 文本归一（纯函数）
-      scenarios/exampleBot.js    # 机器人驱动示例（同目录还有 crossServerBot / continuousStress / multiBot）
+      scenarios/exampleBot.js    # 机器人驱动示例（同目录还有 crossServerBot / continuousStress / multiBot / crashTakeover）
   README.md       # 本文件
 ```
 
@@ -38,7 +38,7 @@ template/
 模板与 mc-testkit 编排之间靠三件**已冻结的契约**对接（详见 mc-testkit 的 `docs/API.md`）：
 
 1. **结果文件**：桩把结论写成 `<scenario>.properties`，键 `status`（`PASS`/`FAIL`）+ `message`。编排的 verify 任务**只认这个文件**判定。见 `ScenarioResultWriter.kt`。
-2. **控制协议**：桩经聊天通道向机器人发 `E2E_READY:<scenario>` 等消息（载荷走 `:` 后缀）。见桩里的 `sendControlMessage` 与机器人 `lib/messages.js`。
+2. **控制协议**：桩经聊天通道向机器人发 `E2E_READY:<scenario>` 等消息（载荷走 `:` 后缀）。见桩里的 `sendControlMessage` 与机器人 `lib/messages.js`。跨服 / 崩溃接管示例还另用 **template 约定标记**（`E2E_CLUSTER_ARRIVED` 到达确认、`E2E_TRIGGER_CRASH` 触发默认后端模拟宕机）——属示例约定、**非冻结契约**，消费方可按业务替换。
 3. **环境变量**：机器人连接 / 超时等参数以 `MC_TESTKIT_E2E_BOT_` 为前缀（如 `MC_TESTKIT_E2E_BOT_HOST` / `_PORT` / `_USERNAME` / `_VERSION` / `_CONNECT_TIMEOUT_MS` / `_RETRY_DELAY_MS` / `_READY_TIMEOUT_MS`）。由编排在启动机器人时注入。见 `connectAndWait.js`。
 
 > 这些名字是 mc-testkit 的冻结契约，**不要在模板里改名**，否则编排与桩 / 机器人对不上。改场景逻辑、加新场景是自由的；改协议 / 结果文件键 / env 名不是。

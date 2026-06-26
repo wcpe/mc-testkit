@@ -112,6 +112,11 @@ jobs:
                   backend = "s1"
                   bot { username = "P"; action = "multi-bot"; count = 3 }
               }
+              // 崩溃接管 fallback（FR-15）：2 后端 + 代理，默认后端宕机 → bot 经代理回退到存活后端确认到达
+              scenario("crash-takeover") {
+                  backends("s1", "s2"); via = "px"
+                  bot { username = "Reconnector"; action = "crash-takeover" }
+              }
               // 自举：桩骨架自身即被测对象（经 HARNESS_JAR 注入两后端）
               dependencies { pluginUnderTest = "HARNESS_JAR" }
           }
@@ -142,6 +147,9 @@ jobs:
 
       - name: E2E · 集群跨服（e2eCrossServerCluster）
         run: ./gradlew -p "$CONSUMER" e2eCrossServerCluster -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
+
+      - name: E2E · 崩溃接管 fallback（e2eCrashTakeoverCluster）
+        run: ./gradlew -p "$CONSUMER" e2eCrashTakeoverCluster -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
       - name: E2E · 持续压测（e2eContinuousStressStress）
         run: ./gradlew -p "$CONSUMER" e2eContinuousStressStress -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace

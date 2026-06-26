@@ -164,6 +164,7 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
         when (harnessConfig.scenario) {
             ScenarioName.EXAMPLE_BOT -> prepareExampleBotScenario(player)
             ScenarioName.CROSS_SERVER -> prepareCrossServerScenario(player)
+            ScenarioName.CRASH_TAKEOVER -> prepareCrashTakeoverScenario(player)
             // 持续压测 / 单场景多 bot 在 onPlayerJoin 前置分支处理（不走单次 started 门），不到此
             ScenarioName.CONTINUOUS_STRESS -> Unit
             ScenarioName.MULTI_BOT -> Unit
@@ -180,6 +181,20 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
      * 真实跨服数据一致性断言（共享库 / 缓存）由消费方在此替换为业务判定，并删掉这段示例。
      */
     private fun prepareCrossServerScenario(player: Player) {
+        prepareTestPlayer(player)
+        sendReadySignal(player)
+        armScenarioTimeout()
+    }
+
+    /**
+     * 崩溃接管 fallback 示例场景（FR-15，照抄物，刻意最薄）。
+     *
+     * 桩对称：每个后端的桩都「装备 + 发就绪信号 + 挂超时」，差异全在 [onPlayerChat]——
+     * **默认后端**收到机器人发的 [TRIGGER_CRASH_MARKER] 即 [simulateCrash] 模拟宕机（不写结果）；
+     * 机器人经代理 fallback 落到**存活后端**后发 [CLUSTER_ARRIVED_MARKER]，存活桩收到即判 PASS。
+     * 只验**框架层** fallback 路由通；真实「存活服在归属租约 TTL 过期后接管上线」由消费方在存活桩查共享 DB 改判。
+     */
+    private fun prepareCrashTakeoverScenario(player: Player) {
         prepareTestPlayer(player)
         sendReadySignal(player)
         armScenarioTimeout()
@@ -290,17 +305,27 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
             }
             return
         }
-        if (completed.get() || harnessConfig.scenario != ScenarioName.CROSS_SERVER) {
+        if (completed.get()) {
             return
         }
-        if (event.message.trim() != CLUSTER_ARRIVED_MARKER) {
+        val message = event.message.trim()
+        // 崩溃接管：默认后端收到崩溃触发标记 → 模拟宕机（不写结果，由存活后端判定）
+        if (harnessConfig.scenario == ScenarioName.CRASH_TAKEOVER && message == TRIGGER_CRASH_MARKER) {
+            simulateCrash()
+            return
+        }
+        // 跨服 / 崩溃接管：到达（存活）后端收到切换确认标记 → 判 PASS
+        if (harnessConfig.scenario != ScenarioName.CROSS_SERVER && harnessConfig.scenario != ScenarioName.CRASH_TAKEOVER) {
+            return
+        }
+        if (message != CLUSTER_ARRIVED_MARKER) {
             return
         }
         val playerName = event.player.name
         // 异步聊天事件：切回主线程 / 全局区域写结果 + 关服（Folia 兼容）
         runSync {
             passScenario(
-                message = "机器人经代理切到本服并确认跨服切换，集群跨服链路通",
+                message = "机器人经代理到达本服并确认到达（跨服切换 / 崩溃接管 fallback 落存活后端），链路通",
                 // backendName 即本到达服的声明名（编排下发 MC_TESTKIT_E2E_BACKEND_NAME，FR-12）：消费方据此判断「切到了哪台」
                 details =
                     mapOf(
@@ -356,6 +381,16 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
         logger.severe("[E2E][FAIL] $message")
         resultWriter.write(ScenarioResultWriter.STATUS_FAIL, message)
         scheduleShutdown()
+    }
+
+    /**
+     * 模拟本后端崩溃宕机（崩溃接管场景，FR-15）：用 `Runtime.halt` 立即结束 JVM——不跑关服钩子、
+     * 最贴近真实崩溃，监听端口随之立即关闭，代理在 bot 重连时对本后端连接被拒 → fallback 到存活后端。
+     * **刻意不写结果文件**（崩溃的后端无从判定，由存活后端 [passScenario] 判 PASS）。
+     */
+    private fun simulateCrash() {
+        logger.warning("[E2E][CRASH-TAKEOVER] 收到崩溃触发标记，模拟本后端宕机（halt $CRASH_EXIT_CODE），端口随之关闭")
+        Runtime.getRuntime().halt(CRASH_EXIT_CODE)
     }
 
     /** 延迟关服，回收前台 runServer 线程；延迟由配置控制以留结果落盘窗口。 */
@@ -426,8 +461,14 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
         /** 桩通知机器人「已就绪」：`E2E_READY:<scenario>`。 */
         const val CONTROL_READY = "E2E_READY"
 
-        /** 跨服场景：机器人经代理切到目标服后发的「切换确认」标记（聊天）；桩收到即判 PASS（template 约定）。 */
+        /** 跨服 / 崩溃接管：机器人到达目标 / 存活后端后发的「到达确认」标记（聊天）；桩收到即判 PASS（template 约定）。 */
         const val CLUSTER_ARRIVED_MARKER = "E2E_CLUSTER_ARRIVED"
+
+        /** 崩溃接管（FR-15）：机器人发给默认后端的「立即崩溃」触发标记（聊天）；桩收到即 halt 模拟宕机（template 约定，非冻结契约）。 */
+        const val TRIGGER_CRASH_MARKER = "E2E_TRIGGER_CRASH"
+
+        /** 模拟崩溃的 JVM 退出码（`Runtime.halt`）。 */
+        const val CRASH_EXIT_CODE = 70
 
         /** 持续压测：机器人到 duration 末上报的累计摘要前缀 `E2E_STRESS_RESULT:`（冻结协议，docs/API.md §3.4）。 */
         const val STRESS_RESULT_PREFIX = "E2E_STRESS_RESULT:"

@@ -177,11 +177,24 @@ class ScenarioSpec(val name: String) {
  */
 @McTestkitDsl
 class ServeSpec(val name: String) {
-    /** 起哪个后端（按 [BackendSpec.name] 引用；null = 默认取首个声明的后端）。 */
+    /** 起哪个后端（按 [BackendSpec.name] 引用；null = 默认取首个声明的后端）。与 [backends] 互斥。 */
     var backend: String? = null
 
     /** 经哪个代理（按 [ProxySpec.name] 引用；null = 直连后端）。设了则该代理须 routesTo 目标后端。 */
     var via: String? = null
+
+    private val mutableBackends = mutableListOf<String>()
+
+    /**
+     * 集群 serve 的多后端引用（按声明顺序，FR-18）。非空即**集群 serve**：把这些后端 + 代理整套挂起，
+     * 真人经代理 `/server` 在它们间切换手测。须配 [via] 代理，且与单后端 [backend] 互斥。
+     */
+    val backendRefs: List<String> get() = mutableBackends.toList()
+
+    /** 声明集群 serve 同时挂起的多个后端（真人经代理 `/server` 在它们间切换手测，FR-18）。 */
+    fun backends(vararg names: String) {
+        mutableBackends += names
+    }
 }
 
 /**

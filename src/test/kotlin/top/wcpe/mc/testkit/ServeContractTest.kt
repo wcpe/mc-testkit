@@ -172,4 +172,113 @@ class ServeContractTest {
         }
         assertTrue(ex.message!!.contains("无可用后端"), "应报无可用后端：${ex.message}")
     }
+
+    // ── 集群 serve（FR-18）──
+
+    @Test
+    fun `集群 serve DSL 记录 backends 与 via`() {
+        val ext = extension()
+        ext.backend("s1")
+        ext.backend("s2")
+        ext.proxy("wf") { routesTo("s1", "s2") }
+        ext.serve("dev") {
+            backends("s1", "s2")
+            via = "wf"
+        }
+        val dev = ext.declaredServes.single()
+        assertEquals(listOf("s1", "s2"), dev.backendRefs)
+        assertEquals("wf", dev.via)
+    }
+
+    @Test
+    fun `集群 serve 合法声明解析通过`() {
+        TopologyResolver.resolve(
+            backends = listOf(
+                BackendSpec("s1").apply { port = 25565 },
+                BackendSpec("s2").apply { port = 25566 },
+            ),
+            proxies = listOf(
+                ProxySpec("wf").apply {
+                    port = 25577
+                    routesTo("s1", "s2")
+                },
+            ),
+            scenarios = emptyList(),
+            serves = listOf(
+                ServeSpec("dev").apply {
+                    backends("s1", "s2")
+                    via = "wf"
+                },
+            ),
+        )
+    }
+
+    @Test
+    fun `集群 serve 缺 via 配置期中文报错`() {
+        val ex = assertFailsWith<GradleException> {
+            TopologyResolver.resolve(
+                backends = listOf(
+                    BackendSpec("s1").apply { port = 25565 },
+                    BackendSpec("s2").apply { port = 25566 },
+                ),
+                proxies = emptyList(),
+                scenarios = emptyList(),
+                serves = listOf(ServeSpec("dev").apply { backends("s1", "s2") }),
+            )
+        }
+        assertTrue(ex.message!!.contains("必须经代理") || ex.message!!.contains("via"), "集群 serve 缺 via 应中文报错：${ex.message}")
+    }
+
+    @Test
+    fun `集群 serve via 未覆盖全部后端配置期中文报错`() {
+        val ex = assertFailsWith<GradleException> {
+            TopologyResolver.resolve(
+                backends = listOf(
+                    BackendSpec("s1").apply { port = 25565 },
+                    BackendSpec("s2").apply { port = 25566 },
+                ),
+                proxies = listOf(
+                    ProxySpec("wf").apply {
+                        port = 25577
+                        routesTo("s1")
+                    },
+                ),
+                scenarios = emptyList(),
+                serves = listOf(
+                    ServeSpec("dev").apply {
+                        backends("s1", "s2")
+                        via = "wf"
+                    },
+                ),
+            )
+        }
+        assertTrue(ex.message!!.contains("未路由"), "集群 serve via 未覆盖全部后端应中文报错：${ex.message}")
+    }
+
+    @Test
+    fun `集群 serve 与单后端 backend 并用配置期中文报错`() {
+        val ex = assertFailsWith<GradleException> {
+            TopologyResolver.resolve(
+                backends = listOf(
+                    BackendSpec("s1").apply { port = 25565 },
+                    BackendSpec("s2").apply { port = 25566 },
+                ),
+                proxies = listOf(
+                    ProxySpec("wf").apply {
+                        port = 25577
+                        routesTo("s1", "s2")
+                    },
+                ),
+                scenarios = emptyList(),
+                serves = listOf(
+                    ServeSpec("dev").apply {
+                        backend = "s1"
+                        backends("s1", "s2")
+                        via = "wf"
+                    },
+                ),
+            )
+        }
+        assertTrue(ex.message!!.contains("不可同时"), "集群 serve 与 backend 并用应中文报错：${ex.message}")
+    }
 }

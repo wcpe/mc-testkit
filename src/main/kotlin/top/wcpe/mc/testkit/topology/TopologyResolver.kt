@@ -294,34 +294,88 @@ object TopologyResolver {
         }
 
         serves.forEach { serve ->
-            val backendRef = serve.backend
-            if (backendRef != null && backendRef !in backendNames) {
+            val hasBackends = serve.backendRefs.isNotEmpty()
+            // 单后端 backend 与多后端 backends 互斥（集群 serve 只用 backends）
+            if (hasBackends && serve.backend != null) {
                 throw GradleException(
-                    "mcTestkit serve「${serve.name}」引用的后端「$backendRef」不存在；请检查 backend = 的名称或先声明该后端。",
+                    "mcTestkit serve「${serve.name}」不可同时用 backend = 与 backends(...)；集群 serve 请只用 backends(...)。",
                 )
             }
-            if (backendRef == null && backends.isEmpty()) {
-                throw GradleException(
-                    "mcTestkit serve「${serve.name}」无可用后端：请用 backend(\"...\") 声明至少一个后端，或用 serve 的 backend = 指定。",
-                )
+            if (hasBackends) {
+                validateClusterServe(serve, backendNames, proxyNames, proxies)
+            } else {
+                validateSingleServe(serve, backendNames, proxyNames, proxies, backends)
             }
+        }
+    }
 
-            val viaRef = serve.via
-            if (viaRef != null && viaRef !in proxyNames) {
+    /** 集群 serve（FR-18）：各后端存在、须有 via、via 路由覆盖全部后端。 */
+    private fun validateClusterServe(
+        serve: ServeSpec,
+        backendNames: Set<String>,
+        proxyNames: Set<String>,
+        proxies: List<ProxySpec>,
+    ) {
+        val missing = serve.backendRefs.firstOrNull { it !in backendNames }
+        if (missing != null) {
+            throw GradleException(
+                "mcTestkit 集群 serve「${serve.name}」引用的后端「$missing」不存在；请检查 backends(...) 的名称或先声明该后端。",
+            )
+        }
+        val viaRef = serve.via
+            ?: throw GradleException(
+                "mcTestkit 集群 serve「${serve.name}」必须经代理（请声明 via = \"<代理名>\"）——真人经代理 /server 在后端间切换需要代理。",
+            )
+        if (viaRef !in proxyNames) {
+            throw GradleException(
+                "mcTestkit 集群 serve「${serve.name}」引用的代理「$viaRef」不存在；请检查 via = 的名称或先声明该代理。",
+            )
+        }
+        val proxy = proxies.first { it.name == viaRef }
+        val notRouted = serve.backendRefs.firstOrNull { it !in proxy.routes }
+        if (notRouted != null) {
+            throw GradleException(
+                "mcTestkit 集群 serve「${serve.name}」的代理「$viaRef」未路由到后端「$notRouted」；" +
+                    "请让 proxy(\"$viaRef\") routesTo(...) 覆盖全部后端。",
+            )
+        }
+    }
+
+    /** 单后端 serve（FR-17）：backend 引用存在（或有可默认后端）、via 存在且路由到目标后端。 */
+    private fun validateSingleServe(
+        serve: ServeSpec,
+        backendNames: Set<String>,
+        proxyNames: Set<String>,
+        proxies: List<ProxySpec>,
+        backends: List<BackendSpec>,
+    ) {
+        val backendRef = serve.backend
+        if (backendRef != null && backendRef !in backendNames) {
+            throw GradleException(
+                "mcTestkit serve「${serve.name}」引用的后端「$backendRef」不存在；请检查 backend = 的名称或先声明该后端。",
+            )
+        }
+        if (backendRef == null && backends.isEmpty()) {
+            throw GradleException(
+                "mcTestkit serve「${serve.name}」无可用后端：请用 backend(\"...\") 声明至少一个后端，或用 serve 的 backend = 指定。",
+            )
+        }
+
+        val viaRef = serve.via
+        if (viaRef != null && viaRef !in proxyNames) {
+            throw GradleException(
+                "mcTestkit serve「${serve.name}」引用的代理「$viaRef」不存在；请检查 via = 的名称或先声明该代理。",
+            )
+        }
+        // 设了 via，则该代理须路由到 serve 的目标后端（显式 backend 或默认首个）
+        if (viaRef != null) {
+            val targetBackend = backendRef ?: backends.first().name
+            val proxy = proxies.first { it.name == viaRef }
+            if (targetBackend !in proxy.routes) {
                 throw GradleException(
-                    "mcTestkit serve「${serve.name}」引用的代理「$viaRef」不存在；请检查 via = 的名称或先声明该代理。",
+                    "mcTestkit serve「${serve.name}」的代理「$viaRef」未路由到后端「$targetBackend」；" +
+                        "请让 proxy(\"$viaRef\") routesTo(\"$targetBackend\")。",
                 )
-            }
-            // 设了 via，则该代理须路由到 serve 的目标后端（显式 backend 或默认首个）
-            if (viaRef != null) {
-                val targetBackend = backendRef ?: backends.first().name
-                val proxy = proxies.first { it.name == viaRef }
-                if (targetBackend !in proxy.routes) {
-                    throw GradleException(
-                        "mcTestkit serve「${serve.name}」的代理「$viaRef」未路由到后端「$targetBackend」；" +
-                            "请让 proxy(\"$viaRef\") routesTo(\"$targetBackend\")。",
-                    )
-                }
             }
         }
     }

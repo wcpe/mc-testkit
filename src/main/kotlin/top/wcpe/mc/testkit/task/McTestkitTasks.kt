@@ -786,6 +786,21 @@ object McTestkitTasks {
         topology: Topology,
         serve: ServeSpec,
     ) {
+        // 声明 backends(...) 即集群 serve（FR-18）；否则单后端 serve（FR-17）
+        if (serve.backendRefs.isNotEmpty()) {
+            registerClusterServeTasks(project, extension, topology, serve)
+        } else {
+            registerSingleServeTasks(project, extension, topology, serve)
+        }
+    }
+
+    /** 单后端 serve（FR-17）：起单后端（+ 可选经代理）挂住，`stop<Key>Serve` 按 pid 收尾后端（+ 代理）。 */
+    private fun registerSingleServeTasks(
+        project: Project,
+        extension: McTestkitExtension,
+        topology: Topology,
+        serve: ServeSpec,
+    ) {
         val backend = resolveServeBackend(topology, serve)
         val proxy = serve.via?.let { via -> topology.proxies.first { it.name == via } } // 已由 TopologyResolver 校验存在 + 路由
         val stopName = McTestkitTaskNames.stopServe(serve.name)
@@ -949,6 +964,127 @@ object McTestkitTasks {
         thread.name = "mc-testkit-serve-log-tail"
         thread.start()
         return thread
+    }
+
+    /**
+     * 集群 serve（FR-18）：N 后端 + 代理整套挂起，真人经代理 `/server` 切服手测。复用 FR-10 集群编排
+     * （`startClusterProxyBackground` / `awaitPortOpen`）+ FR-17 serve 挂起 / 三重收尾；各后端桩经哨兵空闲。
+     */
+    private fun registerClusterServeTasks(
+        project: Project,
+        extension: McTestkitExtension,
+        topology: Topology,
+        serve: ServeSpec,
+    ) {
+        val clusterBackends = serve.backendRefs.map { name -> topology.backends.first { it.name == name } } // 已校验存在
+        val proxy = topology.proxies.first { it.name == serve.via } // 集群 serve 必有 via 且已校验路由覆盖
+        val stopName = McTestkitTaskNames.stopServe(serve.name)
+
+        registerTask(project, stopName) { task ->
+            task.group = SERVE_TASK_GROUP
+            task.description = "停止集群 serve「${serve.name}」的全部后端与代理 ${proxy.name}（按 pid 收尾）"
+            task.doLast {
+                val layout = layoutOf(project)
+                clusterBackends.forEach { backend ->
+                    stopProcessByPidFile(layout.clusterBackendPidFile(backend.name)) { project.logger.lifecycle("[mc-testkit] $it") }
+                }
+                stopProcessByPidFile(layout.proxyPidFile(proxy.name)) { project.logger.lifecycle("[mc-testkit] $it") }
+            }
+        }
+
+        registerTask(project, McTestkitTaskNames.serve(serve.name)) { task ->
+            task.group = SERVE_TASK_GROUP
+            task.description =
+                "持久起集群 serve「${serve.name}」：${clusterBackends.size} 后端 + 代理 ${proxy.name}，真人经代理 /server 切服手测（Ctrl+C 停）"
+            task.doLast {
+                serveClusterForeground(project, extension, clusterBackends, proxy, serve.name)
+            }
+        }
+    }
+
+    /**
+     * 集群 serve 任务体（FR-18）：每后端独立运行目录 prepare + 代理模式 + 后台起（哨兵桩空闲）→ 后台起集群代理
+     * → 等全部端口就绪打印连接信息 → **阻塞挂住**（等代理进程，某后端宕仍挂便于看 fallback）到手动停 → 三重收尾。
+     */
+    private fun serveClusterForeground(
+        project: Project,
+        extension: McTestkitExtension,
+        clusterBackends: List<ResolvedBackend>,
+        proxy: ResolvedProxy,
+        serveName: String,
+    ) {
+        val layout = layoutOf(project)
+        val backendProcesses = LinkedHashMap<String, Process>()
+        var proxyProcess: Process? = null
+        var logTail: Thread? = null
+        val shutdownHook = Thread {
+            backendProcesses.values.forEach { destroyProcessQuietly(project, it) }
+            proxyProcess?.let { destroyProcessQuietly(project, it) }
+        }
+        Runtime.getRuntime().addShutdownHook(shutdownHook)
+        try {
+            // ① 每后端独立运行目录 prepare + 代理模式配置 + 后台起（哨兵场景使桩空闲）
+            clusterBackends.forEach { backend ->
+                val runDir = layout.clusterBackendRunDir(backend.name)
+                prepareRunDirectory(project, extension, backend, runDir)
+                if (proxy.platform == ProxyPlatform.VELOCITY) {
+                    BackendVelocityConfig.apply(runDir)
+                } else {
+                    BackendBungeeCordConfig.apply(runDir)
+                }
+                backendProcesses[backend.name] = startServeClusterBackend(project, backend, runDir)
+            }
+            // ② 后台起集群代理（单 listener + N 具名 server，供真人 /server 切换）
+            proxyProcess = startClusterProxyBackground(project, proxy, clusterBackends)
+            // ③ 就绪门：等全部后端 + 代理端口可连
+            clusterBackends.forEach { awaitPortOpen(project, it.port, "集群后端 ${it.name}") }
+            awaitPortOpen(project, proxy.port, "集群代理 ${proxy.name}")
+            // ④ 打印连接信息（连代理端口、/server 切换目标）
+            project.logger.lifecycle(
+                "[mc-testkit] ✅ serve「$serveName」集群已就绪：请用 Minecraft ${clusterBackends.first().version} 客户端连接 127.0.0.1:${proxy.port}" +
+                    "（经代理 ${proxy.name}），可 /server 切换：${clusterBackends.joinToString(", ") { it.name }}。" +
+                    "停止：本终端 Ctrl+C，或另跑 ./gradlew ${McTestkitTaskNames.stopServe(serveName)}",
+            )
+            // ⑤ 代理日志流到控制台（手测看切服 / 转发）
+            logTail = startServeLogTail(project, File(layout.proxyRunDir, "${proxy.name}.log"))
+            // ⑥ 阻塞挂住：等代理进程退出（代理是真人入口；某后端宕仍挂着便于看崩溃接管 fallback）
+            proxyProcess.waitFor()
+            project.logger.lifecycle("[mc-testkit] serve「$serveName」集群代理已退出，收尾。")
+        } finally {
+            runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
+            logTail?.interrupt()
+            // 三重收尾兜底：全部后端 + 代理，删 pid
+            backendProcesses.forEach { (name, proc) -> stopProcessQuietly(project, proc, layout.clusterBackendPidFile(name)) }
+            proxyProcess?.let { stopProcessQuietly(project, it, layout.proxyPidFile(proxy.name)) }
+        }
+    }
+
+    /** 后台起一个集群 serve 后端：下发哨兵场景使桩空闲 + BACKEND_NAME；pid 落结果目录供收尾。不下发 RESULT_FILE。 */
+    private fun startServeClusterBackend(project: Project, backend: ResolvedBackend, runDir: File): Process {
+        val layout = layoutOf(project)
+        val provisioner = ServerJarProvisioner.create(layout.jarCacheRoot) {
+            project.providers.environmentVariable(it).orNull
+        }
+        val jar = provisioner.resolve(backend.platform.name.lowercase(), backend.version) {
+            project.logger.lifecycle("[mc-testkit] $it")
+        }
+        val process = ServerLauncher.launch(
+            jar = jar,
+            runDirectory = runDir,
+            key = backend.name,
+            jvmArgs = listOf("-Dterminal.ansi=false", "-Dnet.kyori.ansi.colorLevel=none"),
+            serverArgs = listOf("--nogui"),
+            environment = mapOf(
+                McTestkitEnv.SCENARIO to McTestkitContract.SERVE_SCENARIO_ID,
+                McTestkitEnv.BACKEND_NAME to backend.name,
+            ),
+            logger = { project.logger.lifecycle("[mc-testkit] $it") },
+        )
+        layout.clusterBackendPidFile(backend.name).apply { parentFile?.mkdirs() }.writeText(process.pid().toString())
+        project.logger.lifecycle(
+            "[mc-testkit] 已起集群 serve 后端 ${backend.name} pid=${process.pid()} 端口=${backend.port}（桩空闲、不判定）",
+        )
+        return process
     }
 
     // ── 任务体的实际副作用实现（均在 doLast 内被调用，配置期不执行）──

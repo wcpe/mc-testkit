@@ -95,4 +95,59 @@ class ServeFunctionalTest {
             "serve 引用不存在后端应在配置期抛中文错误",
         )
     }
+
+    @Test
+    fun `集群 serve 声明注册 serveX 与 stopXServe 任务`() {
+        write("settings.gradle.kts", """rootProject.name = "cluster-serve"""")
+        write(
+            "build.gradle.kts",
+            """
+            plugins { id("top.wcpe.mc-testkit") }
+            mcTestkit {
+                backend("s1") { port = 25565 }
+                backend("s2") { port = 25566 }
+                proxy("wf") { platform = waterfall; port = 25577; routesTo("s1", "s2") }
+                serve("dev") {
+                    backends("s1", "s2")
+                    via = "wf"
+                }
+            }
+            """.trimIndent(),
+        )
+        val result = GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withPluginClasspath()
+            .withArguments("tasks", "--all", "--stacktrace")
+            .build()
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":tasks")?.outcome)
+        assertTrue(result.output.contains("serveDev"), "应注册集群 serve 任务 serveDev")
+        assertTrue(result.output.contains("stopDevServe"), "应注册集群 serve 收尾任务 stopDevServe")
+    }
+
+    @Test
+    fun `集群 serve 缺 via 配置期中文报错`() {
+        write("settings.gradle.kts", """rootProject.name = "bad-cluster-serve"""")
+        write(
+            "build.gradle.kts",
+            """
+            plugins { id("top.wcpe.mc-testkit") }
+            mcTestkit {
+                backend("s1") { port = 25565 }
+                backend("s2") { port = 25566 }
+                serve("dev") { backends("s1", "s2") }
+            }
+            """.trimIndent(),
+        )
+        val result = GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withPluginClasspath()
+            .withArguments("help")
+            .buildAndFail()
+
+        assertTrue(
+            result.output.contains("必须经代理") || result.output.contains("via"),
+            "集群 serve 缺 via 应在配置期抛中文错误",
+        )
+    }
 }

@@ -14,6 +14,7 @@ open class McTestkitExtension {
     private val mutableBackends = mutableListOf<BackendSpec>()
     private val mutableProxies = mutableListOf<ProxySpec>()
     private val mutableScenarios = mutableListOf<ScenarioSpec>()
+    private val mutableServes = mutableListOf<ServeSpec>()
     private val dependencies = DependenciesSpec()
 
     /** 已声明的后端节点（只读快照）。 */
@@ -24,6 +25,9 @@ open class McTestkitExtension {
 
     /** 已声明的场景（只读快照）。 */
     val declaredScenarios: List<ScenarioSpec> get() = mutableScenarios.toList()
+
+    /** 已声明的持久手测目标（只读快照，FR-17）。 */
+    val declaredServes: List<ServeSpec> get() = mutableServes.toList()
 
     /** 依赖注入声明。 */
     val declaredDependencies: DependenciesSpec get() = dependencies
@@ -39,6 +43,10 @@ open class McTestkitExtension {
     /** 声明一个端到端场景。 */
     fun scenario(name: String, configure: ScenarioSpec.() -> Unit = {}): ScenarioSpec =
         ScenarioSpec(name).apply(configure).also { mutableScenarios += it }
+
+    /** 声明一个持久手测目标（起服挂住供真人客户端连入，FR-17）。 */
+    fun serve(name: String, configure: ServeSpec.() -> Unit = {}): ServeSpec =
+        ServeSpec(name).apply(configure).also { mutableServes += it }
 
     /** 声明注入到运行目录的待测 / 依赖插件 jar。 */
     fun dependencies(configure: DependenciesSpec.() -> Unit): DependenciesSpec =

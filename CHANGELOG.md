@@ -7,7 +7,7 @@
 ## 未发布版本
 
 ### 新增
-_（暂无）_
+- **持久手测模式 serve（FR-17，ADR-0011）**：在自动化 E2E 之外新增一种**并存**的生命周期——复用 `mcTestkit { }` 声明的真实拓扑，把「后端（+ 可选经代理）+ 被测/依赖插件 + 固化环境契约」拉起并**挂住**，供真人 MC 客户端连入**手动测试**，而非 bot 驱动 + 结果文件判定 + 自动收尾。经**新增第 5 个顶层块** `serve("name") { backend = …; via = … }` 声明（DSL 由四块演进为五块，加法非破坏、SemVer minor，不改既有块语义）；生成 `serve<Key>`（前台起服、注入插件、就绪后打印连接信息并把后端日志流到控制台、**前台阻塞挂住**到手动停）与 `stop<Key>Serve`（按 pid 兜底收尾）。Ctrl+C 触发 JVM shutdown hook、任务体 `finally`、`stop<Key>Serve` **三重兜底**收尾后端 + 代理（端口不漏、跨平台 pid 收尾）。serve **不判 PASS/FAIL**（不绕过结果文件自判，架构不变量 §3）。**桩空闲机制**：起后端时下发保留哨兵场景 id `__mc_testkit_serve__`（契约常量 `McTestkitContract.SERVE_SCENARIO_ID`）告诉桩进入空闲——`template/harness` 加 `ScenarioName.SERVE` 空闲分支（不驱动 / 不挂超时 / 不写结果 / 不关服、不动真人玩家）；未同步新模板的老桩遇此未知 id 在 `onEnable` 抛错被禁用、服务端照常挂起（对任何桩都安全）。**不做**：集群多后端挂起（FR-18）、持久并起 bot 人机混场（FR-19）、世界跨次启动持久化、stdin 控制台转发、在线鉴权（维持 `online-mode=false`）。
 
 ### 变更
 _（暂无）_

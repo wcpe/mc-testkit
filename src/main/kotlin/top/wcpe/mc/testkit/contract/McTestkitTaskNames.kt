@@ -43,6 +43,12 @@ object McTestkitTaskNames {
 
     /** 压测收尾任务（按 pid 停全部压测后端 + 代理）：`stop<Key>Stress`。 */
     fun stopStress(scenario: String): String = "stop" + scenario.toTaskKey() + "Stress"
+
+    /** 持久手测起服任务（前台起后端 + 可选代理并挂住，FR-17，ADR-0011）：`serve<Key>`。 */
+    fun serve(serveName: String): String = "serve" + serveName.toTaskKey()
+
+    /** 持久手测收尾任务（按 pid 停 serve 后端 + 代理）：`stop<Key>Serve`。 */
+    fun stopServe(serveName: String): String = "stop" + serveName.toTaskKey() + "Serve"
 }
 
 /** 把场景 / 代理名（kebab-case / camelCase / 空格分隔）折成任务名用的 PascalCase 中缀。 */

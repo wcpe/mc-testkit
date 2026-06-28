@@ -167,6 +167,24 @@ class ScenarioSpec(val name: String) {
 }
 
 /**
+ * 持久手测（serve）目标声明（FR-17，ADR-0011）。
+ *
+ * 声明「把哪个后端（+ 可选经哪个代理）拉起并挂住，供真人客户端连入手测」。与 [ScenarioSpec] 不同，
+ * serve **不驱动 bot、不判定 PASS/FAIL**——它只起服并阻塞到手动停。生成 `serve<Key>` / `stop<Key>Serve`
+ * 任务（见 [top.wcpe.mc.testkit.contract.McTestkitTaskNames]）。
+ *
+ * @property name serve 名（拓扑内唯一，折成任务名 `serve<Key>` 的中缀）。
+ */
+@McTestkitDsl
+class ServeSpec(val name: String) {
+    /** 起哪个后端（按 [BackendSpec.name] 引用；null = 默认取首个声明的后端）。 */
+    var backend: String? = null
+
+    /** 经哪个代理（按 [ProxySpec.name] 引用；null = 直连后端）。设了则该代理须 routesTo 目标后端。 */
+    var via: String? = null
+}
+
+/**
  * 注入到运行目录的待测 / 依赖插件 jar 声明。
  *
  * 值为「环境变量名或路径」，运行期解析以求可移植（不写死本机绝对路径，NFR）。

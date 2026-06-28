@@ -9,6 +9,16 @@ object McTestkitContract {
 
     /** DSL 扩展名：`mcTestkit { }`。 */
     const val EXTENSION_NAME = "mcTestkit"
+
+    /**
+     * 持久手测（serve）模式的**保留场景 id**（ADR-0011）：serve 起后端时经 `MC_TESTKIT_E2E_SCENARIO`
+     * 下发它，告诉桩「进入空闲、不驱动任何场景、不关服」。
+     *
+     * 用双下划线前后缀与消费方 kebab-case 业务场景名划清边界（不会相撞）。`template/harness` 据此**字面量**
+     * 对齐（不 import 插件包）加空闲分支；未同步新模板的老桩遇此未知 id 在 `onEnable` 抛错被禁用，
+     * 服务端照常挂起（对任何桩都安全）。一经发布即契约，见 docs/API.md §3.3。
+     */
+    const val SERVE_SCENARIO_ID = "__mc_testkit_serve__"
 }
 
 /**

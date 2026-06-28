@@ -22,6 +22,7 @@ import top.wcpe.mc.testkit.config.bungeeClusterProxyConfigYml
 import top.wcpe.mc.testkit.config.bungeeProxyConfigYml
 import top.wcpe.mc.testkit.config.bungeeStressProxyConfigYml
 import top.wcpe.mc.testkit.config.velocityProxyConfigToml
+import top.wcpe.mc.testkit.contract.McTestkitContract
 import top.wcpe.mc.testkit.contract.McTestkitDefaults
 import top.wcpe.mc.testkit.contract.McTestkitEnv
 import top.wcpe.mc.testkit.contract.McTestkitResultFile
@@ -30,9 +31,11 @@ import top.wcpe.mc.testkit.dsl.BotSpec
 import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import top.wcpe.mc.testkit.dsl.ProxyPlatform
 import top.wcpe.mc.testkit.dsl.ScenarioSpec
+import top.wcpe.mc.testkit.dsl.ServeSpec
 import top.wcpe.mc.testkit.dsl.StressSpec
 import top.wcpe.mc.testkit.provision.ServerJarProvisioner
 import top.wcpe.mc.testkit.provision.ServerLauncher
+import top.wcpe.mc.testkit.provision.provisionPidFile
 import top.wcpe.mc.testkit.topology.ResolvedBackend
 import top.wcpe.mc.testkit.topology.ResolvedProxy
 import top.wcpe.mc.testkit.topology.Topology
@@ -43,6 +46,9 @@ import java.util.concurrent.TimeUnit
 
 /** Gradle 任务分组名（生成的 e2e 任务都归此组，`./gradlew tasks` 下成组展示）。 */
 private const val TASK_GROUP = "mc-testkit e2e"
+
+/** 持久手测（serve）任务分组名（与 e2e 测试任务分开展示，语义是「起服供人手测」而非「跑测试」）。 */
+private const val SERVE_TASK_GROUP = "mc-testkit serve"
 
 /** Gradle 属性名：覆盖机器人目录（缺省 [RunLayout.DEFAULT_BOT_DIR]）。 */
 private const val BOT_DIR_PROPERTY = "mcTestkit.botDir"
@@ -95,6 +101,11 @@ object McTestkitTasks {
         // ③ 数据驱动：每个场景注册 prepare / e2e（+ bot 时 launch / withBot；+ via 时经代理任务）
         extension.declaredScenarios.forEach { scenario ->
             registerScenarioTasks(project, extension, topology, scenario)
+        }
+
+        // ④ 持久手测：每个 serve 注册 serve<Key> + stop<Key>Serve（FR-17，ADR-0011）
+        extension.declaredServes.forEach { serve ->
+            registerServeTasks(project, extension, topology, serve)
         }
     }
 
@@ -762,6 +773,182 @@ object McTestkitTasks {
         } catch (ex: Exception) {
             project.logger.warn("[mc-testkit] 收尾机器人进程时异常（已忽略）：${ex.message}")
         }
+    }
+
+    /**
+     * 注册持久手测（serve）任务（FR-17，ADR-0011）：`serve<Key>` 前台起后端（声明 via 则先后台起代理）、
+     * 注入插件、下发哨兵场景使桩空闲，**挂住**到用户手动停（Ctrl+C → JVM shutdown hook 收尾；或单独跑
+     * `stop<Key>Serve` 按 pid 兜底）。serve 不判 PASS/FAIL（不绕过结果文件自判，架构不变量 §3）。
+     */
+    private fun registerServeTasks(
+        project: Project,
+        extension: McTestkitExtension,
+        topology: Topology,
+        serve: ServeSpec,
+    ) {
+        val backend = resolveServeBackend(topology, serve)
+        val proxy = serve.via?.let { via -> topology.proxies.first { it.name == via } } // 已由 TopologyResolver 校验存在 + 路由
+        val stopName = McTestkitTaskNames.stopServe(serve.name)
+
+        // 停 serve 任务：按 pid 收尾后端（+ 代理）的兜底（另一终端停 / Ctrl+C 没清干净时用）
+        registerTask(project, stopName) { task ->
+            task.group = SERVE_TASK_GROUP
+            task.description = "停止 serve「${serve.name}」的后端${proxy?.let { " 与代理 ${it.name}" } ?: ""}（按 pid 收尾）"
+            task.doLast {
+                val layout = layoutOf(project)
+                stopProcessByPidFile(provisionPidFile(layout.runDir, backend.name)) { project.logger.lifecycle("[mc-testkit] $it") }
+                proxy?.let { stopProcessByPidFile(layout.proxyPidFile(it.name)) { project.logger.lifecycle("[mc-testkit] $it") } }
+            }
+        }
+
+        registerTask(project, McTestkitTaskNames.serve(serve.name)) { task ->
+            task.group = SERVE_TASK_GROUP
+            task.description =
+                "持久起 serve「${serve.name}」：后端 ${backend.name}${proxy?.let { " 经代理 ${it.name}" } ?: " 直连"}，挂住供真人客户端手测（Ctrl+C 停）"
+            task.doLast {
+                serveForeground(project, extension, backend, proxy, serve.name)
+            }
+        }
+    }
+
+    /** 解析 serve 起哪个后端：显式 `backend =` 引用 > 首个声明的后端（单后端默认）。 */
+    private fun resolveServeBackend(topology: Topology, serve: ServeSpec): ResolvedBackend {
+        val ref = serve.backend
+        if (ref != null) {
+            return topology.backends.firstOrNull { it.name == ref }
+                ?: throw GradleException(
+                    "mcTestkit serve「${serve.name}」引用的后端「$ref」不存在（应在 TopologyResolver 已拦截）。",
+                )
+        }
+        return topology.backends.firstOrNull()
+            ?: throw GradleException(
+                "mcTestkit serve「${serve.name}」无可用后端：请用 backend(\"...\") 至少声明一个后端。",
+            )
+    }
+
+    /**
+     * serve 任务体（FR-17）：prepare →（via 则起代理）→ 前台起后端（下发哨兵场景使桩空闲）→ 等就绪打印连接信息
+     * → **阻塞挂住**到后端退出 / 手动停 → 双保险收尾。注册 JVM shutdown hook 应对 Ctrl+C / 中断时收尾子进程
+     * （高风险区：进程全灭 / 端口不漏 / 跨平台 pid 收尾，配套 `stop<Key>Serve` 兜底）。
+     */
+    private fun serveForeground(
+        project: Project,
+        extension: McTestkitExtension,
+        backend: ResolvedBackend,
+        proxy: ResolvedProxy?,
+        serveName: String,
+    ) {
+        val layout = layoutOf(project)
+        // ① 准备运行目录（注入被测 + 依赖插件，含桩；桩由哨兵场景置空闲）
+        prepareRunDirectory(project, extension, backend, layout.runDir)
+
+        var proxyProcess: Process? = null
+        var backendProcess: Process? = null
+        var logTail: Thread? = null
+        // Ctrl+C / JVM 退出兜底：收尾后端 + 代理（幂等、吞异常，与 finally 双保险）。先注册以覆盖整段生命周期。
+        val shutdownHook = Thread {
+            backendProcess?.let { destroyProcessQuietly(project, it) }
+            proxyProcess?.let { destroyProcessQuietly(project, it) }
+        }
+        Runtime.getRuntime().addShutdownHook(shutdownHook)
+        try {
+            // ② 经代理：写后端代理模式配置 + 后台起代理 + 等代理端口可连
+            if (proxy != null) {
+                if (proxy.platform == ProxyPlatform.VELOCITY) {
+                    BackendVelocityConfig.apply(layout.runDir)
+                } else {
+                    BackendBungeeCordConfig.apply(layout.runDir)
+                }
+                proxyProcess = startProxyBackground(project, proxy, backend)
+                awaitPortOpen(project, proxy.port, "代理 ${proxy.name}")
+            }
+            // ③ 前台起后端：下发哨兵场景 id 使桩空闲、不关服（ADR-0011），不下发 RESULT_FILE（serve 不判定）
+            backendProcess = startServeBackend(project, backend, layout.runDir)
+            // ④ 等后端端口就绪，打印连接信息
+            awaitPortOpen(project, backend.port, "后端 ${backend.name}")
+            val connectPort = proxy?.port ?: backend.port
+            project.logger.lifecycle(
+                "[mc-testkit] ✅ serve「$serveName」已就绪：请用 Minecraft ${backend.version} 客户端连接 127.0.0.1:$connectPort" +
+                    (proxy?.let { "（经代理 ${it.name}）" } ?: "（直连后端 ${backend.name}）") +
+                    "。停止：本终端 Ctrl+C，或另跑 ./gradlew ${McTestkitTaskNames.stopServe(serveName)}",
+            )
+            // ⑤ 后端日志流到控制台（手测需可见启动 / 玩家活动）
+            logTail = startServeLogTail(project, File(layout.runDir, "${backend.name}.log"))
+            // ⑥ 阻塞挂住：等后端进程退出（用户在服务端控制台 stop / kill / Ctrl+C）
+            backendProcess.waitFor()
+            project.logger.lifecycle("[mc-testkit] serve「$serveName」后端已退出，收尾。")
+        } finally {
+            // shutdown hook 收尾后移除（若 JVM 正在退出 removeShutdownHook 会抛，runCatching 吞掉）
+            runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
+            logTail?.interrupt()
+            // 双保险收尾（即便 shutdown hook 未触发）：后端 + 代理，删 pid
+            backendProcess?.let { stopProcessQuietly(project, it, provisionPidFile(layout.runDir, backend.name)) }
+            proxy?.let { p -> proxyProcess?.let { stopProcessQuietly(project, it, layout.proxyPidFile(p.name)) } }
+        }
+    }
+
+    /** 前台起 serve 后端：下发哨兵场景 id 使桩空闲（不关服）+ BACKEND_NAME；不下发 RESULT_FILE（serve 不判定）。 */
+    private fun startServeBackend(project: Project, backend: ResolvedBackend, runDir: File): Process {
+        val layout = layoutOf(project)
+        val provisioner = ServerJarProvisioner.create(layout.jarCacheRoot) {
+            project.providers.environmentVariable(it).orNull
+        }
+        val jar = provisioner.resolve(backend.platform.name.lowercase(), backend.version) {
+            project.logger.lifecycle("[mc-testkit] $it")
+        }
+        val process = ServerLauncher.launch(
+            jar = jar,
+            runDirectory = runDir,
+            key = backend.name,
+            jvmArgs = listOf("-Dterminal.ansi=false", "-Dnet.kyori.ansi.colorLevel=none"),
+            serverArgs = listOf("--nogui"),
+            environment = mapOf(
+                // 哨兵场景：告诉桩进入空闲（不驱动 / 不关服，ADR-0011）；serve 不判定故不下发 RESULT_FILE
+                McTestkitEnv.SCENARIO to McTestkitContract.SERVE_SCENARIO_ID,
+                McTestkitEnv.BACKEND_NAME to backend.name,
+            ),
+            logger = { project.logger.lifecycle("[mc-testkit] $it") },
+        )
+        project.logger.lifecycle(
+            "[mc-testkit] 已起 serve 后端 ${backend.name} pid=${process.pid()} 端口=${backend.port}（桩空闲、不判定）",
+        )
+        return process
+    }
+
+    /**
+     * 起后台守护线程把 serve 后端日志文件 `tail` 到 Gradle 控制台（手测需可见服务端启动 / 玩家活动）。
+     * daemon 线程（不阻塞 JVM 退出）、可被 interrupt 终止；日志文件迟迟不出现则放弃（不致命）。
+     */
+    private fun startServeLogTail(project: Project, logFile: File): Thread {
+        val thread = Thread {
+            try {
+                var waited = 0
+                while (!logFile.exists() && waited < 50 && !Thread.currentThread().isInterrupted) {
+                    Thread.sleep(200)
+                    waited++
+                }
+                if (!logFile.exists()) return@Thread
+                // 后端日志按 UTF-8 读（Paper 写 UTF-8）；用平台默认字符集会把中文等非 ASCII 读乱码（实测 Windows GBK 控制台）
+                logFile.bufferedReader(Charsets.UTF_8).use { reader ->
+                    while (!Thread.currentThread().isInterrupted) {
+                        val line = reader.readLine()
+                        if (line == null) {
+                            Thread.sleep(300)
+                        } else {
+                            project.logger.lifecycle("[mc-testkit][后端] $line")
+                        }
+                    }
+                }
+            } catch (ex: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } catch (ex: Exception) {
+                project.logger.debug("[mc-testkit] serve 日志 tail 结束：${ex.message}")
+            }
+        }
+        thread.isDaemon = true
+        thread.name = "mc-testkit-serve-log-tail"
+        thread.start()
+        return thread
     }
 
     // ── 任务体的实际副作用实现（均在 doLast 内被调用，配置期不执行）──

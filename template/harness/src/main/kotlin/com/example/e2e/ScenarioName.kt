@@ -26,6 +26,13 @@ enum class ScenarioName(val id: String) {
 
     /** 崩溃接管 fallback 示例场景（FR-15）：默认后端收崩溃触发即模拟宕机；bot 经代理回退到存活后端、确认到达即 PASS（薄示例）。 */
     CRASH_TAKEOVER("crash-takeover"),
+
+    /**
+     * 持久手测（serve）空闲场景（FR-17，ADR-0011）：mc-testkit serve 模式经 `MC_TESTKIT_E2E_SCENARIO`
+     * 下发此**保留 id**（字面量对齐 `McTestkitContract.SERVE_SCENARIO_ID`，不 import 插件包）。
+     * 桩据此**空闲**：不驱动任何场景、不挂超时、不写结果、不关服——把服务端留给真人客户端手测。
+     */
+    SERVE("__mc_testkit_serve__"),
     ;
 
     companion object {

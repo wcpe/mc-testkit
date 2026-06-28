@@ -53,6 +53,7 @@
 - **环境契约固化**（一处修、处处生效，源自首个接入项目的实证）：经代理时固定机器人 mineflayer 协议版本为后端 MC 版本；按代理平台二选一——经 BungeeCord 系写后端三件套（`spigot.yml settings.bungeecord` + `config/paper-global.yml proxies.bungee-cord.online-mode`），经 **Velocity 写 modern forwarding 两件套**（代理 `velocity.toml` + 后端 `config/paper-global.yml proxies.velocity`，二者共享同一 forwarding secret，见 [ADR-0010](adr/0010-velocity-modern-forwarding.md)）；依赖插件（数据源/Redis 等）注入与缺失校验。
 - **缓存**：内置下载模块按 平台/版本/构建号 缓存已下载的服务端/代理 jar（hash 校验复用）+ 持久运行库缓存，避免反复下载；运行目录可清理但保留运行库。
 - **判定**：桩写 properties 结果文件 → verify 任务读取 → 转成 Gradle 任务成功/失败（CI 退出码）。
+- **持久手测（serve，FR-17）**：与自动化 E2E **并存**的另一种生命周期——`serve<Key>` 前台起后端（声明 `via` 则先后台起代理）、注入被测 + 依赖插件、经 `MC_TESTKIT_E2E_SCENARIO` 下发**保留哨兵** `__mc_testkit_serve__` 使桩**空闲不关服**，就绪后打印连接信息并把后端日志流到控制台，**前台阻塞挂住**供真人客户端连入手测，到用户手动停。Ctrl+C 触发 JVM shutdown hook、任务体 `finally`、与 `stop<Key>Serve`（按 pid）**三重兜底**收尾后端 + 代理（端口不漏，跨平台 pid 收尾）。serve **不判 PASS/FAIL**（不绕过结果文件自判，架构不变量 §3）；不做世界跨次持久化（每次起全新运行目录、保留下载缓存）。见 [ADR-0011](adr/0011-persistent-serve-mode.md)。
 
 ## 6. 部署
 
@@ -68,4 +69,5 @@
 - 集群/压测 DSL 与编排（场景块加法新增 `backends(...)`，不增顶层块；集群 = N 后端全后台 + 单 listener 代理 + 轮询结果文件；补充 ADR-0004/0006）：见 [ADR-0008](adr/0008-cluster-and-stress-dsl.md)。
 - 单场景多 bot（扩 scenario 的 bot 声明加 `count` + `bot("角色")` 重载，复用既有 env/任务名，与压测划清边界；补充 ADR-0008）：见 [ADR-0009](adr/0009-multi-bot-per-scenario.md)。
 - Velocity modern forwarding（代理 `velocity.toml` + 后端 `paper-global proxies.velocity` + 共享 secret，Velocity 自有版本号；单端口故**不支持压测钉服**、`stress + via=velocity` 配置期报错；补充 ADR-0004/0008）：见 [ADR-0010](adr/0010-velocity-modern-forwarding.md)。
+- 持久手测 serve 模式（非自停挂起生命周期 + 新增 `serve` 顶层块 + 桩空闲保留哨兵场景 id，补充 ADR-0004）：见 [ADR-0011](adr/0011-persistent-serve-mode.md)。
 - **当前不做**：真实游戏客户端驱动；Spigot/Bukkit/Sponge 后端；共享桩 / 机器人发布物（留待第 2 个消费者验证后）。

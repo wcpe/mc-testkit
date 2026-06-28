@@ -95,6 +95,11 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
                     }
                 }
             }
+            ScenarioName.SERVE -> {
+                // 持久手测（serve）空闲（FR-17，ADR-0011）：刻意什么都不做——不驱动、不挂超时、不写结果、不关服。
+                // 服务端留给真人客户端连入手测，直到 mc-testkit serve 任务被手动停（编排侧收尾）。
+                logger.info("[E2E] serve 持久手测模式：桩空闲，不驱动场景、不关服，等待真人客户端连入。")
+            }
             else -> {
                 logger.info("[E2E] 场景 ${harnessConfig.scenario.id} 等待首个玩家加入，超时 ${harnessConfig.waitForPlayerSeconds}s")
                 runLater(harnessConfig.waitForPlayerSeconds * TICKS_PER_SECOND) {
@@ -122,6 +127,10 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
 
     @EventHandler
     fun onPlayerJoin(event: PlayerJoinEvent) {
+        // serve 持久手测（FR-17）：桩空闲，真人玩家入服**不触发任何驱动**（不清背包、不发控制消息、不关服）
+        if (harnessConfig.scenario == ScenarioName.SERVE) {
+            return
+        }
         // 持续压测：每个 bot 都装备 + 发就绪信号（不走单次 started 门）；首个 bot 加入起计时
         if (harnessConfig.scenario == ScenarioName.CONTINUOUS_STRESS) {
             if (stressFinalized.get()) {
@@ -168,6 +177,8 @@ class McTestkitE2eHarnessPlugin : JavaPlugin(), Listener {
             // 持续压测 / 单场景多 bot 在 onPlayerJoin 前置分支处理（不走单次 started 门），不到此
             ScenarioName.CONTINUOUS_STRESS -> Unit
             ScenarioName.MULTI_BOT -> Unit
+            // serve 持久手测在 onPlayerJoin 前置分支已 return（桩空闲），不到此
+            ScenarioName.SERVE -> Unit
             // smoke 不经玩家驱动；其余场景由消费方补充分支
             ScenarioName.SMOKE -> Unit
         }

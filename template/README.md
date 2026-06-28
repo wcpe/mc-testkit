@@ -16,7 +16,7 @@ template/
     src/main/kotlin/com/example/e2e/
       McTestkitE2eHarnessPlugin.kt  # 桩主体：入服派发场景、发控制消息、写结果文件、收尾关服
       HarnessConfig.kt              # 读 config.yml 的场景配置（纯数据）
-      ScenarioName.kt               # 场景枚举（内置 smoke / example-bot / cross-server / continuous-stress / multi-bot / crash-takeover）
+      ScenarioName.kt               # 场景枚举（内置 smoke / example-bot / cross-server / continuous-stress / multi-bot / crash-takeover / serve 空闲）
       ScenarioResultWriter.kt       # 把 PASS/FAIL 写成 <scenario>.properties（测试结论真源）
     src/main/resources/
       plugin.yml                    # 桩插件描述
@@ -122,3 +122,4 @@ npm run connect-and-wait
 - 桩的 `config.yml` 由编排在 prepare 阶段覆盖写入（场景名、结果文件路径）；仓库里这份只是默认占位与字段说明。
 - 模板刻意做到最薄：示例机器人不点 GUI、不断言背包，避免把任何业务玩法固化进骨架。窗口点击 / 背包断言等辅助按你的真实场景自行补。
 - 桩骨架已**兼容 Folia**：`plugin.yml` 声明 `folia-supported: true`（否则 Folia 拒绝加载插件），运行期探测到 Folia 时改用 `GlobalRegionScheduler` 调度（否则用 Bukkit 调度器），同一份桩可直接用于 Paper 或 Folia 后端、无需改代码（用反射调用，不引入对 Folia 专有 API 的编译依赖）。仅在 Paper 上跑可删 `folia-supported`（Paper 忽略它）。
+- **持久手测 serve 空闲场景**（`ScenarioName.SERVE`，FR-17）：mc-testkit 的 `serve<Key>` 任务（起拓扑挂住供真人客户端手测）经保留场景 id `__mc_testkit_serve__` 下发，桩据此**空闲**——不驱动任何场景、不挂超时、不写结果、不关服。这是 serve 模式的对接点，**不要删**（删了 serve 起服后桩会默认跑 `smoke` 把服务端关掉）；它不是业务场景，无需为它写 bot。

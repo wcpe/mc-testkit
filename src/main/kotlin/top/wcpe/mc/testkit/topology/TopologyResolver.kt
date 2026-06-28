@@ -1,10 +1,12 @@
 package top.wcpe.mc.testkit.topology
 
 import org.gradle.api.GradleException
+import top.wcpe.mc.testkit.contract.toTaskKey
 import top.wcpe.mc.testkit.dsl.BackendSpec
 import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import top.wcpe.mc.testkit.dsl.ProxySpec
 import top.wcpe.mc.testkit.dsl.ScenarioSpec
+import top.wcpe.mc.testkit.dsl.ServeSpec
 
 /**
  * 拓扑解析器（FR-03）：把 `mcTestkit { }` 的冻结声明解析为内存 [Topology]。
@@ -25,22 +27,25 @@ object TopologyResolver {
             extension.declaredBackends,
             extension.declaredProxies,
             extension.declaredScenarios,
+            extension.declaredServes,
         )
 
     /**
      * 从声明列表解析拓扑（纯函数核心）。
      *
-     * 顺序：① 校验节点命名 → ② 校验代理路由 → ③ 校验场景引用 → ④ 推导端口 →
-     * ⑤ 校验端口不冲突 → ⑥ 装配 [Topology]。
+     * 顺序：① 校验节点命名 → ② 校验代理路由 → ③ 校验场景引用 → ③' 校验 serve 引用 → ④ 推导端口 →
+     * ⑤ 校验端口不冲突 → ⑥ 装配 [Topology]。`serves` 默认空（向后兼容仅声明场景的旧调用）。
      */
     fun resolve(
         backends: List<BackendSpec>,
         proxies: List<ProxySpec>,
         scenarios: List<ScenarioSpec>,
+        serves: List<ServeSpec> = emptyList(),
     ): Topology {
         validateNames(backends, proxies)
         validateRoutes(backends, proxies)
         validateScenarioRefs(backends, proxies, scenarios)
+        validateServeRefs(backends, proxies, serves)
 
         val resolvedBackends = backends.mapIndexed { index, spec ->
             ResolvedBackend(
@@ -254,6 +259,69 @@ object TopologyResolver {
                 throw GradleException(
                     "mcTestkit 场景「${scenario.name}」的 bot 角色名重复：「$duplicateRole」声明了多次，多 bot 的角色名必须唯一。",
                 )
+            }
+        }
+    }
+
+    /**
+     * 校验持久手测（serve）声明（FR-17，ADR-0011）：① serve 名非空；② serve 名唯一、且折成任务名
+     * `serve<Key>` 后不相撞；③ 显式 `backend` 引用存在，无显式 backend 时拓扑须至少有一个后端可默认；
+     * ④ `via` 代理存在，且设了 via 则该代理须路由到 serve 的目标后端。一律中文报错。
+     */
+    private fun validateServeRefs(
+        backends: List<BackendSpec>,
+        proxies: List<ProxySpec>,
+        serves: List<ServeSpec>,
+    ) {
+        val backendNames = backends.map { it.name }.toSet()
+        val proxyNames = proxies.map { it.name }.toSet()
+
+        serves.forEach { serve ->
+            if (serve.name.isBlank()) {
+                throw GradleException("mcTestkit serve 名不能为空白，请为 serve(...) 提供非空名称。")
+            }
+        }
+        val duplicateServe = firstDuplicate(serves.map { it.name })
+        if (duplicateServe != null) {
+            throw GradleException("mcTestkit serve 名重复：「$duplicateServe」声明了多次，serve 名必须唯一。")
+        }
+        // serve 名折成任务名后不得相撞（如 "dev" 与 "Dev" 都折成 serveDev）
+        val duplicateKey = firstDuplicate(serves.map { it.name.toTaskKey() })
+        if (duplicateKey != null) {
+            throw GradleException(
+                "mcTestkit serve 名折成任务名后冲突：多个 serve 折成同一 <Key>「$duplicateKey」（serve<Key> 会撞名）；请改用不同名称。",
+            )
+        }
+
+        serves.forEach { serve ->
+            val backendRef = serve.backend
+            if (backendRef != null && backendRef !in backendNames) {
+                throw GradleException(
+                    "mcTestkit serve「${serve.name}」引用的后端「$backendRef」不存在；请检查 backend = 的名称或先声明该后端。",
+                )
+            }
+            if (backendRef == null && backends.isEmpty()) {
+                throw GradleException(
+                    "mcTestkit serve「${serve.name}」无可用后端：请用 backend(\"...\") 声明至少一个后端，或用 serve 的 backend = 指定。",
+                )
+            }
+
+            val viaRef = serve.via
+            if (viaRef != null && viaRef !in proxyNames) {
+                throw GradleException(
+                    "mcTestkit serve「${serve.name}」引用的代理「$viaRef」不存在；请检查 via = 的名称或先声明该代理。",
+                )
+            }
+            // 设了 via，则该代理须路由到 serve 的目标后端（显式 backend 或默认首个）
+            if (viaRef != null) {
+                val targetBackend = backendRef ?: backends.first().name
+                val proxy = proxies.first { it.name == viaRef }
+                if (targetBackend !in proxy.routes) {
+                    throw GradleException(
+                        "mcTestkit serve「${serve.name}」的代理「$viaRef」未路由到后端「$targetBackend」；" +
+                            "请让 proxy(\"$viaRef\") routesTo(\"$targetBackend\")。",
+                    )
+                }
             }
         }
     }

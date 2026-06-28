@@ -1,6 +1,6 @@
 # 功能规格：持久开启·单后端手测模式（serve）
 
-> 状态：草拟　·　关联 PRD：FR-17　·　分支：feature/fr-17-persistent-serve　·　决策：[ADR-0011](../adr/0011-persistent-serve-mode.md)
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-17　·　分支：feature/fr-17-persistent-serve　·　决策：[ADR-0011](../adr/0011-persistent-serve-mode.md)
 
 ## 1. 背景与目标
 

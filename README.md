@@ -7,7 +7,7 @@
 
 ## 状态
 
-**v0.3.0**，发布到 [maven.wcpe.top](https://maven.wcpe.top)。自举实机 E2E 覆盖**全矩阵**——单服(±bot) / 经代理（Waterfall·BungeeCord·Velocity）/ 集群 / 压测 / 单场景多 bot / 崩溃接管 / Folia 后端，CI 实机跑通；能力与进度以 [`docs/PRD.md`](docs/PRD.md) §4 FR 表状态列为准。
+**v0.4.0**，发布到 [maven.wcpe.top](https://maven.wcpe.top)。自举实机 E2E 覆盖**全矩阵**——单服(±bot) / 经代理（Waterfall·BungeeCord·Velocity）/ 集群 / 压测 / 单场景多 bot / 崩溃接管 / Folia 后端，CI 实机跑通；能力与进度以 [`docs/PRD.md`](docs/PRD.md) §4 FR 表状态列为准。
 
 ## 架构一览
 
@@ -17,7 +17,7 @@
 - **服务端桩插件**（随项目，模板提供骨架）：装备入服玩家、按场景驱动、与 bot 收发控制消息、判定结果写结果文件。
 - **mineflayer 机器人**（随项目，模板提供内核）：模拟真实玩家入服，驱动购买/交互等端到端场景。
 
-## 能力（v0.3.0）
+## 能力（v0.4.0）
 
 - 一行 DSL 声明并拉起「单后端」「代理 + N 后端」测试拓扑。
 - 多后端集群（bot 经代理 `/server` 跨服切换、桩跨服判定；代理 listener `priorities` 含全部后端，默认后端宕机时 bot 重连回退到存活后端，支撑「崩溃接管」类 E2E，FR-15）与多后端持续压测（N 服 × M bot 钉服施压、各服结果聚合）编排。
@@ -26,6 +26,7 @@
 - 覆盖 Paper/Folia 后端 + Velocity/Waterfall/BungeeCord 代理（不含 Spigot/Bukkit/Sponge）。
 - 经 **Velocity** 代理 modern forwarding（代理 `velocity.toml` + 后端 paper-global velocity，共享 secret）：单后端经代理 / 集群 `/server` 切换 / 崩溃接管均可跑；Velocity 单端口不支持压测钉服（`stress + via=velocity` 配置期中文报错）。补齐三代理平台「真能跑」（ADR-0010）。
 - 自动编排：准备运行目录、注入待测/依赖插件、启动机器人、起服/起代理、读结果判定 PASS/FAIL、收尾杀进程、缓存回写。
+- **持久手测 serve（FR-17/18/19，v0.4.0）**：复用同一拓扑声明把「（可选代理 +）后端 + 插件」**起起来挂住**供真人客户端连入手动测试——单后端 / 集群 `/server` 切服 / 可选并起 bot 人机混场；不判定、不自动收尾，手动停（Ctrl+C / `stop<Key>Serve`）时三重收尾、端口不漏（新增第 5 个顶层块 `serve { }`，ADR-0011）。
 - 固化环境契约：经代理时固定 bot 协议版本、paper-global 代理在线模式、BungeeCord 后端配置、依赖数据源/Redis 注入校验。
 - `template/` 脚手架：新项目照抄即用的桩插件骨架 + bot 内核 + 一个示例场景。
 
@@ -70,7 +71,7 @@ pluginManagement {
 
 ```kotlin
 plugins {
-    id("top.wcpe.mc-testkit") version "0.3.0"
+    id("top.wcpe.mc-testkit") version "0.4.0"
 }
 
 mcTestkit {

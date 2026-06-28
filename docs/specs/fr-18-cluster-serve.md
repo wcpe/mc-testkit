@@ -1,6 +1,6 @@
 # 功能规格：持久开启·集群拓扑手测（serve 集群）
 
-> 状态：草拟　·　关联 PRD：FR-18　·　分支：master　·　决策：[ADR-0011](../adr/0011-persistent-serve-mode.md)　·　依赖：FR-17（serve 内核）
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-18　·　分支：master　·　决策：[ADR-0011](../adr/0011-persistent-serve-mode.md)　·　依赖：FR-17（serve 内核）
 
 ## 1. 背景与目标
 

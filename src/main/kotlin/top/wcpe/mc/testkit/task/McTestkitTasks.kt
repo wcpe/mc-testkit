@@ -94,6 +94,15 @@ object McTestkitTasks {
                 )
             }
         }
+        // serve 的可选 bot（FR-19）同样查展开后 key/username 唯一，杜绝 pid 互相覆盖致收尾漏杀残留
+        extension.declaredServes.forEach { serve ->
+            BotProcessPlanner.firstConflict(serve.name, serve.botSpecs)?.let { conflict ->
+                throw GradleException(
+                    "mcTestkit serve「${serve.name}」多 bot 展开后$conflict；" +
+                        "请改用唯一的角色名 / 用户名 / count 组合（注意 count>1 会派生「<角色>-<序号>」，勿与其它角色撞名）。",
+                )
+            }
+        }
 
         // ② 固定名任务（npm 安装 / 缓存回写 / 清缓存）
         registerFixedTasks(project)
@@ -804,24 +813,33 @@ object McTestkitTasks {
         val backend = resolveServeBackend(topology, serve)
         val proxy = serve.via?.let { via -> topology.proxies.first { it.name == via } } // 已由 TopologyResolver 校验存在 + 路由
         val stopName = McTestkitTaskNames.stopServe(serve.name)
+        // 可选 bot（FR-19）的 pid key（停任务据此按 pid 收尾，防 straggler 残留）
+        val botKeys = BotProcessPlanner.expand(serve.name, serve.botSpecs).map { it.key }
 
-        // 停 serve 任务：按 pid 收尾后端（+ 代理）的兜底（另一终端停 / Ctrl+C 没清干净时用）
+        // 停 serve 任务：按 pid 收尾后端（+ 代理 + 全部 bot）的兜底（另一终端停 / Ctrl+C 没清干净时用）
         registerTask(project, stopName) { task ->
             task.group = SERVE_TASK_GROUP
-            task.description = "停止 serve「${serve.name}」的后端${proxy?.let { " 与代理 ${it.name}" } ?: ""}（按 pid 收尾）"
+            task.description =
+                "停止 serve「${serve.name}」的后端${proxy?.let { " 与代理 ${it.name}" } ?: ""}${if (botKeys.isNotEmpty()) " 与机器人" else ""}（按 pid 收尾）"
             task.doLast {
                 val layout = layoutOf(project)
                 stopProcessByPidFile(provisionPidFile(layout.runDir, backend.name)) { project.logger.lifecycle("[mc-testkit] $it") }
                 proxy?.let { stopProcessByPidFile(layout.proxyPidFile(it.name)) { project.logger.lifecycle("[mc-testkit] $it") } }
+                botKeys.forEach { key -> stopProcessByPidFile(botPidFile(layout.resultsDir, key)) { project.logger.lifecycle("[mc-testkit] $it") } }
             }
         }
 
         registerTask(project, McTestkitTaskNames.serve(serve.name)) { task ->
             task.group = SERVE_TASK_GROUP
             task.description =
-                "持久起 serve「${serve.name}」：后端 ${backend.name}${proxy?.let { " 经代理 ${it.name}" } ?: " 直连"}，挂住供真人客户端手测（Ctrl+C 停）"
+                "持久起 serve「${serve.name}」：后端 ${backend.name}${proxy?.let { " 经代理 ${it.name}" } ?: " 直连"}" +
+                (if (serve.botSpecs.isNotEmpty()) " + ${botKeys.size} bot" else "") + "，挂住供真人客户端手测（Ctrl+C 停）"
+            // 起 bot 需先装好 mineflayer 依赖（FR-19）
+            if (serve.botSpecs.isNotEmpty()) {
+                task.dependsOn(McTestkitTaskNames.NPM_INSTALL_BOT)
+            }
             task.doLast {
-                serveForeground(project, extension, backend, proxy, serve.name)
+                serveForeground(project, extension, backend, proxy, serve.name, serve.botSpecs)
             }
         }
     }
@@ -852,6 +870,7 @@ object McTestkitTasks {
         backend: ResolvedBackend,
         proxy: ResolvedProxy?,
         serveName: String,
+        botSpecs: List<BotSpec> = emptyList(),
     ) {
         val layout = layoutOf(project)
         // ① 准备运行目录（注入被测 + 依赖插件，含桩；桩由哨兵场景置空闲）
@@ -860,8 +879,10 @@ object McTestkitTasks {
         var proxyProcess: Process? = null
         var backendProcess: Process? = null
         var logTail: Thread? = null
-        // Ctrl+C / JVM 退出兜底：收尾后端 + 代理（幂等、吞异常，与 finally 双保险）。先注册以覆盖整段生命周期。
+        val botProcesses = mutableListOf<Process>()
+        // Ctrl+C / JVM 退出兜底：收尾 bot + 后端 + 代理（幂等、吞异常，与 finally 双保险）。先注册以覆盖整段生命周期。
         val shutdownHook = Thread {
+            botProcesses.forEach { destroyProcessQuietly(project, it) }
             backendProcess?.let { destroyProcessQuietly(project, it) }
             proxyProcess?.let { destroyProcessQuietly(project, it) }
         }
@@ -887,16 +908,25 @@ object McTestkitTasks {
                     (proxy?.let { "（经代理 ${it.name}）" } ?: "（直连后端 ${backend.name}）") +
                     "。停止：本终端 Ctrl+C，或另跑 ./gradlew ${McTestkitTaskNames.stopServe(serveName)}",
             )
-            // ⑤ 后端日志流到控制台（手测需可见启动 / 玩家活动）
+            // ⑤ 可选起 bot（FR-19）：把环境驱到某状态（造数据 / 模拟其他玩家），但**不**据结果文件收尾——挂住人机混场。
+            //    经代理则协议版本固定为后端版本（环境契约 FR-05），连端口同真人（connectPort）。
+            if (botSpecs.isNotEmpty()) {
+                val protocolVersion = proxy?.let { ProxyProtocolVersion.forBackend(backend.version) }
+                botProcesses += launchBots(project, serveName, botSpecs, backendPort = connectPort, protocolVersion = protocolVersion)
+                project.logger.lifecycle("[mc-testkit] serve「$serveName」已起 ${botProcesses.size} 个 bot（人机混场，不判定）")
+            }
+            // ⑥ 后端日志流到控制台（手测需可见启动 / 玩家活动）
             logTail = startServeLogTail(project, File(layout.runDir, "${backend.name}.log"))
-            // ⑥ 阻塞挂住：等后端进程退出（用户在服务端控制台 stop / kill / Ctrl+C）
+            // ⑦ 阻塞挂住：等后端进程退出（用户在服务端控制台 stop / kill / Ctrl+C）
             backendProcess.waitFor()
             project.logger.lifecycle("[mc-testkit] serve「$serveName」后端已退出，收尾。")
         } finally {
             // shutdown hook 收尾后移除（若 JVM 正在退出 removeShutdownHook 会抛，runCatching 吞掉）
             runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
             logTail?.interrupt()
-            // 双保险收尾（即便 shutdown hook 未触发）：后端 + 代理，删 pid
+            // 三重收尾兜底（即便 shutdown hook 未触发）：bot（自停兜底 + 按 pid）+ 后端 + 代理，删 pid
+            botProcesses.forEach { destroyProcessQuietly(project, it) }
+            if (botSpecs.isNotEmpty()) stopBots(project, serveName, botSpecs)
             backendProcess?.let { stopProcessQuietly(project, it, provisionPidFile(layout.runDir, backend.name)) }
             proxy?.let { p -> proxyProcess?.let { stopProcessQuietly(project, it, layout.proxyPidFile(p.name)) } }
         }
@@ -979,25 +1009,33 @@ object McTestkitTasks {
         val clusterBackends = serve.backendRefs.map { name -> topology.backends.first { it.name == name } } // 已校验存在
         val proxy = topology.proxies.first { it.name == serve.via } // 集群 serve 必有 via 且已校验路由覆盖
         val stopName = McTestkitTaskNames.stopServe(serve.name)
+        // 可选 bot（FR-19）的 pid key（停任务据此按 pid 收尾，防 straggler 残留）
+        val botKeys = BotProcessPlanner.expand(serve.name, serve.botSpecs).map { it.key }
 
         registerTask(project, stopName) { task ->
             task.group = SERVE_TASK_GROUP
-            task.description = "停止集群 serve「${serve.name}」的全部后端与代理 ${proxy.name}（按 pid 收尾）"
+            task.description =
+                "停止集群 serve「${serve.name}」的全部后端、代理 ${proxy.name}${if (botKeys.isNotEmpty()) " 与机器人" else ""}（按 pid 收尾）"
             task.doLast {
                 val layout = layoutOf(project)
                 clusterBackends.forEach { backend ->
                     stopProcessByPidFile(layout.clusterBackendPidFile(backend.name)) { project.logger.lifecycle("[mc-testkit] $it") }
                 }
                 stopProcessByPidFile(layout.proxyPidFile(proxy.name)) { project.logger.lifecycle("[mc-testkit] $it") }
+                botKeys.forEach { key -> stopProcessByPidFile(botPidFile(layout.resultsDir, key)) { project.logger.lifecycle("[mc-testkit] $it") } }
             }
         }
 
         registerTask(project, McTestkitTaskNames.serve(serve.name)) { task ->
             task.group = SERVE_TASK_GROUP
             task.description =
-                "持久起集群 serve「${serve.name}」：${clusterBackends.size} 后端 + 代理 ${proxy.name}，真人经代理 /server 切服手测（Ctrl+C 停）"
+                "持久起集群 serve「${serve.name}」：${clusterBackends.size} 后端 + 代理 ${proxy.name}" +
+                (if (serve.botSpecs.isNotEmpty()) " + ${botKeys.size} bot" else "") + "，真人经代理 /server 切服手测（Ctrl+C 停）"
+            if (serve.botSpecs.isNotEmpty()) {
+                task.dependsOn(McTestkitTaskNames.NPM_INSTALL_BOT)
+            }
             task.doLast {
-                serveClusterForeground(project, extension, clusterBackends, proxy, serve.name)
+                serveClusterForeground(project, extension, clusterBackends, proxy, serve.name, serve.botSpecs)
             }
         }
     }
@@ -1012,12 +1050,15 @@ object McTestkitTasks {
         clusterBackends: List<ResolvedBackend>,
         proxy: ResolvedProxy,
         serveName: String,
+        botSpecs: List<BotSpec> = emptyList(),
     ) {
         val layout = layoutOf(project)
         val backendProcesses = LinkedHashMap<String, Process>()
         var proxyProcess: Process? = null
         var logTail: Thread? = null
+        val botProcesses = mutableListOf<Process>()
         val shutdownHook = Thread {
+            botProcesses.forEach { destroyProcessQuietly(project, it) }
             backendProcesses.values.forEach { destroyProcessQuietly(project, it) }
             proxyProcess?.let { destroyProcessQuietly(project, it) }
         }
@@ -1045,15 +1086,32 @@ object McTestkitTasks {
                     "（经代理 ${proxy.name}），可 /server 切换：${clusterBackends.joinToString(", ") { it.name }}。" +
                     "停止：本终端 Ctrl+C，或另跑 ./gradlew ${McTestkitTaskNames.stopServe(serveName)}",
             )
-            // ⑤ 代理日志流到控制台（手测看切服 / 转发）
+            // ⑤ 可选起 bot（FR-19）：经代理端口、CLUSTER_BACKENDS 下发 /server 切换目标（每个 bot 都能切），
+            //    协议版本固定为后端版本；把环境驱到某状态但**不**据结果文件收尾——挂住人机混场。
+            if (botSpecs.isNotEmpty()) {
+                botProcesses += launchBots(
+                    project,
+                    serveName,
+                    botSpecs,
+                    backendPort = proxy.port,
+                    protocolVersion = ProxyProtocolVersion.forBackend(clusterBackends.first().version),
+                    sharedExtraEnv = mapOf(
+                        McTestkitEnv.CLUSTER_BACKENDS to clusterBackends.joinToString(",") { it.name },
+                    ),
+                )
+                project.logger.lifecycle("[mc-testkit] 集群 serve「$serveName」已起 ${botProcesses.size} 个 bot（人机混场，不判定）")
+            }
+            // ⑥ 代理日志流到控制台（手测看切服 / 转发）
             logTail = startServeLogTail(project, File(layout.proxyRunDir, "${proxy.name}.log"))
-            // ⑥ 阻塞挂住：等代理进程退出（代理是真人入口；某后端宕仍挂着便于看崩溃接管 fallback）
+            // ⑦ 阻塞挂住：等代理进程退出（代理是真人入口；某后端宕仍挂着便于看崩溃接管 fallback）
             proxyProcess.waitFor()
             project.logger.lifecycle("[mc-testkit] serve「$serveName」集群代理已退出，收尾。")
         } finally {
             runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
             logTail?.interrupt()
-            // 三重收尾兜底：全部后端 + 代理，删 pid
+            // 三重收尾兜底：bot（自停兜底 + 按 pid）+ 全部后端 + 代理，删 pid
+            botProcesses.forEach { destroyProcessQuietly(project, it) }
+            if (botSpecs.isNotEmpty()) stopBots(project, serveName, botSpecs)
             backendProcesses.forEach { (name, proc) -> stopProcessQuietly(project, proc, layout.clusterBackendPidFile(name)) }
             proxyProcess?.let { stopProcessQuietly(project, it, layout.proxyPidFile(proxy.name)) }
         }
@@ -1269,8 +1327,24 @@ object McTestkitTasks {
         backendPort: Int,
         protocolVersion: String?,
         sharedExtraEnv: Map<String, String> = emptyMap(),
+    ): List<Process> =
+        launchBots(project, scenario.name, scenario.botSpecs, backendPort, protocolVersion, sharedExtraEnv)
+
+    /**
+     * 起一组 bot 进程（FR-16 多 bot 展开 + 每进程 env 装配；**场景与 serve 共用**，FR-19）。
+     *
+     * 按 [BotProcessPlanner.expand] 逐 plan 起进程；进程数 >1 强制唯一 `BOT_USERNAME`、同质复制下发 `BOT_INDEX`、
+     * 合入 [sharedExtraEnv]（如集群 `CLUSTER_BACKENDS`，使每个 bot 都能经代理 `/server` 切换）。
+     */
+    private fun launchBots(
+        project: Project,
+        name: String,
+        botSpecs: List<BotSpec>,
+        backendPort: Int,
+        protocolVersion: String?,
+        sharedExtraEnv: Map<String, String> = emptyMap(),
     ): List<Process> {
-        val plans = BotProcessPlanner.expand(scenario.name, scenario.botSpecs)
+        val plans = BotProcessPlanner.expand(name, botSpecs)
         // 每进程「追加 env」（唯一名 / 序号 / 共享 env）由纯函数装配，便于穷举单测
         val environments = BotProcessPlanner.extraEnvironments(plans, sharedExtraEnv)
         return plans.zip(environments).map { (plan, extraEnv) ->
@@ -1287,9 +1361,13 @@ object McTestkitTasks {
     }
 
     /** 按 plan key 收尾场景全部 bot 的 pid 文件（单 bot / 已自停为安全 no-op，[stopProcessByPidFile]）。 */
-    private fun stopScenarioBots(project: Project, scenario: ScenarioSpec) {
+    private fun stopScenarioBots(project: Project, scenario: ScenarioSpec) =
+        stopBots(project, scenario.name, scenario.botSpecs)
+
+    /** 按 plan key 收尾一组 bot 的 pid 文件（**场景与 serve 共用**，FR-19；单 bot / 已自停为安全 no-op）。 */
+    private fun stopBots(project: Project, name: String, botSpecs: List<BotSpec>) {
         val layout = layoutOf(project)
-        BotProcessPlanner.expand(scenario.name, scenario.botSpecs).forEach { plan ->
+        BotProcessPlanner.expand(name, botSpecs).forEach { plan ->
             stopProcessByPidFile(botPidFile(layout.resultsDir, plan.key)) { project.logger.lifecycle("[mc-testkit] $it") }
         }
     }

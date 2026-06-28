@@ -150,4 +150,33 @@ class ServeFunctionalTest {
             "集群 serve 缺 via 应在配置期抛中文错误",
         )
     }
+
+    @Test
+    fun `serve 声明 bot 注册 serveX 任务（FR-19）`() {
+        write("settings.gradle.kts", """rootProject.name = "serve-bot"""")
+        write(
+            "build.gradle.kts",
+            """
+            plugins { id("top.wcpe.mc-testkit") }
+            mcTestkit {
+                backend("s1") { port = 25565 }
+                serve("dev") {
+                    backend = "s1"
+                    bot {
+                        username = "Filler"
+                        action = "idle"
+                    }
+                }
+            }
+            """.trimIndent(),
+        )
+        val result = GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withPluginClasspath()
+            .withArguments("tasks", "--all")
+            .build()
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":tasks")?.outcome)
+        assertTrue(result.output.contains("serveDev"), "serve 带 bot 应注册 serveDev（且 dependsOn npmInstallE2eBot 不报错）")
+    }
 }

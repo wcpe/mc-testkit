@@ -281,4 +281,63 @@ class ServeContractTest {
         }
         assertTrue(ex.message!!.contains("不可同时"), "集群 serve 与 backend 并用应中文报错：${ex.message}")
     }
+
+    // ── serve 人机混场 bot（FR-19）──
+
+    @Test
+    fun `serve DSL 记录 bot 声明`() {
+        val ext = extension()
+        ext.backend("s1")
+        ext.serve("dev") {
+            backend = "s1"
+            bot {
+                username = "Filler"
+                action = "idle-walk"
+            }
+        }
+        val dev = ext.declaredServes.single()
+        assertEquals(1, dev.botSpecs.size)
+        assertEquals("Filler", dev.botSpecs.single().username)
+        assertEquals("idle-walk", dev.botSpecs.single().action)
+    }
+
+    @Test
+    fun `serve 多匿名 bot 配置期中文报错`() {
+        val ex = assertFailsWith<GradleException> {
+            TopologyResolver.resolve(
+                backends = listOf(BackendSpec("s1").apply { port = 25565 }),
+                proxies = emptyList(),
+                scenarios = emptyList(),
+                serves = listOf(
+                    ServeSpec("dev").apply {
+                        backend = "s1"
+                        bot { username = "A" }
+                        bot { username = "B" }
+                    },
+                ),
+            )
+        }
+        assertTrue(ex.message!!.contains("唯一角色名") || ex.message!!.contains("匿名"), "serve 多匿名 bot 应中文报错：${ex.message}")
+    }
+
+    @Test
+    fun `serve bot count 必须为正`() {
+        val ex = assertFailsWith<GradleException> {
+            TopologyResolver.resolve(
+                backends = listOf(BackendSpec("s1").apply { port = 25565 }),
+                proxies = emptyList(),
+                scenarios = emptyList(),
+                serves = listOf(
+                    ServeSpec("dev").apply {
+                        backend = "s1"
+                        bot {
+                            username = "A"
+                            count = 0
+                        }
+                    },
+                ),
+            )
+        }
+        assertTrue(ex.message!!.contains("count"), "serve bot count<1 应中文报错：${ex.message}")
+    }
 }

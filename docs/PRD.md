@@ -51,7 +51,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 | FR-16 | 单场景多 bot：一个 `scenario { }` 可驱动多个 bot——**异质**（多个具名 `bot("角色") { }` 各有 `username`/`action`/`env`）与**同质批量**（`bot { count = N }` 复制 N 份、各唯一 username、经 `BOT_INDEX`（1..N）区分）；用于集群（多 bot 各自经代理 `/server` 切）与单后端（多 bot 直连，可分角色）。复用既有 env（`BOT_USERNAME`/`BOT_ACTION`/`BOT_INDEX`/`CLUSTER_BACKENDS`）与任务名（声明多 bot 时 `e2e<Key>`/`Cluster`/`launch<Key>Bot` 起多个进程），与压测 FR-11「同质钉服」划清边界、随场景结束全部回收；结果仍由桩按 username/index 聚合（扩展 scenario 的 bot 声明，见 ADR-0009）| P3 | 已交付@v0.2.2 |
 | FR-17 | 持久开启·单后端手测：新增 `serve { }` DSL 块声明持久目标，复用拓扑起后端（+可选经代理）、注入被测/依赖插件并挂住等真人客户端连入手测；不下发场景、不判 PASS/FAIL，手动停（Ctrl+C / `stop` 任务）按 pid 干净收尾（见 docs/specs/fr-17-persistent-serve.md，ADR-0011）| P3 | 开发中 |
 | FR-18 | 持久开启·集群拓扑手测：`serve { }` 支持多后端 + 代理整套挂起，真人经代理 `/server` 跨服手测、人眼复现跨服 bug；停后全部后端 + 代理收尾干净、端口不漏（见 docs/specs/fr-18-cluster-serve.md，ADR-0011）| P3 | 开发中 |
-| FR-19 | 持久模式可选并起 bot（人机混场）：`serve { }` 可选起场景 bot 把环境驱到某状态但**不**按结果文件收尾，挂住让真人同时连入同测；停时 bot + 后端 + 代理全收尾（依赖 FR-17，待 spec）| P3 | 计划 |
+| FR-19 | 持久模式可选并起 bot（人机混场）：`serve { }` 可选起场景 bot 把环境驱到某状态但**不**按结果文件收尾，挂住让真人同时连入同测；停时 bot + 后端 + 代理全收尾（见 docs/specs/fr-19-bot-mixed-serve.md，ADR-0011）| P3 | 开发中 |
 
 > 状态取值：计划 / 开发中 / 已交付@vX.Y.Z。优先级：P1(MVP 或阻断真实消费者接入的关键项) / P2 / P3。
 > 标 `已交付` 有门：该 FR 的 §6 / spec 验收标准全部满足、对应测试 / 实机验收通过后，才由 `sdd-release-version` 在发版时统一标 `已交付@vX.Y.Z`，过程中不得自行预标。

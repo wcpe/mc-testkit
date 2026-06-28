@@ -294,6 +294,8 @@ object TopologyResolver {
         }
 
         serves.forEach { serve ->
+            // serve 可选 bot 的多 bot 声明合法性（FR-19，规则同场景 FR-16）
+            validateServeBots(serve)
             val hasBackends = serve.backendRefs.isNotEmpty()
             // 单后端 backend 与多后端 backends 互斥（集群 serve 只用 backends）
             if (hasBackends && serve.backend != null) {
@@ -305,6 +307,31 @@ object TopologyResolver {
                 validateClusterServe(serve, backendNames, proxyNames, proxies)
             } else {
                 validateSingleServe(serve, backendNames, proxyNames, proxies, backends)
+            }
+        }
+    }
+
+    /** 校验 serve 的可选 bot 声明（FR-19）：每个 `count >= 1`；多 bot 须各有唯一 `role`（匿名只能一个）。 */
+    private fun validateServeBots(serve: ServeSpec) {
+        val bots = serve.botSpecs
+        bots.forEach { bot ->
+            if (bot.count < 1) {
+                throw GradleException(
+                    "mcTestkit serve「${serve.name}」的 bot${bot.role?.let { "（角色 $it）" } ?: ""} count 必须 >=1，当前为 ${bot.count}。",
+                )
+            }
+        }
+        if (bots.size > 1) {
+            if (bots.any { it.role == null }) {
+                throw GradleException(
+                    "mcTestkit serve「${serve.name}」声明了多个 bot，每个须有唯一角色名 bot(\"<角色>\") { }；匿名 bot { } 只能声明一个。",
+                )
+            }
+            val duplicateRole = firstDuplicate(bots.mapNotNull { it.role })
+            if (duplicateRole != null) {
+                throw GradleException(
+                    "mcTestkit serve「${serve.name}」的 bot 角色名重复：「$duplicateRole」声明了多次，多 bot 的角色名必须唯一。",
+                )
             }
         }
     }

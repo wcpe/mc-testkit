@@ -195,6 +195,25 @@ class ServeSpec(val name: String) {
     fun backends(vararg names: String) {
         mutableBackends += names
     }
+
+    private val mutableBots = mutableListOf<BotSpec>()
+
+    /**
+     * 该 serve 期间可选起的机器人驱动（FR-19；空 = 纯手测无 bot）。serve 起这些 bot 把环境驱到某状态
+     * （如造点数据 / 模拟其他玩家），但**不按结果文件判定 / 收尾**——挂住让真人同时连入「人机混场」同测，
+     * 直到手动停时随后端 / 代理一并收尾。多 bot 规则同场景（FR-16）：各唯一 role、`count` 同质复制。
+     */
+    val botSpecs: List<BotSpec> get() = mutableBots.toList()
+
+    /** 声明一个匿名 bot 在 serve 期间驱动（人机混场，FR-19）。 */
+    fun bot(configure: BotSpec.() -> Unit) {
+        mutableBots += BotSpec().apply(configure)
+    }
+
+    /** 声明一个具名角色 bot 在 serve 期间驱动（同 serve 多 bot 须各唯一 role，FR-19）。 */
+    fun bot(role: String, configure: BotSpec.() -> Unit) {
+        mutableBots += BotSpec(role).apply(configure)
+    }
 }
 
 /**

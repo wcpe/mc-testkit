@@ -57,7 +57,7 @@ internal class JarProvisionService(
 
         logger("下载 ${platform.id} $version 构建 $build …")
         val paperDownload = paperApi.download(project, version, build)
-        val url = paperApi.downloadUrl(project, version, build, paperDownload)
+        val url = paperApi.downloadUrl(paperDownload)
         val temp = createTempJar(cached, platform, build)
         try {
             download(url, temp, logger)

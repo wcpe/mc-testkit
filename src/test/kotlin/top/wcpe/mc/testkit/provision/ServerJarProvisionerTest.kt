@@ -162,8 +162,8 @@ class ServerJarProvisionerTest {
         fun asService(): JarProvisionService = JarProvisionService(
             cache = cache,
             paperApi = PaperDownloadsApi(fetchText = { url ->
-                // URL 形如 .../projects/<project>/versions/<version>；project.id 即平台 id
-                val version = url.substringAfterLast("/versions/")
+                // URL 形如 .../projects/<project>/versions/<version>/builds；project.id 即平台 id
+                val version = url.substringAfter("/versions/").substringBefore("/builds")
                 val project = url.substringAfter("/projects/").substringBefore("/versions/")
                 lastVersion = version
                 // 预置构建 1 的缓存 jar（按被请求平台 + 版本），使解析命中缓存、不下载
@@ -171,8 +171,8 @@ class ServerJarProvisionerTest {
                     parentFile?.mkdirs()
                     writeText("dummy")
                 }
-                // 合法版本响应：builds 末位为 1
-                """{"builds":[1]}"""
+                // 合法构建列表响应：最新构建 id 为 1
+                """[{"id":1,"channel":"STABLE"}]"""
             }),
             bungeeApi = BungeeCordJenkinsApi(fetchText = { error("本用例不测 BungeeCord") }),
             download = { _, _, _ -> error("不应发网络：命中缓存路径不应下载") },

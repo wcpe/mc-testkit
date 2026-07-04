@@ -4,8 +4,8 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** 下载时声明的 User-Agent。 */
-internal const val PROVISION_USER_AGENT = "mc-testkit"
+/** 下载时声明的 User-Agent（PaperMC Fill 要求包含软件标识与联系方式）。 */
+internal const val PROVISION_USER_AGENT = "mc-testkit/0.0.0 (https://github.com/wcpe/mc-testkit)"
 
 /** HTTP 重定向跟随上限：SpigotMC 的"经典"域名会 301 到 hub 域名，需要跟随。 */
 private const val MAX_REDIRECTS = 5

@@ -11,7 +11,7 @@ E2E 编排要先把真实「代理 + 后端」拉起来：下载对应平台 / �
 ## 2. 需求（要什么）
 
 - 范围内：
-  - **下载 + 缓存**：Paper / Folia / Velocity / Waterfall 经 PaperMC 下载 API（v2，`api.papermc.io`）；BungeeCord 经 SpigotMC Jenkins（`hub.spigotmc.org/jenkins`）。按 平台 / 版本 / 构建号 缓存到持久缓存目录；hash 校验复用（PaperMC 给 sha256 则校验远端 hash，BungeeCord 无远端校验则校验为结构合法 jar 并记录本地 hash 防本地损坏）。
+  - **下载 + 缓存**：Paper / Folia / Velocity / Waterfall 经 PaperMC 下载服务 Fill v3（`fill.papermc.io` / `fill-data.papermc.io`）；BungeeCord 经 SpigotMC Jenkins（`hub.spigotmc.org/jenkins`）。按 平台 / 版本 / 构建号 缓存到持久缓存目录；hash 校验复用（PaperMC 给 sha256 则校验远端 hash，BungeeCord 无远端校验则校验为结构合法 jar 并记录本地 hash 防本地损坏）。
   - **jar 解析**：给定 平台 + 版本，返回 jar `File`。**优先** [McTestkitEnv] 的 `*_JAR` 覆盖——存在即直接返回该路径、**不发网络**（离线 / CI 逃生口）；版本可由 `*_VERSION` 覆盖（缺省取 [McTestkitDefaults.MINECRAFT_VERSION] / 平台缺省）。
   - **启动助手（精简）**：给定 jar + 运行目录 + JVM 参数，以子进程启动 server / proxy，返回 `Process`；pid 落盘供收尾（复用 FR-06 `bot/` 的 pid 收尾思路，但**不改 `bot/` 包**）。
 - 不做（范围外）：
@@ -28,7 +28,7 @@ E2E 编排要先把真实「代理 + 后端」拉起来：下载对应平台 / �
 
 - **平台映射** `ProvisionPlatform`（内部）：P1 五平台 → PaperMC project 名（`paper`/`folia`/`velocity`/`waterfall`）或 BungeeCord 标记 + env 名（`*_JAR`/`*_VERSION`）。**不新增对外平台枚举**（DSL 已有 `dsl/Platforms`，本包内部用）。
 - **JSON 解析** `JsonLite`（自实现，免引 Jackson）：手写递归下降解析器，够解析 PaperMC / Jenkins 的小响应（对象 / 数组 / 字符串 / 数 / 布尔 / null）。纯函数、可喂固定文本穷举单测。
-- **PaperMC API** `PaperDownloadsApi`（自实现）：解析 `projects/<p>/versions/<v>` 取构建列表、`projects/<p>/versions/<v>/builds/<b>` 取下载名 + sha256、拼下载 URL。HTTP 取文本与解析分离，解析逻辑纯函数可单测。
+- **PaperMC API** `PaperDownloadsApi`（自实现）：解析 `projects/<p>/versions/<v>/builds` 取构建列表、`projects/<p>/versions/<v>/builds/<b>` 取 `server:default` 下载名 + sha256 + 对象存储 URL。HTTP 取文本与解析分离，解析逻辑纯函数可单测。
 - **Jenkins API** `BungeeCordJenkinsApi`（自实现）：取 `lastSuccessfulBuild` 构建号、拼 artifact 下载 URL。
 - **下载工具** `Downloader`（自实现）+ `Hashing`（自实现）：HTTP 下载到临时文件、sha256 校验。
 - **缓存键 / 路径** `JarCache`（自实现缓存布局）：`<cacheRoot>/<platform>/<version>/<build>.jar` 路径推导（纯函数）；命中且 hash 一致即复用，否则下载。
@@ -56,7 +56,7 @@ E2E 编排要先把真实「代理 + 后端」拉起来：下载对应平台 / �
 
 ## 6. 风险 / 待定
 
-- PaperMC API v2 后续可能演进到 v3 / fill API；本期采用 v2，演进适配成本集中本包一处（ADR-0001 后果）。
+- PaperMC Fill v3 对 User-Agent 与响应结构有契约要求；适配集中在 `PaperDownloadsApi` / `Downloader`，后续下载服务变更时只需改本包一处。
 - BungeeCord Jenkins 无远端 sha256 与下载产物匹配，只能校验"结构合法 jar"+ 记录本地 hash 防本地损坏（本包既定取舍）。
 - 启动助手本期只提供「起一个进程返回 Process + pid 落盘」；前台被测后端自停驱动后台收尾、就绪时序、集群批量回收等编排与收尾接线属 FR-04，本包不做。
 - 真实下载 / 起服只能 FR-08 实机验，单测不打网络（诚实标注）。

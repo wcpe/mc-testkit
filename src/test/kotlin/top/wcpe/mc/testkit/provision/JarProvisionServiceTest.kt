@@ -19,13 +19,13 @@ class JarProvisionServiceTest {
 
     private fun freshCache(): JarCache = JarCache(File("build/provision-svc-test-${System.nanoTime()}"))
 
-    /** paperApi 替身：versions 响应给 builds=[1]，builds/1 响应给指定 sha256。 */
+    /** paperApi 替身：builds 响应给 id=1，builds/1 响应给指定 sha256。 */
     private fun paperApiWithSha(sha: String): PaperDownloadsApi = PaperDownloadsApi(
         fetchText = { url ->
-            if (url.contains("/builds/")) {
-                """{"downloads":{"application":{"name":"paper.jar","sha256":"$sha"}}}"""
+            if (url.endsWith("/builds/1")) {
+                """{"downloads":{"server:default":{"name":"paper.jar","checksums":{"sha256":"$sha"},"url":"https://example.test/paper.jar"}}}"""
             } else {
-                """{"builds":[1]}"""
+                """[{"id":1,"channel":"STABLE"}]"""
             }
         },
     )

@@ -33,8 +33,10 @@ import top.wcpe.mc.testkit.dsl.ProxyPlatform
 import top.wcpe.mc.testkit.dsl.ScenarioSpec
 import top.wcpe.mc.testkit.dsl.ServeSpec
 import top.wcpe.mc.testkit.dsl.StressSpec
+import top.wcpe.mc.testkit.provision.ProvisionPlatform
 import top.wcpe.mc.testkit.provision.ServerJarProvisioner
 import top.wcpe.mc.testkit.provision.ServerLauncher
+import top.wcpe.mc.testkit.provision.WaterfallModuleProvisioner
 import top.wcpe.mc.testkit.provision.provisionPidFile
 import top.wcpe.mc.testkit.topology.ResolvedBackend
 import top.wcpe.mc.testkit.topology.ResolvedProxy
@@ -474,9 +476,11 @@ object McTestkitTasks {
         val provisioner = ServerJarProvisioner.create(layout.jarCacheRoot) {
             project.providers.environmentVariable(it).orNull
         }
-        val jar = provisioner.resolve(proxy.platform.name.lowercase(), proxyDownloadVersion(proxy.platform, clusterBackends.first().version)) {
+        val requestedProxyVersion = proxyDownloadVersion(proxy.platform, clusterBackends.first().version)
+        val jar = provisioner.resolve(proxy.platform.name.lowercase(), requestedProxyVersion) {
             project.logger.lifecycle("[mc-testkit] $it")
         }
+        provisionWaterfallModulesIfNeeded(project, proxy.platform, requestedProxyVersion, proxyRunDir)
         val process = ServerLauncher.launch(
             jar = jar,
             runDirectory = proxyRunDir,
@@ -663,6 +667,7 @@ object McTestkitTasks {
         val jar = provisioner.resolve(proxy.platform.name.lowercase(), proxyVersion) {
             project.logger.lifecycle("[mc-testkit] $it")
         }
+        provisionWaterfallModulesIfNeeded(project, proxy.platform, proxyVersion, proxyRunDir)
         val process = ServerLauncher.launch(
             jar = jar,
             runDirectory = proxyRunDir,
@@ -1295,9 +1300,11 @@ object McTestkitTasks {
         // 代理下载版本：BungeeCord 系取后端版本（与经代理机器人协议版本同源；Waterfall 经 provision 层归一为
         // major.minor，避免带补丁号 404）；Velocity 用自有版本号（非 MC 版本，见 [proxyDownloadVersion]）。
         // env `*_VERSION` 覆盖仍优先（见 ServerJarProvisioner.resolveVersion）。
-        val jar = provisioner.resolve(proxy.platform.name.lowercase(), proxyDownloadVersion(proxy.platform, backend.version)) {
+        val requestedProxyVersion = proxyDownloadVersion(proxy.platform, backend.version)
+        val jar = provisioner.resolve(proxy.platform.name.lowercase(), requestedProxyVersion) {
             project.logger.lifecycle("[mc-testkit] $it")
         }
+        provisionWaterfallModulesIfNeeded(project, proxy.platform, requestedProxyVersion, proxyRunDir)
         val process = ServerLauncher.launch(
             jar = jar,
             runDirectory = proxyRunDir,
@@ -1488,6 +1495,26 @@ object McTestkitTasks {
      */
     private fun proxyDownloadVersion(platform: ProxyPlatform, backendVersion: String): String =
         if (platform == ProxyPlatform.VELOCITY) McTestkitDefaults.VELOCITY_VERSION else backendVersion
+
+    /** Waterfall 旧模块自下载仍打已 sunset 的 v2 API，启动前用 Fill v3 预置模块。 */
+    private fun provisionWaterfallModulesIfNeeded(
+        project: Project,
+        platform: ProxyPlatform,
+        requestedVersion: String,
+        proxyRunDir: File,
+    ) {
+        if (platform != ProxyPlatform.WATERFALL) return
+        val waterfall = ProvisionPlatform.WATERFALL
+        if (!project.providers.environmentVariable(waterfall.jarEnv).orNull.isNullOrBlank()) {
+            project.logger.lifecycle("[mc-testkit] 使用 ${waterfall.jarEnv} 覆盖 Waterfall jar，跳过模块预下载")
+            return
+        }
+        val version = project.providers.environmentVariable(requireNotNull(waterfall.versionEnv)).orNull?.takeIf { it.isNotBlank() }
+            ?: requestedVersion
+        WaterfallModuleProvisioner().provision(waterfall.downloadVersion(version), proxyRunDir) {
+            project.logger.lifecycle("[mc-testkit] $it")
+        }
+    }
 
     /**
      * 写 Velocity 代理运行目录的两个文件：`velocity.toml`（modern forwarding + N server + try）+

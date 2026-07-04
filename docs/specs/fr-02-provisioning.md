@@ -28,7 +28,7 @@ E2E 编排要先把真实「代理 + 后端」拉起来：下载对应平台 / �
 
 - **平台映射** `ProvisionPlatform`（内部）：P1 五平台 → PaperMC project 名（`paper`/`folia`/`velocity`/`waterfall`）或 BungeeCord 标记 + env 名（`*_JAR`/`*_VERSION`）。**不新增对外平台枚举**（DSL 已有 `dsl/Platforms`，本包内部用）。
 - **JSON 解析** `JsonLite`（自实现，免引 Jackson）：手写递归下降解析器，够解析 PaperMC / Jenkins 的小响应（对象 / 数组 / 字符串 / 数 / 布尔 / null）。纯函数、可喂固定文本穷举单测。
-- **PaperMC API** `PaperDownloadsApi`（自实现）：解析 `projects/<p>/versions/<v>/builds` 取构建列表、`projects/<p>/versions/<v>/builds/<b>` 取 `server:default` 下载名 + sha256 + 对象存储 URL。HTTP 取文本与解析分离，解析逻辑纯函数可单测。
+- **PaperMC API** `PaperDownloadsApi`（自实现）：解析 `projects/<p>/versions/<v>/builds` 取构建列表、`projects/<p>/versions/<v>/builds/<b>` 取 `server:default` 下载名 + sha256 + 对象存储 URL；Waterfall 启动前还会读取同一响应里的 `module:*` 下载项并预置到代理运行目录 `modules/`，避免 Waterfall 运行期模块自下载继续请求旧 v2 API。HTTP 取文本与解析分离，解析逻辑纯函数可单测。
 - **Jenkins API** `BungeeCordJenkinsApi`（自实现）：取 `lastSuccessfulBuild` 构建号、拼 artifact 下载 URL。
 - **下载工具** `Downloader`（自实现）+ `Hashing`（自实现）：HTTP 下载到临时文件、sha256 校验。
 - **缓存键 / 路径** `JarCache`（自实现缓存布局）：`<cacheRoot>/<platform>/<version>/<build>.jar` 路径推导（纯函数）；命中且 hash 一致即复用，否则下载。

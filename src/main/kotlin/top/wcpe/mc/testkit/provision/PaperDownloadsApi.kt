@@ -56,15 +56,22 @@ internal class PaperDownloadsApi(
          *
          * @throws IllegalStateException 缺少 server 下载或字段缺失时抛中文错误。
          */
-        fun parseDownload(buildResponseJson: String): PaperDownload {
+        fun parseDownload(buildResponseJson: String): PaperDownload =
+            parseDownloads(buildResponseJson)[SERVER_DOWNLOAD_KEY]
+                ?: error("PaperMC 构建响应缺少 downloads.$SERVER_DOWNLOAD_KEY。")
+
+        /** 解析构建响应中的全部下载项（server jar 与 module jar 共用同一结构）。 */
+        fun parseDownloads(buildResponseJson: String): Map<String, PaperDownload> {
             val obj = JsonLite.asObject(JsonLite.parse(buildResponseJson))
             val downloads = JsonLite.asObject(obj["downloads"] ?: error("PaperMC 构建响应缺少 downloads 字段。"))
-            val server = JsonLite.asObject(downloads[SERVER_DOWNLOAD_KEY] ?: error("PaperMC 构建响应缺少 downloads.$SERVER_DOWNLOAD_KEY。"))
-            val checksums = JsonLite.asObject(server["checksums"] ?: error("PaperMC 构建响应缺少 downloads.$SERVER_DOWNLOAD_KEY.checksums。"))
-            val name = server["name"] as? String ?: error("PaperMC 构建响应缺少 downloads.$SERVER_DOWNLOAD_KEY.name。")
-            val sha256 = checksums["sha256"] as? String ?: error("PaperMC 构建响应缺少 downloads.$SERVER_DOWNLOAD_KEY.checksums.sha256。")
-            val url = server["url"] as? String ?: error("PaperMC 构建响应缺少 downloads.$SERVER_DOWNLOAD_KEY.url。")
-            return PaperDownload(name, sha256, url)
+            return downloads.mapValues { (key, value) ->
+                val item = JsonLite.asObject(value)
+                val checksums = JsonLite.asObject(item["checksums"] ?: error("PaperMC 构建响应缺少 downloads.$key.checksums。"))
+                val name = item["name"] as? String ?: error("PaperMC 构建响应缺少 downloads.$key.name。")
+                val sha256 = checksums["sha256"] as? String ?: error("PaperMC 构建响应缺少 downloads.$key.checksums.sha256。")
+                val url = item["url"] as? String ?: error("PaperMC 构建响应缺少 downloads.$key.url。")
+                PaperDownload(name, sha256, url)
+            }
         }
     }
 
@@ -77,6 +84,10 @@ internal class PaperDownloadsApi(
     /** 解析指定 project + 版本 + 构建号的下载产物（发网络）。 */
     fun download(project: String, version: String, build: Int): PaperDownload =
         parseDownload(fetchText("$base/projects/$project/versions/$version/builds/$build"))
+
+    /** 解析指定 project + 版本 + 构建号的全部下载项（发网络）。 */
+    fun downloads(project: String, version: String, build: Int): Map<String, PaperDownload> =
+        parseDownloads(fetchText("$base/projects/$project/versions/$version/builds/$build"))
 
     /** 返回 Fill v3 响应中给出的对象存储下载 URL。 */
     fun downloadUrl(download: PaperDownload): String = download.url

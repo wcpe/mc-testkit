@@ -18,6 +18,11 @@ _（暂无）_
 ### 移除
 _（暂无）_
 
+## [0.4.1] - 2026-07-04
+
+### 修复
+- **PaperMC 下载服务迁移（`provision/`）**：将 Paper / Folia / Velocity / Waterfall 的下载解析从已 sunset 的 `api.papermc.io/v2` 迁移到 PaperMC Fill v3（`fill.papermc.io` / `fill-data.papermc.io`），改为读取 `server:default` 对象存储下载 URL 与 sha256，并补齐符合新服务要求的 User-Agent。修复旧端点在 2026-07-01 sunset 后返回 HTTP 410 导致内置 jar 下载不可用的问题；已实机下载校验 Paper、Folia、Velocity、Waterfall 与 BungeeCord jar。
+
 ## [0.4.0] - 2026-06-29
 
 > 持久手测模式 serve（第三期·完善）：在自动化 E2E 之外新增一种**并存**的生命周期——复用 `mcTestkit { }` 声明的真实「（可选代理 +）后端 + 被测/依赖插件 + 固化环境契约」拓扑，**起起来挂住**供真人客户端连入手动测试（单后端 / 集群 `/server` 切服 / 可选并起 bot 人机混场），手动停时 Ctrl+C/finally/`stop<Key>Serve` 三重收尾、端口不漏。经**新增第 5 个顶层块** `serve { }` 引入（DSL 4→5 块、加法非破坏，ADR-0006 冻结项 env 前缀/任务命名/协议/结果文件全不动），向后兼容 0.3.0。本机真机覆盖全部 serve 路径（单后端直连/经代理、集群经代理、bot 人机混场、mineflayer 模拟真人客户端连入走动聊天）。见 [ADR-0011](docs/adr/0011-persistent-serve-mode.md)。

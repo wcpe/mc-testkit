@@ -13,10 +13,15 @@ _（暂无）_
 _（暂无）_
 
 ### 修复
-- **Waterfall 模块预下载（`provision/`）**：Waterfall 启动时会把 `/server` 等代理命令作为模块加载，旧模块源仍会请求已 sunset 的 PaperMC v2 API。现在启动 Waterfall 代理前经 Fill v3 预置 `module:*` 产物到运行目录 `modules/`，避免 `cmd_server` 缺失导致集群跨服场景中的 `/server` 被后端当成未知命令。
+_（暂无）_
 
 ### 移除
 _（暂无）_
+
+## [0.4.2] - 2026-07-04
+
+### 修复
+- **Waterfall 模块预下载（`provision/`）**：Waterfall 启动时会把 `/server` 等代理命令作为模块加载，旧模块源仍会请求已 sunset 的 PaperMC v2 API。现在启动 Waterfall 代理前经 Fill v3 预置 `module:*` 产物到运行目录 `modules/`，避免 `cmd_server` 缺失导致集群跨服场景中的 `/server` 被后端当成未知命令。
 
 ## [0.4.1] - 2026-07-04
 

@@ -18,6 +18,25 @@ class BackendSpec(val name: String) {
     /** 监听端口；null 表示留待拓扑解析（FR-03）按端口基数推导。 */
     var port: Int? = null
 
+    private val mutableEnvironment = LinkedHashMap<String, String>()
+    private var mutableTemplateDirectory: String? = null
+
+    /** 注入该后端进程的节点环境变量（后声明同名值覆盖先声明值）。 */
+    val environment: Map<String, String> get() = mutableEnvironment.toMap()
+
+    /** 该后端模板目录的原始声明（环境变量名或路径）；null 表示回退旧全局模板环境变量。 */
+    val templateDirectoryDeclaration: String? get() = mutableTemplateDirectory
+
+    /** 声明一个仅注入该后端进程的字面量环境变量。 */
+    fun env(name: String, value: String) {
+        mutableEnvironment[name] = value
+    }
+
+    /** 声明该后端的模板目录（环境变量名或路径，运行期解析）。 */
+    fun templateDirectory(envOrPath: String) {
+        mutableTemplateDirectory = envOrPath
+    }
+
     // DSL 便捷量：consumer 可直接写 `platform = paper`，无需 import 枚举
     val paper: BackendPlatform get() = BackendPlatform.PAPER
     val folia: BackendPlatform get() = BackendPlatform.FOLIA
@@ -35,13 +54,40 @@ class ProxySpec(val name: String) {
     var port: Int? = null
 
     private val mutableRoutes = mutableListOf<String>()
+    private val mutablePlugins = mutableListOf<String>()
+    private val mutableEnvironment = LinkedHashMap<String, String>()
+    private var mutableTemplateDirectory: String? = null
 
     /** 该代理转发到的后端名（按声明顺序，路由目标存在性由 FR-03 配置期校验）。 */
     val routes: List<String> get() = mutableRoutes.toList()
 
+    /** 该代理专属插件 jar 的原始声明（环境变量名或路径，按声明顺序）。 */
+    val plugins: List<String> get() = mutablePlugins.toList()
+
+    /** 注入该代理进程的节点环境变量（后声明同名值覆盖先声明值）。 */
+    val environment: Map<String, String> get() = mutableEnvironment.toMap()
+
+    /** 该代理模板目录的原始声明（环境变量名或路径）。 */
+    val templateDirectoryDeclaration: String? get() = mutableTemplateDirectory
+
     /** 声明该代理转发到的后端（按 [BackendSpec.name] 引用）。 */
     fun routesTo(vararg backendNames: String) {
         mutableRoutes += backendNames
+    }
+
+    /** 声明一个仅注入该代理节点的插件 jar（环境变量名或路径，运行期解析）。 */
+    fun plugin(envOrPath: String) {
+        mutablePlugins += envOrPath
+    }
+
+    /** 声明一个仅注入该代理进程的字面量环境变量。 */
+    fun env(name: String, value: String) {
+        mutableEnvironment[name] = value
+    }
+
+    /** 声明该代理的模板目录（环境变量名或路径，运行期解析）。 */
+    fun templateDirectory(envOrPath: String) {
+        mutableTemplateDirectory = envOrPath
     }
 
     val velocity: ProxyPlatform get() = ProxyPlatform.VELOCITY

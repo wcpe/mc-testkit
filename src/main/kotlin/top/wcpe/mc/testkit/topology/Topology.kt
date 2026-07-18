@@ -18,6 +18,10 @@ data class ResolvedBackend(
     val version: String,
     /** 监听端口（已解析）。 */
     val port: Int,
+    /** 仅注入该后端进程的节点环境变量。 */
+    val environment: Map<String, String> = emptyMap(),
+    /** 后端模板目录的原始声明（环境变量名或路径）；null 表示回退旧全局模板。 */
+    val templateDirectory: String? = null,
 )
 
 /**
@@ -34,6 +38,12 @@ data class ResolvedProxy(
     val port: Int,
     /** 转发到的后端名（按声明顺序，均已校验存在）。 */
     val routes: List<String>,
+    /** 该代理专属插件 jar 的原始声明（环境变量名或路径，按声明顺序）。 */
+    val plugins: List<String> = emptyList(),
+    /** 仅注入该代理进程的节点环境变量。 */
+    val environment: Map<String, String> = emptyMap(),
+    /** 代理模板目录的原始声明（环境变量名或路径）。 */
+    val templateDirectory: String? = null,
 )
 
 /**

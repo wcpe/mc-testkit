@@ -75,6 +75,29 @@ class ServerLauncherTest {
         }
     }
 
+    @Test
+    fun `启动日志不打印环境变量值`() {
+        val workDir = File("build/test-launch-env-${System.nanoTime()}").apply { mkdirs() }
+        val jar = createImmediateExitJar(File(workDir, "hello.jar"))
+        val messages = mutableListOf<String>()
+        val environmentValue = "environment-value-sentinel"
+
+        val process = ServerLauncher.launch(
+            jar = jar,
+            runDirectory = workDir,
+            key = "node-env",
+            environment = mapOf("NODE_ENV_SENTINEL" to environmentValue),
+            logger = messages::add,
+        )
+        try {
+            assertTrue(process.waitFor(30, TimeUnit.SECONDS))
+            assertTrue(messages.isNotEmpty())
+            assertTrue(messages.none { environmentValue in it }, "ServerLauncher 日志不得打印环境变量值")
+        } finally {
+            process.destroyForcibly()
+        }
+    }
+
     /**
      * 现造一个会立即退出的可运行 jar：Manifest 的 `Main-Class` 指向本测试模块已编译的辅助入口
      * [LaunchProbeMain]，并把其 .class 打入 jar。

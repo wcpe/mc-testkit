@@ -13,7 +13,8 @@
 
 ## 2. 错误约定
 
-- **配置期**（Gradle 配置/校验）：必填项缺失、路径不存在、依赖 jar 未提供、路由目标后端不存在 → 抛 Gradle 异常，**中文**说明缺什么、怎么补。
+- **配置期**（Gradle 配置/校验）：必填项缺失、节点环境变量名非法、路由目标后端不存在 → 抛 Gradle 异常，**中文**说明缺什么、怎么补。
+- **启动前资源预检**：任务涉及的依赖 jar、节点模板和代理插件任一缺失、类型错误或目标文件名冲突时，在清理首个运行目录或启动首个节点前中文失败。
 - **执行期**（场景运行）：场景失败 → verify 任务抛错使构建失败（CI 非零退出）；失败原因写入结果文件 `message` 字段与对应日志（服务端 `logs/`、机器人 `*-bot-*.log`、代理 `proxy.log`）。
 
 ## 3. 接口 / 方法
@@ -29,12 +30,17 @@ mcTestkit {
         platform = paper          // paper | folia（P1 仅此二者，ADR-0003）
         version = "1.20.1"
         port = 25565              // Int?，可省
+        env("MYPLUGIN_NODE", "s1")
+        templateDirectory("MC_TESTKIT_E2E_S1_TEMPLATE_DIR")
     }
     // 代理节点与路由
     proxy("wf") {
         platform = waterfall      // velocity | waterfall | bungeecord
         port = 25577              // Int?，可省
         routesTo("s1")            // 转发到的后端名（路由目标存在性配置期校验）
+        plugin("MC_TESTKIT_E2E_PROXY_PLUGIN_JAR")
+        env("MYPLUGIN_PROXY_NODE", "wf")
+        templateDirectory("MC_TESTKIT_E2E_PROXY_TEMPLATE_DIR")
     }
     // 端到端场景
     scenario("smoke")             // 无机器人：仅 prepare + verify
@@ -81,13 +87,21 @@ mcTestkit {
         backends("s1", "s2")      // 多后端（须配 via 代理，与单后端 backend 互斥）
         via = "wf"
     }
-    // 注入到运行目录的待测/依赖插件 jar（值为环境变量名或路径，运行期解析，保证可移植）
+    // 注入到后端运行目录的待测/依赖插件 jar；不注入代理（值为环境变量名或路径，运行期解析）
     dependencies {
         pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR"
         plugin("SampleLib")
     }
 }
 ```
+
+**节点运行时注入（FR-20）**：`BackendSpec` 提供 `env(name, value)` 与 `templateDirectory(envOrPath)`；`ProxySpec` 提供 `plugin(envOrPath)`、`env(name, value)` 与 `templateDirectory(envOrPath)`。同一节点重复声明同名 `env` 时后值覆盖前值，不同节点互不共享。`dependencies { }` 的语义不变，仍只把待测与依赖插件注入后端；代理插件只能经对应代理节点的 `plugin(...)` 声明。
+
+新增 `BackendSpec` / `ProxySpec` 的 `envOrPath` 先按环境变量名读取：非空环境值优先且不再回退；未设置或空值时把声明本身作为路径。绝对路径原样使用，相对路径相对应用插件的 `Project.projectDir` 解析；代理插件必须是存在的普通 `.jar` 文件，模板必须是存在的目录，否则在启动任务涉及的任一节点前中文失败。后端未声明节点模板时继续兼容旧全局 `MC_TESTKIT_E2E_SERVER_TEMPLATE_DIR`，声明后只使用节点模板。
+
+旧全局 `MC_TESTKIT_E2E_SERVER_TEMPLATE_DIR` **不改成新增 `envOrPath` 语义**：其非空值保持 v0.4.2 的 `File(raw)` 解析方式，绝对路径原样使用，相对路径按 JVM / Gradle 当前工作目录解析；在多工程中应用插件于子工程时，也不会改按该子工程的 `Project.projectDir`。因此旧 CI 若从根工程 / 既有 Gradle 工作目录提供相对模板路径，无需迁移。
+
+节点 `env(...)` 的名称不能为空、不得含等号或空字符，也不得以 `MC_TESTKIT_E2E_` 开头（大小写不敏感）；该保留前缀限制不影响把同前缀字符串用于 `plugin(...)` / `templateDirectory(...)` 的资源定位。子进程环境优先级固定为**宿主环境 < 节点环境 < 框架权威环境**；后端节点环境只进入对应后端，代理节点环境只进入对应代理，`ServerLauncher` 启动日志不输出环境值。
 
 > 平台枚举只含后端 Paper/Folia、代理 Velocity/Waterfall/BungeeCord，不含 Spigot/Bukkit/Sponge（不列入计划，scope-discipline）。DSL 字段细节可能随 FR-03/04 在 `dsl/` 包内微调，但四个顶层块形态已冻结。集群（FR-10）经 scenario 块**加法新增** `backends(...)` 声明、压测（FR-11）加 `stress {}` 维度，均为加法扩展，不新增顶层块、不改既有字段语义（ADR-0008）。单场景多 bot（FR-16）经 **bot 声明加法扩展**：一个场景可声明多个 bot——具名 `bot("角色") { }`（异质，各自 `username`/`action`/`env`）与 `bot { count = N }`（同质复制 N 份），复用既有 env / 任务名、不新增顶层块；同场景声明 ≥2 个 bot 时每个须有唯一角色名，`count` 须 >0，压测场景禁用 `count`/多 bot（规模用 `botsPerServer`），违反配置期中文报错（ADR-0009）。
 
@@ -127,7 +141,7 @@ mcTestkit {
 
 用于覆盖默认值、提供 jar / 模板路径、调节规模与超时（须可移植、不写死本机绝对路径）。前缀固定 `MC_TESTKIT_E2E_`（ADR-0006，本期不做 DSL 可配）。已冻结的核心名（**全集随 FR-02/04/06 补全，前缀与风格不变**）：
 
-- 服务端/模板：`…MINECRAFT_VERSION`、`…SERVER_TEMPLATE_DIR`、`…PLUGIN_UNDER_TEST_JAR`、`…PAPER_JAR`/`…FOLIA_JAR`（后端 jar 覆盖，离线/CI 逃生口）。
+- 服务端/模板：`…MINECRAFT_VERSION`、`…SERVER_TEMPLATE_DIR`、`…PLUGIN_UNDER_TEST_JAR`、`…PAPER_JAR`/`…FOLIA_JAR`（后端 jar 覆盖，离线/CI 逃生口）。其中旧全局 `…SERVER_TEMPLATE_DIR` 的相对值按 JVM / Gradle 当前工作目录解析；新增节点 `templateDirectory(envOrPath)` 的相对值才按应用项目 `Project.projectDir` 解析。
 - 桩↔编排交接（编排起后端时下发，桩据此判定）：`…SCENARIO`（本次场景 id = **DSL 场景名原样下发**，桩据此选场景；故 DSL 场景名须与桩 `ScenarioName` id、机器人 `action` 用**同一个 kebab-case id**、三处一致，否则桩无法匹配场景而判失败）、`…RESULT_FILE`（结果文件**绝对路径** = verify 读取处，桩写到这里二者对齐）、`…BACKEND_NAME`（**本后端的声明名**，编排起**每个**后端时下发，与 `…CLUSTER_BACKENDS` 同源、有序对应；集群/压测下各服各不相同，消费方据此 per-backend 派生身份——典型用法是拼不同 `server-id` 后缀。编排只「告诉每个后端它是谁」，不规定怎么用，见 FR-12）。
 - **持久手测保留场景 id**（FR-17，ADR-0011）：serve 起后端时经 `…SCENARIO` 下发保留 id `__mc_testkit_serve__`（契约常量 `McTestkitContract.SERVE_SCENARIO_ID`），告诉桩**空闲**（不驱动 / 不判定 / 不关服）；`template/harness` 据此空闲（未同步新模板的老桩遇此未知 id 在 `onEnable` 抛错被禁用、服务端照常挂起，对任何桩都安全）。serve **不下发** `…RESULT_FILE`（不判定）。此 id 用双下划线前后缀与消费方 kebab-case 业务场景名划清边界。
 - 代理（jar/版本/端口）：`…WATERFALL_JAR`/`…WATERFALL_VERSION`、`…VELOCITY_JAR`/`…VELOCITY_VERSION`、`…BUNGEECORD_JAR`/`…BUNGEECORD_VERSION`、`…PROXY_PORT`、`…PROXY_BASE_PORT`。

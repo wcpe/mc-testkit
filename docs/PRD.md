@@ -52,6 +52,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 | FR-17 | 持久开启·单后端手测：新增 `serve { }` DSL 块声明持久目标，复用拓扑起后端（+可选经代理）、注入被测/依赖插件并挂住等真人客户端连入手测；不下发场景、不判 PASS/FAIL，手动停（Ctrl+C / `stop` 任务）按 pid 干净收尾（见 docs/specs/fr-17-persistent-serve.md，ADR-0011）| P3 | 已交付@v0.4.0 |
 | FR-18 | 持久开启·集群拓扑手测：`serve { }` 支持多后端 + 代理整套挂起，真人经代理 `/server` 跨服手测、人眼复现跨服 bug；停后全部后端 + 代理收尾干净、端口不漏（见 docs/specs/fr-18-cluster-serve.md，ADR-0011）| P3 | 已交付@v0.4.0 |
 | FR-19 | 持久模式可选并起 bot（人机混场）：`serve { }` 可选起场景 bot 把环境驱到某状态但**不**按结果文件收尾，挂住让真人同时连入同测；停时 bot + 后端 + 代理全收尾（见 docs/specs/fr-19-bot-mixed-serve.md，ADR-0011）| P3 | 已交付@v0.4.0 |
+| FR-20 | 节点运行时注入：保持 `dependencies { }` 仅注入后端，为 backend / proxy 增加每节点 env 与模板目录、为 proxy 增加专属插件注入，并覆盖 v0.4.2 全部 E2E / serve 启动路径；以真实 BungeeCord 下游消费、旧 DSL 兼容且不引入 `provide` 为交付门禁（见 docs/specs/fr-20-node-runtime-injection.md）| P1 | 已交付@v0.5.0 |
 
 > 状态取值：计划 / 开发中 / 已交付@vX.Y.Z。优先级：P1(MVP 或阻断真实消费者接入的关键项) / P2 / P3。
 > 标 `已交付` 有门：该 FR 的 §6 / spec 验收标准全部满足、对应测试 / 实机验收通过后，才由 `sdd-release-version` 在发版时统一标 `已交付@vX.Y.Z`，过程中不得自行预标。
@@ -73,6 +74,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 - 一个全新项目按 `template/` 照抄，能在较短时间内（手动验收）跑通一个最小购买场景。
 - 后台进程在任务结束/失败后均被收尾，端口释放、无残留（实机维度，需确认）。
 - 集群/压测下各后端经 `MC_TESTKIT_E2E_BACKEND_NAME` 收到各自声明名，消费方据此派生**不同** `server-id`（FR-12）；smoke 结果含 `backendName=s1`、集群到达服结果含其服名（已自举验证），下游跨服一致性 / 转服不丢数据断言由消费方桩查共享 DB 自证（**实机维度，需用户确认**）。
+- [x] FR-20 以真实 BungeeCord 消费验证为交付门禁：下游代理插件经代理节点专属声明成功加载，backend / proxy 每节点 env 与模板分别生效；旧 DSL 与 `dependencies { }` 仅后端注入语义不回归；公共 DSL / 任务不引入 `provide`（**Beacon 真实消费与完整构建已确认**）。
 
 ## 7. 分期（路线）
 

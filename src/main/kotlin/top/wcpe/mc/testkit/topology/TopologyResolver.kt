@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit.topology
 
 import org.gradle.api.GradleException
+import top.wcpe.mc.testkit.contract.McTestkitEnv
 import top.wcpe.mc.testkit.contract.toTaskKey
 import top.wcpe.mc.testkit.dsl.BackendSpec
 import top.wcpe.mc.testkit.dsl.McTestkitExtension
@@ -43,6 +44,7 @@ object TopologyResolver {
         serves: List<ServeSpec> = emptyList(),
     ): Topology {
         validateNames(backends, proxies)
+        validateNodeEnvironments(backends, proxies)
         validateRoutes(backends, proxies)
         validateScenarioRefs(backends, proxies, scenarios)
         validateServeRefs(backends, proxies, serves)
@@ -53,6 +55,8 @@ object TopologyResolver {
                 platform = spec.platform,
                 version = spec.version,
                 port = spec.port ?: (TopologyDefaults.BACKEND_BASE_PORT + index),
+                environment = spec.environment,
+                templateDirectory = spec.templateDirectoryDeclaration,
             )
         }
         val resolvedProxies = proxies.mapIndexed { index, spec ->
@@ -61,6 +65,9 @@ object TopologyResolver {
                 platform = spec.platform,
                 port = spec.port ?: (TopologyDefaults.PROXY_BASE_PORT + index),
                 routes = spec.routes,
+                plugins = spec.plugins,
+                environment = spec.environment,
+                templateDirectory = spec.templateDirectoryDeclaration,
             )
         }
 
@@ -98,6 +105,29 @@ object TopologyResolver {
                 "mcTestkit 节点名冲突：「$collision」同时被用作后端名与代理名；" +
                     "后端与代理共用引用命名空间，请改用不同名称。",
             )
+        }
+    }
+
+    /** 校验节点环境变量名与值可被子进程环境接受，且消费方不能覆盖框架保留前缀。 */
+    private fun validateNodeEnvironments(backends: List<BackendSpec>, proxies: List<ProxySpec>) {
+        backends.forEach { validateNodeEnvironment("后端", it.name, it.environment) }
+        proxies.forEach { validateNodeEnvironment("代理", it.name, it.environment) }
+    }
+
+    private fun validateNodeEnvironment(nodeType: String, nodeName: String, environment: Map<String, String>) {
+        environment.forEach { (name, value) ->
+            if (name.isBlank()) {
+                throw GradleException("mcTestkit $nodeType「$nodeName」的环境变量名不能为空白；请为 env(name, value) 提供非空名称。")
+            }
+            if ('=' in name || '\u0000' in name || '\u0000' in value) {
+                throw GradleException("mcTestkit $nodeType「$nodeName」的环境变量「$name」含非法字符；名称不得含等号或空字符，值不得含空字符。")
+            }
+            if (name.startsWith(McTestkitEnv.PREFIX, ignoreCase = true)) {
+                throw GradleException(
+                    "mcTestkit $nodeType「$nodeName」的环境变量「$name」命中框架保留前缀 ${McTestkitEnv.PREFIX}；" +
+                        "请改用业务自有名称，框架环境变量由 mc-testkit 权威写入。",
+                )
+            }
         }
     }
 

@@ -18,6 +18,17 @@ _（暂无）_
 ### 移除
 _（暂无）_
 
+## [0.5.0] - 2026-07-18
+
+### 新增
+- **节点运行时注入（FR-20）**：`BackendSpec` 新增 `env(name, value)` / `templateDirectory(envOrPath)`，`ProxySpec` 新增 `plugin(envOrPath)` / `env(name, value)` / `templateDirectory(envOrPath)`；代理专属插件只进入对应代理，`dependencies { }` 继续只注入后端。节点环境禁止声明大小写任意形式的 `MC_TESTKIT_E2E_` 保留前缀。
+
+### 变更
+- **统一节点资源预检、运行目录 staging 与环境合并**：普通直连/经代理、集群、压测、单 serve、集群 serve 全部启动路径在清理目录或启动进程前解析参与节点资源；后端节点模板优先并兼容旧 `MC_TESTKIT_E2E_SERVER_TEMPLATE_DIR`，代理按“清理 → 模板 → 框架权威配置 → 平台准备 → 专属插件”重建运行目录；子进程环境优先级固定为“宿主 < 节点 < 框架”，启动日志不输出环境值。
+
+### 修复
+- **恢复旧全局模板 env 的相对路径兼容**：`MC_TESTKIT_E2E_SERVER_TEMPLATE_DIR` 继续沿用 v0.4.2 的 `File(raw)` / JVM·Gradle 当前工作目录语义；仅新增 backend / proxy 节点 `envOrPath` 的相对路径按应用项目 `Project.projectDir` 解析，避免多工程子项目接入时旧 CI 路径失效。
+
 ## [0.4.2] - 2026-07-04
 
 ### 修复

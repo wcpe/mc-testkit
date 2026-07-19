@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit.topology
 
 import org.gradle.api.GradleException
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.dsl.BackendSpec
 import top.wcpe.mc.testkit.dsl.ProxySpec
 import top.wcpe.mc.testkit.dsl.ScenarioSpec
@@ -43,7 +44,8 @@ class TopologyResolverTest {
     // ── happy path ──
 
     @Test
-    fun `单后端无代理 构出仅含一个后端的拓扑`() {
+    @DisplayName("单后端未配置代理时应构建仅含该后端的拓扑")
+    fun resolvesSingleBackendWithoutProxy() {
         val topology = resolve(backends = listOf(backend("s1", port = 25565)))
         assertEquals(1, topology.backends.size)
         assertTrue(topology.proxies.isEmpty())
@@ -53,7 +55,8 @@ class TopologyResolverTest {
     }
 
     @Test
-    fun `代理加多后端 构出正确路由的拓扑`() {
+    @DisplayName("代理连接多个后端时应构建路由正确的拓扑")
+    fun resolvesProxyWithMultipleBackendRoutes() {
         val topology = resolve(
             backends = listOf(backend("s1", port = 25565), backend("s2", port = 25566)),
             proxies = listOf(proxy("wf", port = 25577, routesTo = arrayOf("s1", "s2"))),
@@ -66,7 +69,8 @@ class TopologyResolverTest {
     }
 
     @Test
-    fun `解析为纯函数 同一输入两次解析结果相等`() {
+    @DisplayName("相同输入重复解析时应返回相等结果")
+    fun returnsEqualResultsForSameInput() {
         val backends = listOf(backend("s1"), backend("s2"))
         val proxies = listOf(proxy("wf", routesTo = arrayOf("s1", "s2")))
         val first = TopologyResolver.resolve(backends, proxies, emptyList())
@@ -77,7 +81,8 @@ class TopologyResolverTest {
     // ── 端口推导 ──
 
     @Test
-    fun `后端端口未声明 按基数加序号推导`() {
+    @DisplayName("后端未声明端口时应按基数和声明序号推导")
+    fun derivesBackendPortsByDeclarationOrder() {
         val topology = resolve(backends = listOf(backend("s1"), backend("s2"), backend("s3")))
         assertEquals(
             listOf(25565, 25566, 25567),
@@ -86,7 +91,8 @@ class TopologyResolverTest {
     }
 
     @Test
-    fun `代理端口未声明 按代理基数加序号推导`() {
+    @DisplayName("代理未声明端口时应按基数和声明序号推导")
+    fun derivesProxyPortsByDeclarationOrder() {
         val topology = resolve(
             backends = listOf(backend("s1", port = 25565)),
             proxies = listOf(
@@ -101,7 +107,8 @@ class TopologyResolverTest {
     }
 
     @Test
-    fun `显式端口优先 不被推导覆盖`() {
+    @DisplayName("显式端口应优先保留且不被推导端口覆盖")
+    fun preservesExplicitPortOverDerivedPort() {
         val topology = resolve(
             backends = listOf(
                 backend("s1", port = 30000),
@@ -116,7 +123,8 @@ class TopologyResolverTest {
     // ── 校验：命名 ──
 
     @Test
-    fun `后端重名 报中文错误`() {
+    @DisplayName("后端名称重复时应抛出中文错误")
+    fun rejectsDuplicateBackendNames() {
         val ex = assertFailsWith<GradleException> {
             resolve(backends = listOf(backend("s1"), backend("s1")))
         }
@@ -125,7 +133,8 @@ class TopologyResolverTest {
     }
 
     @Test
-    fun `代理重名 报中文错误`() {
+    @DisplayName("代理名称重复时应抛出中文错误")
+    fun rejectsDuplicateProxyNames() {
         val ex = assertFailsWith<GradleException> {
             resolve(
                 backends = listOf(backend("s1")),
@@ -140,7 +149,8 @@ class TopologyResolverTest {
     }
 
     @Test
-    fun `后端名与代理名相撞 报中文错误`() {
+    @DisplayName("后端与代理名称冲突时应抛出中文错误")
+    fun rejectsBackendAndProxyNameCollision() {
         val ex = assertFailsWith<GradleException> {
             resolve(
                 backends = listOf(backend("node")),
@@ -151,7 +161,8 @@ class TopologyResolverTest {
     }
 
     @Test
-    fun `后端名为空白 报中文错误`() {
+    @DisplayName("后端名称为空白时应抛出中文错误")
+    fun rejectsBlankBackendName() {
         val ex = assertFailsWith<GradleException> {
             resolve(backends = listOf(backend("  ")))
         }
@@ -161,7 +172,8 @@ class TopologyResolverTest {
     // ── 校验：路由 ──
 
     @Test
-    fun `路由目标后端不存在 报中文错误`() {
+    @DisplayName("路由目标后端不存在时应抛出中文错误")
+    fun rejectsMissingRouteBackend() {
         val ex = assertFailsWith<GradleException> {
             resolve(
                 backends = listOf(backend("s1")),
@@ -173,7 +185,8 @@ class TopologyResolverTest {
     }
 
     @Test
-    fun `代理无任何路由 报中文错误`() {
+    @DisplayName("代理未配置任何路由时应抛出中文错误")
+    fun rejectsProxyWithoutRoutes() {
         val ex = assertFailsWith<GradleException> {
             resolve(
                 backends = listOf(backend("s1")),
@@ -186,7 +199,8 @@ class TopologyResolverTest {
     // ── 校验：端口冲突 ──
 
     @Test
-    fun `两后端显式端口冲突 报中文错误`() {
+    @DisplayName("两个后端显式端口冲突时应抛出中文错误")
+    fun rejectsDuplicateExplicitBackendPorts() {
         val ex = assertFailsWith<GradleException> {
             resolve(backends = listOf(backend("s1", port = 25565), backend("s2", port = 25565)))
         }
@@ -195,7 +209,8 @@ class TopologyResolverTest {
     }
 
     @Test
-    fun `后端与代理端口冲突 报中文错误`() {
+    @DisplayName("后端与代理端口冲突时应抛出中文错误")
+    fun rejectsBackendAndProxyPortCollision() {
         val ex = assertFailsWith<GradleException> {
             resolve(
                 backends = listOf(backend("s1", port = 25577)),
@@ -206,7 +221,8 @@ class TopologyResolverTest {
     }
 
     @Test
-    fun `显式端口与推导端口相撞 报中文错误`() {
+    @DisplayName("显式端口与推导端口冲突时应抛出中文错误")
+    fun rejectsExplicitAndDerivedPortCollision() {
         // s1 显式 25566；s2 推导 = 基数 25565 + 序号1 = 25566，相撞
         val ex = assertFailsWith<GradleException> {
             resolve(backends = listOf(backend("s1", port = 25566), backend("s2")))
@@ -217,7 +233,8 @@ class TopologyResolverTest {
     // ── 校验：场景引用 ──
 
     @Test
-    fun `场景引用不存在的后端 报中文错误`() {
+    @DisplayName("场景引用不存在的后端时应抛出中文错误")
+    fun rejectsScenarioReferencingMissingBackend() {
         val ex = assertFailsWith<GradleException> {
             resolve(
                 backends = listOf(backend("s1")),
@@ -229,7 +246,8 @@ class TopologyResolverTest {
     }
 
     @Test
-    fun `场景引用不存在的代理 报中文错误`() {
+    @DisplayName("场景引用不存在的代理时应抛出中文错误")
+    fun rejectsScenarioReferencingMissingProxy() {
         val ex = assertFailsWith<GradleException> {
             resolve(
                 backends = listOf(backend("s1")),
@@ -242,7 +260,8 @@ class TopologyResolverTest {
     }
 
     @Test
-    fun `场景引用存在的后端与代理 解析通过`() {
+    @DisplayName("场景引用存在的后端与代理时应解析成功")
+    fun resolvesScenarioWithExistingBackendAndProxy() {
         val topology = resolve(
             backends = listOf(backend("s1", port = 25565)),
             proxies = listOf(proxy("wf", port = 25577, routesTo = arrayOf("s1"))),

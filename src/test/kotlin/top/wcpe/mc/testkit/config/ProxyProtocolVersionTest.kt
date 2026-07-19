@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.config
 
+import org.junit.jupiter.api.DisplayName
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -12,7 +13,8 @@ import kotlin.test.assertEquals
 class ProxyProtocolVersionTest {
 
     @Test
-    fun `经代理协议版本等于后端版本`() {
+    @DisplayName("经代理连接时协议版本应与后端版本一致")
+    fun proxyProtocolMatchesBackendVersion() {
         assertEquals("1.20.1", ProxyProtocolVersion.forBackend("1.20.1"))
         assertEquals("1.21.4", ProxyProtocolVersion.forBackend("1.21.4"))
     }

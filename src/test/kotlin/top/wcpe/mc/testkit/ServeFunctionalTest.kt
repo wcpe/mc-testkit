@@ -2,6 +2,7 @@ package top.wcpe.mc.testkit
 
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.Test
@@ -21,7 +22,8 @@ class ServeFunctionalTest {
         File(projectDir, name).apply { parentFile.mkdirs() }.writeText(text)
 
     @Test
-    fun `serve 声明注册 serveX 与 stopXServe 任务`() {
+    @DisplayName("serve 声明应注册执行与收尾任务")
+    fun registerServeLifecycleTasks() {
         write("settings.gradle.kts", """rootProject.name = "serve-consumer"""")
         write(
             "build.gradle.kts",
@@ -49,7 +51,8 @@ class ServeFunctionalTest {
     }
 
     @Test
-    fun `serve 直连默认后端注册 serveX 任务`() {
+    @DisplayName("serve 直连默认后端时应注册执行任务")
+    fun registerDirectServeTaskForDefaultBackend() {
         write("settings.gradle.kts", """rootProject.name = "serve-default"""")
         write(
             "build.gradle.kts",
@@ -72,7 +75,8 @@ class ServeFunctionalTest {
     }
 
     @Test
-    fun `serve 引用不存在后端配置期中文报错`() {
+    @DisplayName("serve 引用不存在的后端时应在消费者配置期中文报错")
+    fun rejectServeReferencingMissingBackendDuringConfiguration() {
         write("settings.gradle.kts", """rootProject.name = "bad-serve"""")
         write(
             "build.gradle.kts",
@@ -97,7 +101,8 @@ class ServeFunctionalTest {
     }
 
     @Test
-    fun `集群 serve 声明注册 serveX 与 stopXServe 任务`() {
+    @DisplayName("集群 serve 声明应注册执行与收尾任务")
+    fun registerClusterServeLifecycleTasks() {
         write("settings.gradle.kts", """rootProject.name = "cluster-serve"""")
         write(
             "build.gradle.kts",
@@ -126,7 +131,8 @@ class ServeFunctionalTest {
     }
 
     @Test
-    fun `集群 serve 缺 via 配置期中文报错`() {
+    @DisplayName("集群 serve 缺少代理引用时应在消费者配置期中文报错")
+    fun rejectClusterServeWithoutProxyDuringConfiguration() {
         write("settings.gradle.kts", """rootProject.name = "bad-cluster-serve"""")
         write(
             "build.gradle.kts",
@@ -152,7 +158,8 @@ class ServeFunctionalTest {
     }
 
     @Test
-    fun `serve 声明 bot 注册 serveX 任务（FR-19）`() {
+    @DisplayName("serve 声明机器人时应注册执行任务")
+    fun registerServeTaskWithBot() {
         write("settings.gradle.kts", """rootProject.name = "serve-bot"""")
         write(
             "build.gradle.kts",

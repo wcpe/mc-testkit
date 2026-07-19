@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.provision
 
+import org.junit.jupiter.api.DisplayName
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -12,24 +13,28 @@ import kotlin.test.assertEquals
 class ProvisionPlatformTest {
 
     @Test
-    fun `Waterfall 把完整 MC 版本截到 major_minor`() {
+    @DisplayName("Waterfall 处理完整版本时应截取主版本与次版本")
+    fun truncateWaterfallPatchVersion() {
         assertEquals("1.20", ProvisionPlatform.WATERFALL.downloadVersion("1.20.1"))
         assertEquals("1.21", ProvisionPlatform.WATERFALL.downloadVersion("1.21.4"))
     }
 
     @Test
-    fun `Waterfall 已是 major_minor 时幂等`() {
+    @DisplayName("Waterfall 处理主次版本时应保持结果不变")
+    fun keepWaterfallMajorMinorVersionIdempotent() {
         assertEquals("1.20", ProvisionPlatform.WATERFALL.downloadVersion("1.20"))
     }
 
     @Test
-    fun `后端 Paper 与 Folia 保留完整版本不截断`() {
+    @DisplayName("Paper 与 Folia 处理版本时应保留完整版本号")
+    fun preserveCompleteBackendVersion() {
         assertEquals("1.20.1", ProvisionPlatform.PAPER.downloadVersion("1.20.1"))
         assertEquals("1.20.1", ProvisionPlatform.FOLIA.downloadVersion("1.20.1"))
     }
 
     @Test
-    fun `Velocity 自有版本号原样保留`() {
+    @DisplayName("Velocity 处理自有版本时应保留原始版本号")
+    fun preserveVelocityVersion() {
         assertEquals("3.3.0-SNAPSHOT", ProvisionPlatform.VELOCITY.downloadVersion("3.3.0-SNAPSHOT"))
     }
 }

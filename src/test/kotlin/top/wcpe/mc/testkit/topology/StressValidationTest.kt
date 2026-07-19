@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit.topology
 
 import org.gradle.api.GradleException
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.dsl.BackendSpec
 import top.wcpe.mc.testkit.dsl.ProxySpec
 import top.wcpe.mc.testkit.dsl.ScenarioSpec
@@ -33,7 +34,8 @@ class StressValidationTest {
         }
 
     @Test
-    fun `合法压测场景经代理解析通过`() {
+    @DisplayName("合法压测场景经代理连接时应解析成功")
+    fun resolvesValidProxiedStressScenario() {
         val t = TopologyResolver.resolve(
             listOf(backend("s1", 25565), backend("s2", 25566)),
             listOf(proxy("wf", 25577, "s1", "s2")),
@@ -43,7 +45,8 @@ class StressValidationTest {
     }
 
     @Test
-    fun `合法压测场景直连（无 via）解析通过`() {
+    @DisplayName("合法压测场景未配置代理时应直连解析成功")
+    fun resolvesValidDirectStressScenario() {
         val t = TopologyResolver.resolve(
             listOf(backend("s1", 25565), backend("s2", 25566)),
             emptyList(),
@@ -53,7 +56,8 @@ class StressValidationTest {
     }
 
     @Test
-    fun `压测场景无 backends 报中文错误`() {
+    @DisplayName("压测场景未配置后端时应抛出中文错误")
+    fun rejectsStressScenarioWithoutBackends() {
         val sc = ScenarioSpec("load").apply {
             stress {
                 botsPerServer = 10
@@ -67,7 +71,8 @@ class StressValidationTest {
     }
 
     @Test
-    fun `botsPerServer 非正报中文错误`() {
+    @DisplayName("每服机器人数非正数时应抛出中文错误")
+    fun rejectsNonPositiveBotsPerServer() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 listOf(backend("s1", 25565)),
@@ -79,7 +84,8 @@ class StressValidationTest {
     }
 
     @Test
-    fun `durationSeconds 非正报中文错误`() {
+    @DisplayName("压测时长非正数时应抛出中文错误")
+    fun rejectsNonPositiveDurationSeconds() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 listOf(backend("s1", 25565)),
@@ -91,7 +97,8 @@ class StressValidationTest {
     }
 
     @Test
-    fun `压测设了 via 但路由未覆盖全部后端报中文错误`() {
+    @DisplayName("压测代理未路由全部后端时应抛出中文错误")
+    fun rejectsStressProxyMissingBackendRoute() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 listOf(backend("s1", 25565), backend("s2", 25566)),

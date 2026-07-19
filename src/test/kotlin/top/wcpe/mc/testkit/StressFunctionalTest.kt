@@ -2,6 +2,7 @@ package top.wcpe.mc.testkit
 
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.Test
@@ -21,7 +22,8 @@ class StressFunctionalTest {
         File(projectDir, name).apply { parentFile.mkdirs() }.writeText(text)
 
     @Test
-    fun `压测场景注册 e2eXStress 与 stopXStress 任务`() {
+    @DisplayName("压测场景应注册执行与收尾任务")
+    fun registerStressLifecycleTasks() {
         write("settings.gradle.kts", """rootProject.name = "stress-consumer"""")
         write(
             "build.gradle.kts",
@@ -52,7 +54,8 @@ class StressFunctionalTest {
     }
 
     @Test
-    fun `压测 botsPerServer 非正配置期中文报错`() {
+    @DisplayName("每服机器人数非正数时应在配置期中文报错")
+    fun rejectNonPositiveBotsPerServerDuringConfiguration() {
         write("settings.gradle.kts", """rootProject.name = "bad-stress"""")
         write(
             "build.gradle.kts",
@@ -80,7 +83,8 @@ class StressFunctionalTest {
     }
 
     @Test
-    fun `压测经 Velocity 代理配置期中文报错`() {
+    @DisplayName("压测场景使用 Velocity 代理时应在配置期中文报错")
+    fun rejectStressScenarioUsingVelocityProxy() {
         write("settings.gradle.kts", """rootProject.name = "stress-velocity"""")
         write(
             "build.gradle.kts",

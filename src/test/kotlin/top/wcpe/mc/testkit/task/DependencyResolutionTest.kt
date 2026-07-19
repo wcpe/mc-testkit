@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit.task
 
 import org.gradle.api.GradleException
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
 import top.wcpe.mc.testkit.dsl.DependenciesSpec
 import java.io.File
@@ -23,7 +24,8 @@ class DependencyResolutionTest {
         File(tmp, name).apply { writeText("fake-jar") }
 
     @Test
-    fun `按环境变量名解析到 jar 路径`() {
+    @DisplayName("依赖声明为环境变量名时应解析到对应 jar 路径")
+    fun resolveDependencyFromEnvironmentVariable() {
         val underTest = jar("plugin.jar")
         val deps = DependenciesSpec().apply {
             pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR"
@@ -38,7 +40,8 @@ class DependencyResolutionTest {
     }
 
     @Test
-    fun `声明值本身是路径时直接采用`() {
+    @DisplayName("依赖声明本身为路径时应直接采用该 jar")
+    fun resolveDependencyFromLiteralPath() {
         val sampleLib = jar("SampleLib.jar")
         val deps = DependenciesSpec().apply {
             plugin(sampleLib.absolutePath)
@@ -53,7 +56,8 @@ class DependencyResolutionTest {
     }
 
     @Test
-    fun `被测插件在前 依赖按声明顺序在后`() {
+    @DisplayName("解析多个依赖时应将被测插件置前并保持其余声明顺序")
+    fun resolveDependenciesKeepsUnderTestFirstAndDeclarationOrder() {
         val underTest = jar("under-test.jar")
         val depA = jar("A.jar")
         val depB = jar("B.jar")
@@ -73,7 +77,8 @@ class DependencyResolutionTest {
     }
 
     @Test
-    fun `缺失 jar 抛中文错误 含缺项名与环境变量提示`() {
+    @DisplayName("缺少依赖 jar 时应抛出包含缺项名和环境变量提示的中文错误")
+    fun resolveMissingDependencyThrowsChineseGuidance() {
         val deps = DependenciesSpec().apply {
             pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR"
         }
@@ -88,7 +93,8 @@ class DependencyResolutionTest {
     }
 
     @Test
-    fun `环境变量指向不存在文件时也算缺失`() {
+    @DisplayName("环境变量指向不存在文件时应将依赖判定为缺失")
+    fun resolveMissingEnvironmentTargetAsAbsent() {
         val deps = DependenciesSpec().apply {
             pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR"
         }
@@ -100,7 +106,8 @@ class DependencyResolutionTest {
     }
 
     @Test
-    fun `无任何声明时返回空 不报错`() {
+    @DisplayName("没有任何依赖声明时应返回空列表且不报错")
+    fun resolveNoDependencyDeclarationsReturnsEmptyList() {
         val resolved = resolveDependencyJars(DependenciesSpec()) { null }
         assertTrue(resolved.isEmpty())
     }

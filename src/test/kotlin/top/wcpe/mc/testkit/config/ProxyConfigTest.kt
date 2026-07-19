@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.config
 
+import org.junit.jupiter.api.DisplayName
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -9,7 +10,8 @@ import kotlin.test.assertTrue
 class ProxyConfigTest {
 
     @Test
-    fun `生成的代理配置含监听端口 后端地址与离线转发关键项`() {
+    @DisplayName("生成的代理配置应包含监听端口、后端地址与离线转发配置")
+    fun generatedBungeeConfigContainsRequiredForwardingSettings() {
         val yml = bungeeProxyConfigYml(listenPort = 25577, backendAddress = "127.0.0.1:25565")
 
         // 监听端口

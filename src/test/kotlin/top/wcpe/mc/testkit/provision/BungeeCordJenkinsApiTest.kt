@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.provision
 
+import org.junit.jupiter.api.DisplayName
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -16,12 +17,14 @@ class BungeeCordJenkinsApiTest {
     private val jobResponse = """{"lastSuccessfulBuild":{"number":1820}}"""
 
     @Test
-    fun `解析最新成功构建号`() {
+    @DisplayName("解析最新成功构建响应时应返回构建号")
+    fun parseLatestSuccessfulBuildNumber() {
         assertEquals(1820, BungeeCordJenkinsApi.parseLastSuccessfulBuild(jobResponse))
     }
 
     @Test
-    fun `拼构建产物下载 URL`() {
+    @DisplayName("拼接构建产物地址时应返回完整下载 URL")
+    fun buildArtifactDownloadUrl() {
         val api = BungeeCordJenkinsApi(fetchText = { error("不应发网络") })
         assertEquals(
             "https://hub.spigotmc.org/jenkins/job/BungeeCord/1820/artifact/bootstrap/target/BungeeCord.jar",
@@ -30,7 +33,8 @@ class BungeeCordJenkinsApiTest {
     }
 
     @Test
-    fun `经注入替身解析走预期 Jenkins 端点`() {
+    @DisplayName("获取最新构建时应请求预期 Jenkins 端点")
+    fun requestExpectedJenkinsEndpointWhenFetchingLatestBuild() {
         var requestedUrl: String? = null
         val api = BungeeCordJenkinsApi(fetchText = { url ->
             requestedUrl = url
@@ -41,7 +45,8 @@ class BungeeCordJenkinsApiTest {
     }
 
     @Test
-    fun `无成功构建抛中文错误`() {
+    @DisplayName("缺少成功构建时应抛出中文错误")
+    fun rejectMissingSuccessfulBuildWithChineseError() {
         val ex = assertFailsWith<IllegalStateException> {
             BungeeCordJenkinsApi.parseLastSuccessfulBuild("""{"lastSuccessfulBuild":null}""")
         }

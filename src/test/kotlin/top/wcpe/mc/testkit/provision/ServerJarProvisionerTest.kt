@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.provision
 
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.contract.McTestkitDefaults
 import top.wcpe.mc.testkit.contract.McTestkitEnv
 import java.io.File
@@ -29,7 +30,8 @@ class ServerJarProvisionerTest {
     private fun tempJar(): File = File.createTempFile("override-", ".jar").apply { deleteOnExit() }
 
     @Test
-    fun `设置 WATERFALL_JAR 时返回覆盖路径且不发网络`() {
+    @DisplayName("设置 WATERFALL_JAR 时应返回覆盖路径且不访问网络")
+    fun returnWaterfallOverrideWithoutNetwork() {
         val jar = tempJar()
         val provisioner = ServerJarProvisioner(
             service = explodingService(),
@@ -42,7 +44,8 @@ class ServerJarProvisionerTest {
     }
 
     @Test
-    fun `设置 VELOCITY_JAR 时返回覆盖路径且不发网络`() {
+    @DisplayName("设置 VELOCITY_JAR 时应返回覆盖路径且不访问网络")
+    fun returnVelocityOverrideWithoutNetwork() {
         val jar = tempJar()
         val provisioner = ServerJarProvisioner(
             service = explodingService(),
@@ -52,7 +55,8 @@ class ServerJarProvisionerTest {
     }
 
     @Test
-    fun `设置 BUNGEECORD_JAR 时返回覆盖路径且不发网络`() {
+    @DisplayName("设置 BUNGEECORD_JAR 时应返回覆盖路径且不访问网络")
+    fun returnBungeeCordOverrideWithoutNetwork() {
         val jar = tempJar()
         val provisioner = ServerJarProvisioner(
             service = explodingService(),
@@ -62,7 +66,8 @@ class ServerJarProvisionerTest {
     }
 
     @Test
-    fun `后端 PAPER_JAR 覆盖（前缀拼出的逃生口）返回覆盖路径且不发网络`() {
+    @DisplayName("设置 PAPER_JAR 时应返回覆盖路径且不访问网络")
+    fun returnPaperOverrideWithoutNetwork() {
         val jar = tempJar()
         val paperJarEnv = McTestkitEnv.PREFIX + "PAPER_JAR"
         val provisioner = ServerJarProvisioner(
@@ -73,7 +78,8 @@ class ServerJarProvisionerTest {
     }
 
     @Test
-    fun `JAR 覆盖指向不存在文件时抛中文错误`() {
+    @DisplayName("JAR 覆盖指向不存在文件时应抛出中文错误")
+    fun rejectMissingOverrideJarWithChineseError() {
         val provisioner = ServerJarProvisioner(
             service = explodingService(),
             readEnv = { name -> if (name == McTestkitEnv.WATERFALL_JAR) "/no/such/path/x.jar" else null },
@@ -84,14 +90,16 @@ class ServerJarProvisionerTest {
     }
 
     @Test
-    fun `不支持平台抛中文错误`() {
+    @DisplayName("解析不支持的平台时应抛出中文错误")
+    fun rejectUnsupportedPlatformWithChineseError() {
         val provisioner = ServerJarProvisioner(explodingService(), readEnv = { null })
         val ex = assertFailsWith<IllegalArgumentException> { provisioner.resolve("spigot") }
         assertTrue(ex.message!!.contains("不支持的平台"), "应提示平台不支持：${ex.message}")
     }
 
     @Test
-    fun `VERSION 覆盖被采纳并传给下载核心`() {
+    @DisplayName("存在 VERSION 覆盖时应优先传给下载核心")
+    fun preferEnvironmentVersionOverride() {
         // 用「记录入参的下载核心」断言版本透传：env *_VERSION > 请求版本
         val captured = CapturingService()
         val provisioner = ServerJarProvisioner(
@@ -103,7 +111,8 @@ class ServerJarProvisionerTest {
     }
 
     @Test
-    fun `无 VERSION 覆盖时采纳请求版本`() {
+    @DisplayName("缺少 VERSION 覆盖时应采用请求版本")
+    fun useRequestedVersionWithoutEnvironmentOverride() {
         val captured = CapturingService()
         val provisioner = ServerJarProvisioner(captured.asService(), readEnv = { null })
         provisioner.resolve("paper", requestedVersion = "1.21.4")
@@ -111,7 +120,8 @@ class ServerJarProvisionerTest {
     }
 
     @Test
-    fun `无 VERSION 覆盖且无请求版本时回退到缺省`() {
+    @DisplayName("缺少版本覆盖与请求版本时应使用默认版本")
+    fun useDefaultVersionWithoutOverrides() {
         val captured = CapturingService()
         val provisioner = ServerJarProvisioner(captured.asService(), readEnv = { null })
         provisioner.resolve("paper")
@@ -119,7 +129,8 @@ class ServerJarProvisionerTest {
     }
 
     @Test
-    fun `Waterfall 请求版本按 major_minor 截断后下发（完整 MC 版本会 404）`() {
+    @DisplayName("下发 Waterfall 请求版本时应截取主版本与次版本")
+    fun truncateWaterfallRequestedVersion() {
         // 复现：Waterfall 在 PaperMC 仅按 major.minor 发布（如 1.20），传入后端完整版本 1.20.1
         // 会请求 .../projects/waterfall/versions/1.20.1 而 404。解析应把版本截到 1.20 再下发。
         val captured = CapturingService()
@@ -129,7 +140,8 @@ class ServerJarProvisionerTest {
     }
 
     @Test
-    fun `Waterfall 截断随后端版本变化（1_21_4 取 1_21）`() {
+    @DisplayName("Waterfall 请求版本变化时应按新版本截取主次版本")
+    fun truncateUpdatedWaterfallRequestedVersion() {
         // 证明请求版本（= 编排传入的后端版本）确实透传并按平台粒度截断，而非固定到缺省。
         val captured = CapturingService()
         val provisioner = ServerJarProvisioner(captured.asService(), readEnv = { null })
@@ -138,7 +150,8 @@ class ServerJarProvisionerTest {
     }
 
     @Test
-    fun `Paper 后端版本不被截断（保留补丁号）`() {
+    @DisplayName("下发 Paper 请求版本时应保留补丁版本号")
+    fun preservePaperRequestedPatchVersion() {
         // 反向守卫：major.minor 截断只对 Waterfall 生效，后端 Paper/Folia 仍按完整 MC 版本下发。
         val captured = CapturingService()
         val provisioner = ServerJarProvisioner(captured.asService(), readEnv = { null })

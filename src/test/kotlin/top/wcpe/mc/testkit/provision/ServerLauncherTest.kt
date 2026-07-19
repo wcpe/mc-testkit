@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.provision
 
+import org.junit.jupiter.api.DisplayName
 import java.io.File
 import java.util.concurrent.TimeUnit
 import java.util.jar.Attributes
@@ -20,20 +21,23 @@ import kotlin.test.assertTrue
 class ServerLauncherTest {
 
     @Test
-    fun `pid 文件命名为 key-pid`() {
+    @DisplayName("解析 pid 文件时应使用服务键命名")
+    fun resolvePidFileUsingServerKey() {
         val dir = File("build/test-run-dir")
         assertEquals(File(dir, "s1.pid"), provisionPidFile(dir, "s1"))
     }
 
     @Test
-    fun `javaExecutable 指向存在的可执行`() {
+    @DisplayName("解析 Java 可执行文件时应返回有效名称")
+    fun resolveExistingJavaExecutable() {
         val exe = javaExecutable()
         // 要么是 java.home/bin 下存在的绝对路径，要么回退为裸名 java/java.exe
         assertTrue(exe.endsWith("java") || exe.endsWith("java.exe"), "应为 java 可执行：$exe")
     }
 
     @Test
-    fun `jar 不存在时抛中文错误`() {
+    @DisplayName("启动不存在的 jar 时应抛出中文错误")
+    fun rejectMissingJarWithChineseError() {
         val ex = assertFailsWith<IllegalArgumentException> {
             ServerLauncher.launch(
                 jar = File("build/no-such.jar"),
@@ -45,7 +49,8 @@ class ServerLauncherTest {
     }
 
     @Test
-    fun `启动一个极小可运行 jar 并落 pid 与日志`() {
+    @DisplayName("启动可运行 jar 时应写入 pid 文件与日志")
+    fun launchRunnableJarAndWritePidAndLog() {
         val workDir = File("build/test-launch-${System.nanoTime()}").apply { mkdirs() }
         val jar = createImmediateExitJar(File(workDir, "hello.jar"))
 
@@ -76,7 +81,8 @@ class ServerLauncherTest {
     }
 
     @Test
-    fun `启动日志不打印环境变量值`() {
+    @DisplayName("记录启动日志时不应泄露环境变量值")
+    fun avoidLoggingEnvironmentVariableValues() {
         val workDir = File("build/test-launch-env-${System.nanoTime()}").apply { mkdirs() }
         val jar = createImmediateExitJar(File(workDir, "hello.jar"))
         val messages = mutableListOf<String>()

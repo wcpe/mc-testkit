@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.config
 
+import org.junit.jupiter.api.DisplayName
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -12,7 +13,8 @@ import kotlin.test.assertTrue
 class VelocityProxyConfigTest {
 
     @Test
-    fun `单后端 velocity_toml 含 bind 与 modern forwarding 与单 server`() {
+    @DisplayName("单后端配置应包含监听地址、现代转发与具名服务器")
+    fun singleBackendConfigContainsModernForwardingSettings() {
         val toml = velocityProxyConfigToml(
             listenPort = 25577,
             servers = listOf("s1" to "127.0.0.1:25565"),
@@ -35,7 +37,8 @@ class VelocityProxyConfigTest {
     }
 
     @Test
-    fun `集群 velocity_toml 含全部具名 server 且 try 为有序全后端`() {
+    @DisplayName("集群配置应包含全部具名服务器并按顺序设置回退列表")
+    fun velocityClusterConfigContainsOrderedBackendFallbacks() {
         val toml = velocityProxyConfigToml(
             listenPort = 25577,
             servers = listOf("s1" to "127.0.0.1:25565", "s2" to "127.0.0.1:25566"),
@@ -53,7 +56,8 @@ class VelocityProxyConfigTest {
     }
 
     @Test
-    fun `空 server 列表报错`() {
+    @DisplayName("服务器列表为空时应抛出参数错误")
+    fun emptyVelocityServerListThrowsError() {
         assertFailsWith<IllegalArgumentException> {
             velocityProxyConfigToml(listenPort = 25577, servers = emptyList())
         }

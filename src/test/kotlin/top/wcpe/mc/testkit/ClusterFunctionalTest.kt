@@ -2,6 +2,7 @@ package top.wcpe.mc.testkit
 
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.Test
@@ -21,7 +22,8 @@ class ClusterFunctionalTest {
         File(projectDir, name).apply { parentFile.mkdirs() }.writeText(text)
 
     @Test
-    fun `集群场景注册 e2eXCluster 与 stopXCluster 任务`() {
+    @DisplayName("集群场景配置完成后应注册执行与收尾任务")
+    fun registerClusterLifecycleTasks() {
         write("settings.gradle.kts", """rootProject.name = "cluster-consumer"""")
         write(
             "build.gradle.kts",
@@ -51,7 +53,8 @@ class ClusterFunctionalTest {
     }
 
     @Test
-    fun `集群场景缺 via 配置期中文报错`() {
+    @DisplayName("集群场景缺少代理引用时应在配置期中文报错")
+    fun rejectClusterScenarioWithoutProxy() {
         write("settings.gradle.kts", """rootProject.name = "bad-cluster"""")
         write(
             "build.gradle.kts",

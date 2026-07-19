@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit.topology
 
 import org.gradle.api.GradleException
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.dsl.BackendSpec
 import top.wcpe.mc.testkit.dsl.ProxySpec
 import top.wcpe.mc.testkit.dsl.ScenarioSpec
@@ -23,7 +24,8 @@ class MultiBotValidationTest {
         }
 
     @Test
-    fun `单后端双角色 bot 解析通过`() {
+    @DisplayName("单后端配置双角色机器人时应解析成功")
+    fun resolvesTwoRoleBotsOnSingleBackend() {
         val sc = ScenarioSpec("gui-edit").apply {
             backend = "s1"
             bot("admin") {
@@ -40,7 +42,8 @@ class MultiBotValidationTest {
     }
 
     @Test
-    fun `集群同质复制 count=N 解析通过`() {
+    @DisplayName("集群按 count 复制同质机器人时应解析成功")
+    fun resolvesHomogeneousClusterBotsByCount() {
         val sc = ScenarioSpec("g16").apply {
             backends("s1", "s2")
             via = "wf"
@@ -59,7 +62,8 @@ class MultiBotValidationTest {
     }
 
     @Test
-    fun `单匿名 bot 仍解析通过（向后兼容）`() {
+    @DisplayName("单个匿名机器人应保持向后兼容并解析成功")
+    fun resolvesSingleAnonymousBotForBackwardCompatibility() {
         val sc = ScenarioSpec("buy").apply {
             backend = "s1"
             bot {
@@ -71,7 +75,8 @@ class MultiBotValidationTest {
     }
 
     @Test
-    fun `多 bot 含匿名报中文错误`() {
+    @DisplayName("多个机器人包含匿名角色时应抛出中文错误")
+    fun rejectsMultipleBotsContainingAnonymousRole() {
         val sc = ScenarioSpec("x").apply {
             backend = "s1"
             bot { action = "a" }
@@ -84,7 +89,8 @@ class MultiBotValidationTest {
     }
 
     @Test
-    fun `多 bot 角色名重复报中文错误`() {
+    @DisplayName("多个机器人角色名重复时应抛出中文错误")
+    fun rejectsDuplicateBotRoleNames() {
         val sc = ScenarioSpec("x").apply {
             backend = "s1"
             bot("dup") { action = "a" }
@@ -97,7 +103,8 @@ class MultiBotValidationTest {
     }
 
     @Test
-    fun `count 非正报中文错误`() {
+    @DisplayName("机器人 count 非正数时应抛出中文错误")
+    fun rejectsNonPositiveBotCount() {
         val sc = ScenarioSpec("x").apply {
             backend = "s1"
             bot {
@@ -112,7 +119,8 @@ class MultiBotValidationTest {
     }
 
     @Test
-    fun `压测场景 bot 带 count 报中文错误`() {
+    @DisplayName("压测场景的机器人配置 count 时应抛出中文错误")
+    fun rejectsStressScenarioWithBotCount() {
         val sc = ScenarioSpec("load").apply {
             backends("s1")
             stress {
@@ -131,7 +139,8 @@ class MultiBotValidationTest {
     }
 
     @Test
-    fun `压测场景多 bot 报中文错误`() {
+    @DisplayName("压测场景配置多个机器人时应抛出中文错误")
+    fun rejectsStressScenarioWithMultipleBots() {
         val sc = ScenarioSpec("load").apply {
             backends("s1")
             stress {

@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.config
 
+import org.junit.jupiter.api.DisplayName
 import java.io.File
 import java.nio.file.Files
 import java.util.Properties
@@ -26,7 +27,8 @@ class BackendBungeeCordConfigTest {
         }
 
     @Test
-    fun `文件全不存在时三件套均写出正确值`() {
+    @DisplayName("配置文件均不存在时应创建文件并写入正确的 BungeeCord 配置")
+    fun missingFilesAreCreatedWithBungeeSettings() {
         val runDir = tempRunDir()
 
         BackendBungeeCordConfig.apply(runDir)
@@ -53,7 +55,8 @@ class BackendBungeeCordConfigTest {
     }
 
     @Test
-    fun `已存在文件时补丁现有键而非另起一行`() {
+    @DisplayName("配置文件已存在时应修改现有键且不产生重复配置")
+    fun existingFilesArePatchedWithoutDuplicateKeys() {
         val runDir = tempRunDir()
         // 预先存在 spigot.yml（bungeecord 默认 false），应被补成 true
         File(runDir, "spigot.yml").writeText(

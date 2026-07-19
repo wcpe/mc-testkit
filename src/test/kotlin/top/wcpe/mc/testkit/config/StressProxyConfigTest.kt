@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.config
 
+import org.junit.jupiter.api.DisplayName
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -10,7 +11,8 @@ import kotlin.test.assertTrue
 class StressProxyConfigTest {
 
     @Test
-    fun `N listener 一端口对一后端钉服`() {
+    @DisplayName("多个监听器应按端口分别固定到对应后端服务器")
+    fun stressConfigPinsEachListenerToBackend() {
         val yml = bungeeStressProxyConfigYml(
             listOf(
                 StressProxyBinding("s1", "127.0.0.1:25565", 25577),
@@ -33,7 +35,8 @@ class StressProxyConfigTest {
     }
 
     @Test
-    fun `空绑定抛中文错误`() {
+    @DisplayName("绑定列表为空时应抛出中文错误")
+    fun emptyStressBindingsThrowChineseError() {
         val ex = assertFailsWith<IllegalArgumentException> { bungeeStressProxyConfigYml(emptyList()) }
         assertTrue(ex.message!!.contains("绑定") || ex.message!!.contains("至少"))
     }

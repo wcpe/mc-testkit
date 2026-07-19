@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.bot
 
+import org.junit.jupiter.api.DisplayName
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
@@ -51,7 +52,8 @@ class ProcessReaperTest {
     }
 
     @Test
-    fun `pid 文件缺失时安全 no-op 不抛异常`() {
+    @DisplayName("PID 文件缺失时应安全忽略且不抛异常")
+    fun missingPidFileIsIgnoredSafely() {
         val dir = tempDir()
         val pidFile = File(dir, "absent.pid")
         assertFalse(pidFile.exists())
@@ -63,7 +65,8 @@ class ProcessReaperTest {
     }
 
     @Test
-    fun `pid 文件内容非法时安全 no-op 并删除文件`() {
+    @DisplayName("PID 文件内容非法时应安全忽略并删除文件")
+    fun invalidPidFileIsDeletedSafely() {
         val dir = tempDir()
         val pidFile = File(dir, "garbage.pid")
         pidFile.writeText("not-a-number\n")
@@ -74,7 +77,8 @@ class ProcessReaperTest {
     }
 
     @Test
-    fun `指向已不存在进程的 pid 文件 安全 no-op 并删除文件`() {
+    @DisplayName("PID 文件指向不存在的进程时应安全忽略并删除文件")
+    fun stalePidFileIsDeletedSafely() {
         val dir = tempDir()
         val pidFile = File(dir, "stale.pid")
         // 选一个极不可能存在的 pid；若偶然存在则跳过断言（避免误杀）
@@ -90,7 +94,8 @@ class ProcessReaperTest {
     }
 
     @Test
-    fun `能收尾一个真实自存活子进程并删除 pid 文件`() {
+    @DisplayName("收尾真实存活子进程后应结束进程并删除 PID 文件")
+    fun liveChildProcessIsStoppedAndPidFileDeleted() {
         val dir = tempDir()
         val pidFile = File(dir, "child.pid")
         val child = spawnLongLivedChild(dir)
@@ -113,7 +118,8 @@ class ProcessReaperTest {
     }
 
     @Test
-    fun `收尾会调用注入的日志回调记录被结束的进程`() {
+    @DisplayName("收尾进程时应通过注入的日志回调记录进程")
+    fun stoppedProcessIsReportedThroughLogger() {
         val dir = tempDir()
         val pidFile = File(dir, "logged.pid")
         val child = spawnLongLivedChild(dir)

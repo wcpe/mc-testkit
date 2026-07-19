@@ -2,6 +2,7 @@ package top.wcpe.mc.testkit.task
 
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.Test
@@ -78,7 +79,8 @@ class TaskOrchestrationFunctionalTest {
             .output
 
     @Test
-    fun `完整声明后按命名约定注册全部 e2e 任务且 tasks 成功`() {
+    @DisplayName("完整声明消费者工程后应按命名约定注册全部 E2E 任务且 tasks 执行成功")
+    fun registerAllE2eTasksForCompleteConsumer() {
         writeFullConsumer()
         val output = runTasks()
 
@@ -102,7 +104,8 @@ class TaskOrchestrationFunctionalTest {
     }
 
     @Test
-    fun `help 成功`() {
+    @DisplayName("完整声明消费者工程后 help 任务应执行成功")
+    fun runHelpSuccessfully() {
         writeFullConsumer()
         val result = GradleRunner.create()
             .withProjectDir(projectDir)
@@ -113,7 +116,8 @@ class TaskOrchestrationFunctionalTest {
     }
 
     @Test
-    fun `e2e 任务依赖对应 prepare 任务`() {
+    @DisplayName("E2E 任务应依赖对应的 prepare 任务并按顺序出现在任务图中")
+    fun wireE2eTaskToPrepareTask() {
         writeFullConsumer()
         // dryRun：只构建任务图、按依赖顺序打印，不真正执行任务体（不下载、不起服）
         val output = GradleRunner.create()
@@ -132,7 +136,8 @@ class TaskOrchestrationFunctionalTest {
     }
 
     @Test
-    fun `withBot 任务依赖 launch 与 verify`() {
+    @DisplayName("withBot 任务应依赖 launch 与 verify 任务")
+    fun wireWithBotTaskToLaunchAndVerifyTasks() {
         writeFullConsumer()
         val output = GradleRunner.create()
             .withProjectDir(projectDir)
@@ -146,7 +151,8 @@ class TaskOrchestrationFunctionalTest {
     }
 
     @Test
-    fun `经代理任务以停代理任务收尾`() {
+    @DisplayName("经代理场景任务应以停止代理任务收尾")
+    fun finalizeProxyScenarioWithStopProxyTask() {
         writeFullConsumer()
         val output = GradleRunner.create()
             .withProjectDir(projectDir)
@@ -163,7 +169,8 @@ class TaskOrchestrationFunctionalTest {
     }
 
     @Test
-    fun `路由目标不存在 配置期中文报错`() {
+    @DisplayName("代理路由目标不存在时应在配置期输出中文错误")
+    fun rejectMissingProxyRouteTargetDuringConfiguration() {
         write("settings.gradle.kts", """rootProject.name = "consumer"""")
         write(
             "build.gradle.kts",
@@ -190,7 +197,8 @@ class TaskOrchestrationFunctionalTest {
     }
 
     @Test
-    fun `场景引用不存在的后端 配置期中文报错`() {
+    @DisplayName("场景引用后端不存在时应在配置期输出中文错误")
+    fun rejectMissingScenarioBackendDuringConfiguration() {
         write("settings.gradle.kts", """rootProject.name = "consumer"""")
         write(
             "build.gradle.kts",
@@ -215,7 +223,8 @@ class TaskOrchestrationFunctionalTest {
     }
 
     @Test
-    fun `后端重名 配置期中文报错`() {
+    @DisplayName("后端名称重复时应在配置期输出中文错误")
+    fun rejectDuplicateBackendNamesDuringConfiguration() {
         write("settings.gradle.kts", """rootProject.name = "consumer"""")
         write(
             "build.gradle.kts",

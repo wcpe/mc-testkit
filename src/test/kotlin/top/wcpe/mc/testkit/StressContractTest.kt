@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit
 import org.gradle.testfixtures.ProjectBuilder
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.contract.McTestkitDefaults
 import top.wcpe.mc.testkit.contract.McTestkitEnv
 import top.wcpe.mc.testkit.contract.McTestkitTaskNames
@@ -15,7 +16,8 @@ import kotlin.test.assertTrue
 class StressContractTest {
 
     @Test
-    fun `场景 stress 块记录压测维度（压测场景）`() {
+    @DisplayName("压测 DSL 应记录机器人数量持续时间与默认随机种子")
+    fun recordStressScenarioDimensions() {
         val project = ProjectBuilder.builder().build()
         project.plugins.apply(McTestkitPlugin::class.java)
         val ext = project.extensions.getByType(McTestkitExtension::class.java)
@@ -36,14 +38,16 @@ class StressContractTest {
     }
 
     @Test
-    fun `压测任务命名约定 e2e_Key_Stress 与 stop_Key_Stress`() {
+    @DisplayName("不同命名风格的压测场景应生成稳定任务名")
+    fun generateStableStressTaskNames() {
         assertEquals("e2eContinuousStressStress", McTestkitTaskNames.stress("continuous-stress"))
         assertEquals("e2eContinuousStressStress", McTestkitTaskNames.stress("continuousStress"))
         assertEquals("stopContinuousStressStress", McTestkitTaskNames.stopStress("continuous-stress"))
     }
 
     @Test
-    fun `压测 env 名固定且前缀一致`() {
+    @DisplayName("压测环境变量应使用固定名称与统一前缀")
+    fun useFixedStressEnvironmentVariables() {
         assertEquals("MC_TESTKIT_E2E_BOT_INDEX", McTestkitEnv.BOT_INDEX)
         assertEquals("MC_TESTKIT_E2E_STRESS_RANDOM_SEED", McTestkitEnv.STRESS_RANDOM_SEED)
         assertEquals("MC_TESTKIT_E2E_STRESS_DURATION_SECONDS", McTestkitEnv.STRESS_DURATION_SECONDS)

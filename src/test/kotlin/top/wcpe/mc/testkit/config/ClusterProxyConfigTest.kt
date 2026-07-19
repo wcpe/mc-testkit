@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.config
 
+import org.junit.jupiter.api.DisplayName
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -9,7 +10,8 @@ import kotlin.test.assertTrue
 class ClusterProxyConfigTest {
 
     @Test
-    fun `集群代理配置含单 listener 与全部具名 server`() {
+    @DisplayName("集群代理配置应包含单个监听器与全部具名服务器")
+    fun clusterConfigContainsSingleListenerAndNamedServers() {
         val yml = bungeeClusterProxyConfigYml(
             listenPort = 25577,
             backends = listOf("s1" to "127.0.0.1:25565", "s2" to "127.0.0.1:25566"),

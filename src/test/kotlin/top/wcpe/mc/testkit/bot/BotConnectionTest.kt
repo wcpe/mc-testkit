@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.bot
 
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.contract.McTestkitEnv
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -19,7 +20,8 @@ class BotConnectionTest {
     private val noOverride: (String) -> String? = { null }
 
     @Test
-    fun `默认连接：键全部用 MC_TESTKIT_E2E_ 前缀且无 SAMPLEBIZ`() {
+    @DisplayName("默认连接应仅生成 MC_TESTKIT_E2E_ 前缀键且不包含 SAMPLEBIZ")
+    fun defaultConnectionUsesOnlyContractPrefix() {
         val env = BotConnection(action = "buy-success", username = "BuyBot")
             .toEnvironment(override = noOverride)
 
@@ -31,7 +33,8 @@ class BotConnectionTest {
     }
 
     @Test
-    fun `默认连接：用户名 host 等核心项写入正确`() {
+    @DisplayName("默认连接应正确写入用户名、主机与认证等核心配置")
+    fun defaultConnectionWritesCoreValues() {
         val env = BotConnection(action = "buy-success", username = "BuyBot")
             .toEnvironment(override = noOverride)
 
@@ -47,7 +50,8 @@ class BotConnectionTest {
     }
 
     @Test
-    fun `显式端口优先于缺省与覆盖`() {
+    @DisplayName("存在显式端口时应优先使用显式值")
+    fun explicitPortOverridesFallbackValues() {
         val env = BotConnection(action = "via-proxy", username = "ProxyBot", port = 25577)
             .toEnvironment { name -> if (name == McTestkitEnv.BOT_PORT) "19999" else null }
 
@@ -56,7 +60,8 @@ class BotConnectionTest {
     }
 
     @Test
-    fun `未显式给端口时回退到消费方覆盖`() {
+    @DisplayName("未提供显式端口时应使用消费方环境变量覆盖值")
+    fun missingExplicitPortUsesEnvironmentOverride() {
         val env = BotConnection(action = "direct", username = "DirectBot", port = null)
             .toEnvironment { name -> if (name == McTestkitEnv.BOT_PORT) "20000" else null }
 
@@ -64,7 +69,8 @@ class BotConnectionTest {
     }
 
     @Test
-    fun `host username auth 可被消费方同名环境变量覆盖`() {
+    @DisplayName("消费方同名环境变量应覆盖主机、用户名与认证配置")
+    fun environmentOverridesConnectionValues() {
         val overrides = mapOf(
             McTestkitEnv.BOT_HOST to "10.0.0.5",
             McTestkitEnv.BOT_USERNAME to "OverrideBot",
@@ -79,7 +85,8 @@ class BotConnectionTest {
     }
 
     @Test
-    fun `version 缺省不写出 给定或覆盖时写出`() {
+    @DisplayName("未提供版本时不应写出，提供或覆盖时应写出对应值")
+    fun versionIsWrittenOnlyWhenProvided() {
         // 不给 version、消费方也没设：BOT_VERSION 不应出现（让 mineflayer 自协商）
         val envNoVersion = BotConnection(action = "x", username = "B").toEnvironment(override = noOverride)
         assertNull(envNoVersion[McTestkitEnv.BOT_VERSION])
@@ -95,7 +102,8 @@ class BotConnectionTest {
     }
 
     @Test
-    fun `extraEnvironment 追加并可覆盖默认`() {
+    @DisplayName("附加环境变量应追加并覆盖默认配置")
+    fun extraEnvironmentOverridesDefaults() {
         val env = BotConnection(action = "x", username = "B")
             .toEnvironment(extraEnvironment = mapOf(McTestkitEnv.BOT_HOST to "extra-host"), override = noOverride)
 

@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit.topology
 
 import org.gradle.testfixtures.ProjectBuilder
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.McTestkitPlugin
 import top.wcpe.mc.testkit.dsl.BackendPlatform
 import top.wcpe.mc.testkit.dsl.McTestkitExtension
@@ -23,7 +24,8 @@ class TopologyFromExtensionTest {
     }
 
     @Test
-    fun `经扩展声明的代理加双后端 解析出完整拓扑`() {
+    @DisplayName("扩展声明代理和双后端时应解析出完整拓扑")
+    fun resolvesCompleteTopologyFromExtension() {
         val ext = extension()
         ext.backend("s1") {
             platform = paper

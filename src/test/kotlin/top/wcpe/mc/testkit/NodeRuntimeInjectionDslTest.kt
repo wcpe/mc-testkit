@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit
 
 import org.gradle.api.GradleException
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.dsl.BackendSpec
 import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import top.wcpe.mc.testkit.dsl.ProxySpec
@@ -14,7 +15,8 @@ import kotlin.test.assertTrue
 class NodeRuntimeInjectionDslTest {
 
     @Test
-    fun `后端与代理节点声明进入解析模型且重复 env 后值覆盖`() {
+    @DisplayName("节点运行时声明应进入解析模型且重复环境变量使用后值")
+    fun resolveNodeRuntimeFieldsAndUseLatestEnvironmentValue() {
         val extension = McTestkitExtension().apply {
             backend("backend-sentinel") {
                 env("NODE_SENTINEL", "backend-first")
@@ -42,7 +44,8 @@ class NodeRuntimeInjectionDslTest {
     }
 
     @Test
-    fun `旧 DSL 不声明节点运行时字段时解析为空且 dependencies 语义不变`() {
+    @DisplayName("旧 DSL 未声明节点运行时字段时应保持空值与依赖语义")
+    fun preserveLegacyDslSemanticsWithoutNodeRuntimeFields() {
         val extension = McTestkitExtension().apply {
             backend("backend-sentinel")
             proxy("proxy-sentinel") { routesTo("backend-sentinel") }
@@ -64,7 +67,8 @@ class NodeRuntimeInjectionDslTest {
     }
 
     @Test
-    fun `节点 env 名为空白时配置期中文失败`() {
+    @DisplayName("节点环境变量名为空白时应在配置期中文失败")
+    fun rejectBlankNodeEnvironmentVariableName() {
         val exception = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 backends = listOf(BackendSpec("backend-sentinel").apply { env(" ", "value-sentinel") }),
@@ -79,7 +83,8 @@ class NodeRuntimeInjectionDslTest {
     }
 
     @Test
-    fun `节点 env 名任意大小写命中框架前缀时配置期中文失败`() {
+    @DisplayName("节点环境变量名忽略大小写命中保留前缀时应中文失败")
+    fun rejectReservedNodeEnvironmentVariablePrefixIgnoringCase() {
         val backendException = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 backends = listOf(
@@ -109,7 +114,8 @@ class NodeRuntimeInjectionDslTest {
     }
 
     @Test
-    fun `节点 env 名含非法等号时配置期中文失败`() {
+    @DisplayName("节点环境变量名包含等号时应在配置期中文失败")
+    fun rejectEqualsSignInNodeEnvironmentVariableName() {
         val exception = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 backends = listOf(BackendSpec("backend-sentinel").apply { env("BAD=NAME", "value-sentinel") }),

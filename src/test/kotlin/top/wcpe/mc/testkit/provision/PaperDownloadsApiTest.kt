@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.provision
 
+import org.junit.jupiter.api.DisplayName
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -39,12 +40,14 @@ class PaperDownloadsApiTest {
     """.trimIndent()
 
     @Test
-    fun `解析 latest 构建对象的 id`() {
+    @DisplayName("解析最新构建对象时应返回构建 ID")
+    fun parseLatestBuildId() {
         assertEquals(196, PaperDownloadsApi.parseLatestBuild(latestBuildResponse))
     }
 
     @Test
-    fun `解析下载产物名 sha256 与 URL`() {
+    @DisplayName("解析构建响应时应返回产物名、sha256 与下载 URL")
+    fun parseDownloadMetadata() {
         val download = PaperDownloadsApi.parseDownload(buildResponse)
         assertEquals("paper-1.20.1-196.jar", download.name)
         assertEquals("abc123def456", download.sha256)
@@ -52,7 +55,8 @@ class PaperDownloadsApiTest {
     }
 
     @Test
-    fun `下载 URL 取 Fill 响应中的对象存储地址`() {
+    @DisplayName("获取下载 URL 时应返回 Fill 响应中的对象存储地址")
+    fun returnObjectStorageUrlFromDownloadMetadata() {
         val api = PaperDownloadsApi(fetchText = { error("不应发网络") })
         val download = PaperDownload(
             name = "paper-1.20.1-196.jar",
@@ -67,7 +71,8 @@ class PaperDownloadsApiTest {
     }
 
     @Test
-    fun `经注入替身解析最新构建走 builds latest 端点`() {
+    @DisplayName("获取最新构建时应请求 builds latest 端点")
+    fun requestLatestBuildEndpointWhenFetchingBuild() {
         var requestedUrl: String? = null
         val api = PaperDownloadsApi(fetchText = { url ->
             requestedUrl = url
@@ -78,7 +83,8 @@ class PaperDownloadsApiTest {
     }
 
     @Test
-    fun `latest 构建对象缺少 id 抛中文错误`() {
+    @DisplayName("最新构建对象缺少 ID 时应抛出中文错误")
+    fun rejectLatestBuildWithoutIdWithChineseError() {
         val ex = assertFailsWith<IllegalStateException> {
             PaperDownloadsApi.parseLatestBuild("""{"channel":"STABLE"}""")
         }
@@ -86,7 +92,8 @@ class PaperDownloadsApiTest {
     }
 
     @Test
-    fun `缺少 server 下载抛中文错误`() {
+    @DisplayName("构建响应缺少服务端下载时应抛出中文错误")
+    fun rejectMissingServerDownloadWithChineseError() {
         val ex = assertFailsWith<IllegalStateException> {
             PaperDownloadsApi.parseDownload("""{"downloads":{}}""")
         }

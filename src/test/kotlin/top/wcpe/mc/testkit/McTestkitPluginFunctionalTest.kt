@@ -2,6 +2,7 @@ package top.wcpe.mc.testkit
 
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.Test
@@ -22,7 +23,8 @@ class McTestkitPluginFunctionalTest {
         File(projectDir, name).apply { parentFile.mkdirs() }.writeText(text)
 
     @Test
-    fun `消费者应用插件并配置 mcTestkit DSL 后 help 成功`() {
+    @DisplayName("消费者应用插件并配置完整 DSL 后应成功执行 help")
+    fun configureConsumerProjectSuccessfully() {
         write("settings.gradle.kts", """rootProject.name = "consumer"""")
         write(
             "build.gradle.kts",

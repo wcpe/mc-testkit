@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.provision
 
+import org.junit.jupiter.api.DisplayName
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -31,7 +32,8 @@ class JarProvisionServiceTest {
     )
 
     @Test
-    fun `sha256 不匹配抛中文错误且不留下缓存文件`() {
+    @DisplayName("sha256 不匹配时应抛出中文错误且不留下缓存文件")
+    fun rejectSha256MismatchWithoutLeavingCacheFile() {
         val cache = freshCache()
         // 声明的 sha256 与实际下载内容不符，触发完整性校验失败
         val service = JarProvisionService(
@@ -45,7 +47,8 @@ class JarProvisionServiceTest {
     }
 
     @Test
-    fun `下载成功则原子移入缓存且内容完整`() {
+    @DisplayName("下载成功时应原子移入缓存并保持内容完整")
+    fun moveSuccessfulDownloadIntoCacheWithIntactContent() {
         val cache = freshCache()
         val content = "完整且校验通过的 jar 内容"
         // 用同一 sha256 扩展算出期望值，保证与实现的 hash 格式一致

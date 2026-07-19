@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.config
 
+import org.junit.jupiter.api.DisplayName
 import java.io.File
 import java.nio.file.Files
 import java.util.Properties
@@ -27,7 +28,8 @@ class ServerPropertiesTest {
         }
 
     @Test
-    fun `编辑保留未涉及键并改对涉及键`() {
+    @DisplayName("编辑属性时应更新指定键并保留未涉及键")
+    fun editUpdatesSpecifiedKeysAndPreservesOthers() {
         val runDir = tempRunDir()
         // 既有文件含一个不该被动的自定义键
         writeProperties(runDir, "motd=旧标题\nserver-port=25565\nonline-mode=true\n")
@@ -49,7 +51,8 @@ class ServerPropertiesTest {
     }
 
     @Test
-    fun `文件不存在时新建并只写入指定键`() {
+    @DisplayName("属性文件不存在时应新建文件且仅写入指定键")
+    fun missingFileIsCreatedWithSpecifiedKeysOnly() {
         val runDir = tempRunDir()
 
         ServerProperties.edit(runDir, mapOf(ServerProperties.LEVEL_TYPE to "minecraft:flat"))
@@ -61,7 +64,8 @@ class ServerPropertiesTest {
     }
 
     @Test
-    fun `难度键常量与缺省判定（FR-13）`() {
+    @DisplayName("难度键常量应支持缺省与已配置状态判定")
+    fun difficultyConstantSupportsDefaultDetection() {
         assertEquals("difficulty", ServerProperties.DIFFICULTY)
 
         // 模板未设难度 → load 不含该键（编排据此补默认 peaceful，保护测试玩家）
@@ -83,7 +87,8 @@ class ServerPropertiesTest {
     }
 
     @Test
-    fun `port 读取已写入端口缺省回退默认值`() {
+    @DisplayName("端口读取应返回已配置值并在缺省时回退默认值")
+    fun portUsesConfiguredValueOrDefault() {
         val withPort = tempRunDir()
         writeProperties(withPort, "server-port=28888\n")
         assertEquals(28888, ServerProperties.port(withPort))

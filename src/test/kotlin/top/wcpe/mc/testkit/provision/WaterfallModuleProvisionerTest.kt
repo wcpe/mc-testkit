@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.provision
 
+import org.junit.jupiter.api.DisplayName
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -9,7 +10,8 @@ import kotlin.test.assertTrue
 class WaterfallModuleProvisionerTest {
 
     @Test
-    fun `预下载 Waterfall 模块到代理运行目录 modules`() {
+    @DisplayName("预下载 Waterfall 模块时应写入代理运行目录")
+    fun downloadWaterfallModulesIntoRunDirectory() {
         val runDir = File("build/waterfall-modules-test-${System.nanoTime()}")
         val contents = mapOf(
             "https://example.test/cmd_server.jar" to "cmd_server 模块内容",

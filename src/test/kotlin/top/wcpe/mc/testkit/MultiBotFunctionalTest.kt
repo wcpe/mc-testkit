@@ -2,6 +2,7 @@ package top.wcpe.mc.testkit
 
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.Test
@@ -30,7 +31,8 @@ class MultiBotFunctionalTest {
             .output
 
     @Test
-    fun `集群同质复制 count=N 切服 bot 注册既有集群任务（不新增任务名）`() {
+    @DisplayName("集群复制多个机器人时应沿用既有集群任务名称")
+    fun registerExistingClusterTasksForReplicatedBots() {
         write("settings.gradle.kts", """rootProject.name = "multibot-cluster"""")
         write(
             "build.gradle.kts",
@@ -54,7 +56,8 @@ class MultiBotFunctionalTest {
     }
 
     @Test
-    fun `集群多 bot 任务以 stopXCluster 收尾（finalizedBy，保证多 bot 全回收）`() {
+    @DisplayName("集群多机器人任务应由集群收尾任务回收全部进程")
+    fun finalizeClusterBotsWithClusterStopTask() {
         write("settings.gradle.kts", """rootProject.name = "multibot-cluster"""")
         write(
             "build.gradle.kts",
@@ -83,7 +86,8 @@ class MultiBotFunctionalTest {
     }
 
     @Test
-    fun `单后端双角色 bot 注册 launch e2e 与 withBot（不新增任务名）`() {
+    @DisplayName("单后端双角色机器人应注册既有启动验证与组合任务")
+    fun registerExistingTasksForTwoRoleBots() {
         write("settings.gradle.kts", """rootProject.name = "multibot-gui"""")
         write(
             "build.gradle.kts",
@@ -107,7 +111,8 @@ class MultiBotFunctionalTest {
     }
 
     @Test
-    fun `单后端双角色 withBot 触发 launch 与 verify`() {
+    @DisplayName("组合任务应触发双角色机器人的启动与验证任务")
+    fun wireWithBotTaskToLaunchAndVerify() {
         write("settings.gradle.kts", """rootProject.name = "multibot-gui"""")
         write(
             "build.gradle.kts",
@@ -134,7 +139,8 @@ class MultiBotFunctionalTest {
     }
 
     @Test
-    fun `单 bot 场景仍只注册既有任务（向后兼容）`() {
+    @DisplayName("单机器人场景应继续注册既有任务以保持兼容")
+    fun keepExistingTasksForSingleBotScenario() {
         write("settings.gradle.kts", """rootProject.name = "singlebot"""")
         write(
             "build.gradle.kts",
@@ -155,7 +161,8 @@ class MultiBotFunctionalTest {
     }
 
     @Test
-    fun `多 bot 缺唯一角色名 配置期中文报错`() {
+    @DisplayName("多个机器人缺少唯一角色名时应在配置期中文报错")
+    fun rejectMultipleBotsWithoutUniqueRoles() {
         write("settings.gradle.kts", """rootProject.name = "bad-multibot"""")
         write(
             "build.gradle.kts",
@@ -183,7 +190,8 @@ class MultiBotFunctionalTest {
     }
 
     @Test
-    fun `多 bot 展开 key 撞车 配置期中文报错（role 唯一但 key 不唯一）`() {
+    @DisplayName("机器人展开键重复时应在配置期中文报错")
+    fun rejectExpandedBotKeyCollision() {
         write("settings.gradle.kts", """rootProject.name = "key-collision"""")
         write(
             "build.gradle.kts",
@@ -211,7 +219,8 @@ class MultiBotFunctionalTest {
     }
 
     @Test
-    fun `tasks 成功`() {
+    @DisplayName("合法多机器人集群配置应成功列出任务")
+    fun configureMultiBotTasksSuccessfully() {
         write("settings.gradle.kts", """rootProject.name = "multibot-cluster"""")
         write(
             "build.gradle.kts",

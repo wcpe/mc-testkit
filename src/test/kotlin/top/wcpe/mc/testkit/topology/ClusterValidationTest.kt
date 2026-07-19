@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit.topology
 
 import org.gradle.api.GradleException
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.dsl.BackendSpec
 import top.wcpe.mc.testkit.dsl.ProxySpec
 import top.wcpe.mc.testkit.dsl.ScenarioSpec
@@ -29,7 +30,8 @@ class ClusterValidationTest {
         }
 
     @Test
-    fun `合法集群场景解析通过`() {
+    @DisplayName("合法集群场景应解析成功")
+    fun resolvesValidClusterScenario() {
         val t = TopologyResolver.resolve(
             listOf(backend("s1", 25565), backend("s2", 25566)),
             listOf(proxy("wf", 25577, "s1", "s2")),
@@ -39,7 +41,8 @@ class ClusterValidationTest {
     }
 
     @Test
-    fun `集群场景缺 via 报中文错误`() {
+    @DisplayName("集群场景缺少代理时应抛出中文错误")
+    fun rejectsClusterScenarioWithoutProxy() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 listOf(backend("s1", 25565), backend("s2", 25566)),
@@ -51,7 +54,8 @@ class ClusterValidationTest {
     }
 
     @Test
-    fun `集群后端不存在报中文错误`() {
+    @DisplayName("集群场景引用不存在后端时应抛出中文错误")
+    fun rejectsClusterScenarioWithMissingBackend() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 listOf(backend("s1", 25565)),
@@ -63,7 +67,8 @@ class ClusterValidationTest {
     }
 
     @Test
-    fun `代理未路由到全部集群后端报中文错误`() {
+    @DisplayName("代理未路由全部集群后端时应抛出中文错误")
+    fun rejectsProxyMissingClusterBackendRoute() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 listOf(backend("s1", 25565), backend("s2", 25566)),
@@ -75,7 +80,8 @@ class ClusterValidationTest {
     }
 
     @Test
-    fun `backend 与 backends 并用报中文错误`() {
+    @DisplayName("场景同时配置 backend 与 backends 时应抛出中文错误")
+    fun rejectsScenarioCombiningBackendAndBackends() {
         val sc = ScenarioSpec("x").apply {
             backend = "s1"
             backends("s1", "s2")

@@ -2,6 +2,7 @@ package top.wcpe.mc.testkit
 
 import org.gradle.api.GradleException
 import org.gradle.testfixtures.ProjectBuilder
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.contract.McTestkitContract
 import top.wcpe.mc.testkit.contract.McTestkitTaskNames
 import top.wcpe.mc.testkit.dsl.BackendSpec
@@ -28,7 +29,8 @@ class ServeContractTest {
     }
 
     @Test
-    fun `DSL 记录 serve 声明（后端 代理引用）`() {
+    @DisplayName("serve DSL 应记录后端与代理引用")
+    fun recordServeBackendAndProxyReferences() {
         val ext = extension()
         ext.backend("s1")
         ext.proxy("wf") { routesTo("s1") }
@@ -44,7 +46,8 @@ class ServeContractTest {
     }
 
     @Test
-    fun `serve 默认 backend 与 via 为 null（直连默认后端）`() {
+    @DisplayName("serve 未指定后端与代理时应保持为空")
+    fun defaultServeBackendAndProxyToNull() {
         val ext = extension()
         ext.serve("dev")
         val dev = ext.declaredServes.single()
@@ -53,7 +56,8 @@ class ServeContractTest {
     }
 
     @Test
-    fun `serve 任务命名约定（PascalCase 中缀）`() {
+    @DisplayName("不同命名风格的 serve 声明应生成稳定任务名")
+    fun generateStableServeTaskNames() {
         assertEquals("serveDev", McTestkitTaskNames.serve("dev"))
         assertEquals("serveMyDev", McTestkitTaskNames.serve("my-dev"))
         assertEquals("stopDevServe", McTestkitTaskNames.stopServe("dev"))
@@ -61,12 +65,14 @@ class ServeContractTest {
     }
 
     @Test
-    fun `保留哨兵场景 id 契约固定`() {
+    @DisplayName("serve 保留场景标识应保持固定契约")
+    fun keepServeScenarioIdentifierStable() {
         assertEquals("__mc_testkit_serve__", McTestkitContract.SERVE_SCENARIO_ID)
     }
 
     @Test
-    fun `serve 合法声明（直连 + 经代理）解析通过`() {
+    @DisplayName("合法的直连与代理 serve 声明应成功解析")
+    fun resolveValidDirectAndProxyServeDeclarations() {
         // 不抛异常即通过
         TopologyResolver.resolve(
             backends = listOf(BackendSpec("s1").apply { port = 25565 }),
@@ -88,7 +94,8 @@ class ServeContractTest {
     }
 
     @Test
-    fun `serve 引用不存在后端配置期中文报错`() {
+    @DisplayName("serve 引用不存在的后端时应在配置期中文报错")
+    fun rejectServeWithMissingBackend() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 backends = listOf(BackendSpec("s1").apply { port = 25565 }),
@@ -101,7 +108,8 @@ class ServeContractTest {
     }
 
     @Test
-    fun `serve 引用不存在代理配置期中文报错`() {
+    @DisplayName("serve 引用不存在的代理时应在配置期中文报错")
+    fun rejectServeWithMissingProxy() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 backends = listOf(BackendSpec("s1").apply { port = 25565 }),
@@ -119,7 +127,8 @@ class ServeContractTest {
     }
 
     @Test
-    fun `serve via 未路由到目标后端配置期中文报错`() {
+    @DisplayName("serve 代理未路由到目标后端时应在配置期中文报错")
+    fun rejectServeWhenProxyDoesNotRouteToBackend() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 backends = listOf(
@@ -145,7 +154,8 @@ class ServeContractTest {
     }
 
     @Test
-    fun `serve 名重复配置期中文报错`() {
+    @DisplayName("serve 名称重复时应在配置期中文报错")
+    fun rejectDuplicateServeNames() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 backends = listOf(BackendSpec("s1").apply { port = 25565 }),
@@ -161,7 +171,8 @@ class ServeContractTest {
     }
 
     @Test
-    fun `serve 无后端可用配置期中文报错`() {
+    @DisplayName("serve 没有可用后端时应在配置期中文报错")
+    fun rejectServeWithoutAvailableBackend() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 backends = emptyList(),
@@ -176,7 +187,8 @@ class ServeContractTest {
     // ── 集群 serve（FR-18）──
 
     @Test
-    fun `集群 serve DSL 记录 backends 与 via`() {
+    @DisplayName("集群 serve DSL 应记录多个后端与代理引用")
+    fun recordClusterServeBackendsAndProxy() {
         val ext = extension()
         ext.backend("s1")
         ext.backend("s2")
@@ -191,7 +203,8 @@ class ServeContractTest {
     }
 
     @Test
-    fun `集群 serve 合法声明解析通过`() {
+    @DisplayName("合法的集群 serve 声明应成功解析")
+    fun resolveValidClusterServeDeclaration() {
         TopologyResolver.resolve(
             backends = listOf(
                 BackendSpec("s1").apply { port = 25565 },
@@ -214,7 +227,8 @@ class ServeContractTest {
     }
 
     @Test
-    fun `集群 serve 缺 via 配置期中文报错`() {
+    @DisplayName("集群 serve 缺少代理引用时应在配置期中文报错")
+    fun rejectClusterServeWithoutProxy() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 backends = listOf(
@@ -230,7 +244,8 @@ class ServeContractTest {
     }
 
     @Test
-    fun `集群 serve via 未覆盖全部后端配置期中文报错`() {
+    @DisplayName("集群 serve 代理未覆盖全部后端时应在配置期中文报错")
+    fun rejectClusterServeWhenProxyMissesBackend() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 backends = listOf(
@@ -256,7 +271,8 @@ class ServeContractTest {
     }
 
     @Test
-    fun `集群 serve 与单后端 backend 并用配置期中文报错`() {
+    @DisplayName("集群 serve 同时声明单后端与多后端时应中文报错")
+    fun rejectClusterServeWithSingleAndMultipleBackends() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 backends = listOf(
@@ -285,7 +301,8 @@ class ServeContractTest {
     // ── serve 人机混场 bot（FR-19）──
 
     @Test
-    fun `serve DSL 记录 bot 声明`() {
+    @DisplayName("serve DSL 应记录机器人声明")
+    fun recordServeBotDeclaration() {
         val ext = extension()
         ext.backend("s1")
         ext.serve("dev") {
@@ -302,7 +319,8 @@ class ServeContractTest {
     }
 
     @Test
-    fun `serve 多匿名 bot 配置期中文报错`() {
+    @DisplayName("serve 声明多个匿名机器人时应在配置期中文报错")
+    fun rejectServeWithMultipleAnonymousBots() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 backends = listOf(BackendSpec("s1").apply { port = 25565 }),
@@ -321,7 +339,8 @@ class ServeContractTest {
     }
 
     @Test
-    fun `serve bot count 必须为正`() {
+    @DisplayName("serve 机器人数量非正数时应在配置期中文报错")
+    fun rejectServeBotWithNonPositiveCount() {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 backends = listOf(BackendSpec("s1").apply { port = 25565 }),

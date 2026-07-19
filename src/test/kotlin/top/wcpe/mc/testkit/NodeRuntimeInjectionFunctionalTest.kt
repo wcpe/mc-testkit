@@ -2,6 +2,7 @@ package top.wcpe.mc.testkit
 
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
 import org.yaml.snakeyaml.Yaml
 import java.io.File
@@ -25,7 +26,8 @@ class NodeRuntimeInjectionFunctionalTest {
     lateinit var projectDir: File
 
     @Test
-    fun `新 DSL 在全部后端与代理任务路径完成 staging 和节点环境接线`() {
+    @DisplayName("新 DSL 应在全部启动路径完成节点暂存与环境接线")
+    fun wireNodeRuntimeInjectionAcrossAllLaunchPaths() {
         val runtimeJar = createProbeJar(file("runtime-probe-sentinel.jar"))
         file("backend-plugin-sentinel.jar").writeText("backend-plugin-sentinel")
         file("proxy-plugin-sentinel.jar").writeText("proxy-plugin-sentinel")
@@ -94,7 +96,8 @@ class NodeRuntimeInjectionFunctionalTest {
     }
 
     @Test
-    fun `集群资源预检失败时不清理先声明后端且不启动任何节点`() {
+    @DisplayName("集群资源预检失败时应保留已有目录且不启动节点")
+    fun avoidCleanupAndStartupWhenClusterPreflightFails() {
         write("settings.gradle.kts", """rootProject.name = "preflight-sentinel"""")
         write(
             "build.gradle.kts",
@@ -139,7 +142,8 @@ class NodeRuntimeInjectionFunctionalTest {
     }
 
     @Test
-    fun `混合大小写保留前缀在 TestKit 配置期失败`() {
+    @DisplayName("混合大小写的保留前缀应在 TestKit 配置期失败")
+    fun rejectMixedCaseReservedPrefixDuringConfiguration() {
         write("settings.gradle.kts", """rootProject.name = "guard-sentinel"""")
         write(
             "build.gradle.kts",
@@ -164,7 +168,8 @@ class NodeRuntimeInjectionFunctionalTest {
     }
 
     @Test
-    fun `子工程旧模板 env 相对路径仍按显式可控 Gradle 工作目录解析`() {
+    @DisplayName("子工程旧模板相对路径应按显式 Gradle 工作目录解析")
+    fun resolveLegacyRelativeTemplateFromGradleWorkingDirectory() {
         write(
             "settings.gradle.kts",
             """
@@ -224,7 +229,8 @@ class NodeRuntimeInjectionFunctionalTest {
     }
 
     @Test
-    fun `旧 DSL 任务名保持兼容且公共任务不出现 provide`() {
+    @DisplayName("旧 DSL 应保持任务名兼容且公共任务不暴露 provide")
+    fun preserveLegacyTaskNamesWithoutProvideTasks() {
         write("settings.gradle.kts", """rootProject.name = "legacy-sentinel"""")
         write(
             "build.gradle.kts",

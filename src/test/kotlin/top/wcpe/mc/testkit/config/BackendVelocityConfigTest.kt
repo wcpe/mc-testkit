@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.config
 
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.contract.McTestkitDefaults
 import java.io.File
 import java.nio.file.Files
@@ -26,7 +27,8 @@ class BackendVelocityConfigTest {
         }
 
     @Test
-    fun `文件全不存在时两件套写出正确值且不写 spigot_yml`() {
+    @DisplayName("配置文件均不存在时应写入 Velocity 配置且不创建 spigot.yml")
+    fun missingFilesAreCreatedWithVelocitySettings() {
         val runDir = tempRunDir()
 
         BackendVelocityConfig.apply(runDir)
@@ -55,7 +57,8 @@ class BackendVelocityConfigTest {
     }
 
     @Test
-    fun `已存在 paper-global 时补 velocity 块而不破坏 bungee-cord 同级键`() {
+    @DisplayName("paper-global.yml 已存在时应补充 Velocity 配置并保留同级键")
+    fun existingPaperConfigKeepsSiblingKeys() {
         val runDir = tempRunDir()
         File(runDir, "config").mkdirs()
         File(runDir, "config/paper-global.yml").writeText(
@@ -79,7 +82,8 @@ class BackendVelocityConfigTest {
     }
 
     @Test
-    fun `自定 secret 覆盖默认`() {
+    @DisplayName("提供自定义密钥时应覆盖默认密钥")
+    fun customSecretOverridesDefaultSecret() {
         val runDir = tempRunDir()
         BackendVelocityConfig.apply(runDir, secret = "custom-secret-123")
         val paper = File(runDir, "config/paper-global.yml").readText()

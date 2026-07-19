@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.verify
 
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.contract.McTestkitResultFile
 import java.io.File
 import java.nio.file.Files
@@ -23,7 +24,8 @@ class ResultReaderTest {
     }
 
     @Test
-    fun `status 为 PASS 时返回含 message 的结论`() {
+    @DisplayName("状态为 PASS 时应返回包含消息的通过结论")
+    fun returnsPassResultWithMessage() {
         val dir = tempResultsDir()
         writeResult(dir, "smoke", "status=PASS\nmessage=一切正常\n")
 
@@ -35,7 +37,8 @@ class ResultReaderTest {
     }
 
     @Test
-    fun `status 为 FAIL 时抛中文错误并带上 message`() {
+    @DisplayName("状态为 FAIL 时应抛出包含消息的中文错误")
+    fun throwsChineseErrorForFailResultWithMessage() {
         val dir = tempResultsDir()
         writeResult(dir, "buySuccess", "status=FAIL\nmessage=余额不足\n")
 
@@ -48,7 +51,8 @@ class ResultReaderTest {
     }
 
     @Test
-    fun `结果文件缺失时抛中文错误并指明路径`() {
+    @DisplayName("结果文件缺失时应抛出指明路径的中文错误")
+    fun throwsChineseErrorWithPathForMissingResultFile() {
         val dir = tempResultsDir()
 
         val ex = assertFailsWith<IllegalStateException> {
@@ -59,7 +63,8 @@ class ResultReaderTest {
     }
 
     @Test
-    fun `status 缺失或为未知值时按失败处理并中文报错`() {
+    @DisplayName("状态缺失或未知时应按失败处理并抛出中文错误")
+    fun treatsMissingOrUnknownStatusAsFailure() {
         val dir = tempResultsDir()
         // 没有 status 键：视为非 PASS
         writeResult(dir, "noStatus", "message=没写状态\n")
@@ -71,7 +76,8 @@ class ResultReaderTest {
     }
 
     @Test
-    fun `message 缺省时仍能返回 PASS 结论`() {
+    @DisplayName("消息缺失但状态为 PASS 时应返回通过结论")
+    fun returnsPassResultWhenMessageMissing() {
         val dir = tempResultsDir()
         writeResult(dir, "onlyStatus", "status=PASS\n")
 

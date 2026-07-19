@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit.task
 
 import org.gradle.api.GradleException
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
 import top.wcpe.mc.testkit.dsl.BackendSpec
 import top.wcpe.mc.testkit.dsl.ProxySpec
@@ -19,7 +20,8 @@ class NodeRuntimeInjectionTest {
     lateinit var projectDir: File
 
     @Test
-    fun `envOrPath 非空环境变量优先且相对路径相对项目目录解析`() {
+    @DisplayName("环境变量非空时应优先解析其值并相对项目目录定位资源")
+    fun resolveProxyResourcesPrefersNonBlankEnvironmentVariable() {
         val literalJar = file("literal/proxy-sentinel.jar")
         val environmentJar = file("environment/proxy-sentinel.jar")
         literalJar.writeText("literal-sentinel")
@@ -36,7 +38,8 @@ class NodeRuntimeInjectionTest {
     }
 
     @Test
-    fun `envOrPath 环境变量空值时回退声明路径`() {
+    @DisplayName("环境变量为空时应回退到声明路径解析资源")
+    fun resolveProxyResourcesFallsBackWhenEnvironmentVariableBlank() {
         val template = file("proxy-template-sentinel").apply { mkdirs() }
         val proxy = resolvedProxy {
             templateDirectory("proxy-template-sentinel")
@@ -48,7 +51,8 @@ class NodeRuntimeInjectionTest {
     }
 
     @Test
-    fun `后端节点模板优先且未声明时兼容旧全局模板`() {
+    @DisplayName("后端节点声明模板时应优先采用节点模板，未声明时应回退旧全局模板")
+    fun resolveBackendResourcesPrefersNodeTemplateAndFallsBackToLegacy() {
         val nodeTemplate = file("node-template-sentinel").apply { mkdirs() }
         val legacyTemplate = file("legacy-template-sentinel").apply { mkdirs() }
         val nodeBackend = resolvedBackend {
@@ -74,7 +78,8 @@ class NodeRuntimeInjectionTest {
     }
 
     @Test
-    fun `环境变量已设置但路径无效时不回退并给出中文错误上下文`() {
+    @DisplayName("环境变量已设置但路径无效时不应回退并应提供中文错误上下文")
+    fun resolveProxyResourcesRejectsInvalidEnvironmentPathWithoutFallback() {
         val literalJar = file("literal/proxy-sentinel.jar").apply { writeText("literal-sentinel") }
         val proxy = resolvedProxy { plugin("PROXY_PLUGIN_SENTINEL") }
 
@@ -94,7 +99,8 @@ class NodeRuntimeInjectionTest {
     }
 
     @Test
-    fun `插件必须为普通 jar 文件且模板必须为目录`() {
+    @DisplayName("解析节点资源时应拒绝非 jar 插件和非目录模板")
+    fun resolveRuntimeResourcesValidatesJarAndTemplateTypes() {
         file("not-jar-sentinel.txt").writeText("sentinel")
         file("not-directory-sentinel").writeText("sentinel")
         val pluginException = assertFailsWith<GradleException> {
@@ -118,7 +124,8 @@ class NodeRuntimeInjectionTest {
     }
 
     @Test
-    fun `多个代理插件解析为同一目标文件名时中文失败`() {
+    @DisplayName("多个代理插件解析为相同目标文件名时应以中文错误拒绝")
+    fun resolveProxyResourcesRejectsDuplicateTargetFileNames() {
         file("a/same-sentinel.jar").writeText("a-sentinel")
         file("b/same-sentinel.jar").writeText("b-sentinel")
         val proxy = resolvedProxy {
@@ -135,7 +142,8 @@ class NodeRuntimeInjectionTest {
     }
 
     @Test
-    fun `节点环境覆盖宿主且框架环境最终覆盖节点`() {
+    @DisplayName("合并节点环境时应由节点覆盖宿主并由框架最终覆盖节点")
+    fun mergeNodeEnvironmentAppliesFrameworkLast() {
         val merged = mergeNodeEnvironment(
             nodeEnvironment = linkedMapOf(
                 "NODE_SENTINEL" to "node-sentinel",
@@ -149,7 +157,8 @@ class NodeRuntimeInjectionTest {
     }
 
     @Test
-    fun `后端 staging 先铺模板再写权威配置且只注入 dependencies`() {
+    @DisplayName("后端 staging 时应先铺模板再写权威配置且只注入 dependencies")
+    fun stageBackendRuntimeOverlaysTemplateAndInjectsDependenciesOnly() {
         val template = file("backend-template-sentinel").apply { mkdirs() }
         File(template, "server.properties").writeText("server-port=1\ndifficulty=hard\n")
         File(template, "node-template-sentinel.txt").writeText("node-template-sentinel")
@@ -175,7 +184,8 @@ class NodeRuntimeInjectionTest {
     }
 
     @Test
-    fun `代理 staging 清理后铺模板写权威配置并让显式插件覆盖模板同名文件`() {
+    @DisplayName("代理 staging 时应清理目录、铺设模板、写入权威配置并用显式插件覆盖同名文件")
+    fun stageProxyRuntimeOverlaysTemplateAndExplicitPlugins() {
         val template = file("proxy-template-sentinel").apply { mkdirs() }
         File(template, "config.yml").writeText("template-config-sentinel")
         File(template, "plugins").mkdirs()

@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.task
 
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.contract.McTestkitEnv
 import top.wcpe.mc.testkit.dsl.BotSpec
 import kotlin.test.Test
@@ -21,12 +22,14 @@ class BotProcessPlannerTest {
         (if (role == null) BotSpec() else BotSpec(role)).apply(configure)
 
     @Test
-    fun `无 bot 展开为空列表`() {
+    @DisplayName("展开空 Bot 列表时应返回空计划列表")
+    fun expandEmptyBotsReturnsEmptyList() {
         assertTrue(BotProcessPlanner.expand("smoke", emptyList()).isEmpty())
     }
 
     @Test
-    fun `单匿名 bot 与历史行为一致（key=action、无 BOT_INDEX）`() {
+    @DisplayName("展开单个匿名 Bot 时应沿用 action 作为 key 且不设置 BOT_INDEX")
+    fun expandSingleAnonymousBotPreservesLegacyBehavior() {
         val plans = BotProcessPlanner.expand(
             "buySuccess",
             listOf(
@@ -45,7 +48,8 @@ class BotProcessPlannerTest {
     }
 
     @Test
-    fun `单匿名 bot 无 username 无 action 全部回落场景名`() {
+    @DisplayName("单个匿名 Bot 未配置用户名和动作时应全部回退为场景名")
+    fun expandSingleAnonymousBotFallsBackToScenarioName() {
         val p = BotProcessPlanner.expand("crossServer", listOf(bot())).single()
         assertEquals("crossServer", p.action)
         assertEquals("crossServer", p.username)
@@ -54,7 +58,8 @@ class BotProcessPlannerTest {
     }
 
     @Test
-    fun `同质复制 count=N 各唯一 username key 与 BOT_INDEX 1 到 N`() {
+    @DisplayName("按 count 复制同质 Bot 时应生成唯一用户名、key 和连续 BOT_INDEX")
+    fun expandHomogeneousBotsAssignsUniqueIdentityAndIndexes() {
         val plans = BotProcessPlanner.expand(
             "g16",
             listOf(
@@ -74,7 +79,8 @@ class BotProcessPlannerTest {
     }
 
     @Test
-    fun `异质双角色各自 action username 与 key（无 index）`() {
+    @DisplayName("展开异质双角色 Bot 时应保留各自动作、用户名和 key 且不设置序号")
+    fun expandHeterogeneousRolesUsesOwnIdentityWithoutIndex() {
         val plans = BotProcessPlanner.expand(
             "gui-edit",
             listOf(
@@ -102,7 +108,8 @@ class BotProcessPlannerTest {
     }
 
     @Test
-    fun `具名角色无显式 action 时 action 回落到 role`() {
+    @DisplayName("具名角色未配置动作和用户名时应回退为 role")
+    fun expandNamedRoleFallsBackActionAndUsernameToRole() {
         val p = BotProcessPlanner.expand("x", listOf(bot("admin"))).single()
         assertEquals("admin", p.action) // action 默认：role
         assertEquals("admin", p.username) // username 默认：role
@@ -110,7 +117,8 @@ class BotProcessPlannerTest {
     }
 
     @Test
-    fun `具名角色 count 大于 1 用 role 作基名复制`() {
+    @DisplayName("具名角色按 count 复制时应以 role 生成唯一用户名、key 和序号")
+    fun expandNamedRoleCountUsesRoleAsReplicationBase() {
         val plans = BotProcessPlanner.expand("load", listOf(bot("worker") { count = 3 }))
         assertEquals(listOf("worker-1", "worker-2", "worker-3"), plans.map { it.key })
         assertEquals(listOf("worker1", "worker2", "worker3"), plans.map { it.username })
@@ -118,7 +126,8 @@ class BotProcessPlannerTest {
     }
 
     @Test
-    fun `业务 env 原样透传到每个进程 plan`() {
+    @DisplayName("展开 Bot 时应将业务环境变量原样传递到每个进程计划")
+    fun expandPropagatesBusinessEnvironmentToEveryPlan() {
         val plans = BotProcessPlanner.expand(
             "g16",
             listOf(
@@ -134,7 +143,8 @@ class BotProcessPlannerTest {
     }
 
     @Test
-    fun `混合：具名 count 复制 + 另一具名单进程，顺序与序号正确`() {
+    @DisplayName("混合展开复制角色和单进程角色时应保持顺序与正确序号")
+    fun expandMixedNamedBotsPreservesOrderAndIndexes() {
         val plans = BotProcessPlanner.expand(
             "raid",
             listOf(
@@ -151,7 +161,8 @@ class BotProcessPlannerTest {
     // ── extraEnvironments：每进程「追加 env」契约（FR-16 核心：唯一名 / 序号 / 共享 env）──
 
     @Test
-    fun `单 bot 不强制下发 BOT_USERNAME 与 BOT_INDEX（保留消费方 override，向后兼容）`() {
+    @DisplayName("单个 Bot 生成附加环境时不应强制下发 BOT_USERNAME 和 BOT_INDEX")
+    fun extraEnvironmentsForSingleBotOmitsForcedIdentity() {
         val plans = BotProcessPlanner.expand(
             "buy",
             listOf(
@@ -167,7 +178,8 @@ class BotProcessPlannerTest {
     }
 
     @Test
-    fun `多 bot 每进程强制下发各自唯一 BOT_USERNAME`() {
+    @DisplayName("多个 Bot 生成附加环境时应为每个进程强制下发唯一 BOT_USERNAME")
+    fun extraEnvironmentsForMultipleBotsForcesUniqueUsernames() {
         val plans = BotProcessPlanner.expand(
             "gui-edit",
             listOf(
@@ -181,7 +193,8 @@ class BotProcessPlannerTest {
     }
 
     @Test
-    fun `同质复制每进程下发唯一 username 与 BOT_INDEX`() {
+    @DisplayName("同质复制 Bot 生成附加环境时应下发唯一用户名和 BOT_INDEX")
+    fun extraEnvironmentsForReplicatedBotsIncludesUsernameAndIndex() {
         val plans = BotProcessPlanner.expand(
             "g16",
             listOf(
@@ -198,7 +211,8 @@ class BotProcessPlannerTest {
     }
 
     @Test
-    fun `共享 env（如 CLUSTER_BACKENDS）合入每个进程`() {
+    @DisplayName("生成附加环境时应将共享环境变量合入每个进程")
+    fun extraEnvironmentsMergesSharedEnvironmentIntoEveryProcess() {
         val plans = BotProcessPlanner.expand(
             "g16",
             listOf(
@@ -214,7 +228,8 @@ class BotProcessPlannerTest {
     }
 
     @Test
-    fun `多 bot 时强制唯一名盖过业务 env 里的单值 BOT_USERNAME`() {
+    @DisplayName("多个 Bot 生成附加环境时应以唯一用户名覆盖业务环境中的 BOT_USERNAME")
+    fun extraEnvironmentsOverridesBusinessUsernameForMultipleBots() {
         // 消费方在 bot env 里塞了单值 BOT_USERNAME：多进程时须被强制唯一名覆盖（先写业务 env、再写强制名）
         val plans = BotProcessPlanner.expand(
             "g16",
@@ -234,7 +249,8 @@ class BotProcessPlannerTest {
     // ── firstConflict：展开后 key / username 全局唯一校验（J1：role 唯一不足以保证 key 不撞）──
 
     @Test
-    fun `合法多 bot 无冲突返回 null`() {
+    @DisplayName("校验合法多 Bot 计划时应返回无冲突")
+    fun firstConflictReturnsNullForValidMultipleBots() {
         assertNull(
             BotProcessPlanner.firstConflict(
                 "gui-edit",
@@ -256,7 +272,8 @@ class BotProcessPlannerTest {
     }
 
     @Test
-    fun `role 不同但展开 key 撞车被检出（w count2 与 w-1）`() {
+    @DisplayName("不同 role 展开为相同 key 时应检测到 key 冲突")
+    fun firstConflictDetectsExpandedKeyCollision() {
         // bot("w") count=2 展开 key: w-1, w-2；bot("w-1") 展开 key: w-1 ← 与前者撞车
         val conflict = BotProcessPlanner.firstConflict(
             "x",
@@ -270,7 +287,8 @@ class BotProcessPlannerTest {
     }
 
     @Test
-    fun `role 不同但展开 username 撞车被检出`() {
+    @DisplayName("不同 role 展开为相同用户名时应检测到用户名冲突")
+    fun firstConflictDetectsExpandedUsernameCollision() {
         // bot("a") username=P count=2 展开 username: P1, P2；bot("b") username=P1 ← 撞车
         val conflict = BotProcessPlanner.firstConflict(
             "x",
@@ -287,7 +305,8 @@ class BotProcessPlannerTest {
     }
 
     @Test
-    fun `单 count=N bot 自身不冲突`() {
+    @DisplayName("单个 Bot 按 count 复制且标识唯一时应判定无冲突")
+    fun firstConflictIgnoresSingleReplicatedBot() {
         assertNull(
             BotProcessPlanner.firstConflict(
                 "g16",

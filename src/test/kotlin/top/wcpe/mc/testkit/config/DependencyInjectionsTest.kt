@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit.config
 
 import org.gradle.api.GradleException
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.contract.McTestkitEnv
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
@@ -14,7 +15,8 @@ import kotlin.test.assertTrue
 class DependencyInjectionsTest {
 
     @Test
-    fun `存在缺失注入项时抛中文错误并列出缺项`() {
+    @DisplayName("存在缺失注入项时应抛出中文错误并列出缺项")
+    fun missingInjectionsThrowChineseError() {
         val ex = assertFailsWith<GradleException> {
             DependencyInjections.requireAll(
                 injections = linkedMapOf(
@@ -34,7 +36,8 @@ class DependencyInjectionsTest {
     }
 
     @Test
-    fun `缺项带环境变量逃生口提示时报错含该变量名`() {
+    @DisplayName("缺失注入项带环境变量提示时错误应包含变量名")
+    fun missingInjectionErrorIncludesHintEnvironmentVariable() {
         val ex = assertFailsWith<GradleException> {
             DependencyInjections.requireAll(
                 injections = linkedMapOf("ServerTemplate" to false),
@@ -48,7 +51,8 @@ class DependencyInjectionsTest {
     }
 
     @Test
-    fun `全部注入齐全时不报错`() {
+    @DisplayName("全部注入项齐全时应通过校验且不报错")
+    fun completeInjectionsPassValidation() {
         // 不抛异常即通过
         DependencyInjections.requireAll(
             injections = linkedMapOf(
@@ -59,7 +63,8 @@ class DependencyInjectionsTest {
     }
 
     @Test
-    fun `注入项为空时视为齐全不报错`() {
+    @DisplayName("注入项为空时应视为齐全且不报错")
+    fun emptyInjectionsPassValidation() {
         DependencyInjections.requireAll(injections = emptyMap())
     }
 }

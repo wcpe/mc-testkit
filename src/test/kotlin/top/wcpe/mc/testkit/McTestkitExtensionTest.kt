@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit
 import org.gradle.testfixtures.ProjectBuilder
+import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.dsl.BackendPlatform
 import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import top.wcpe.mc.testkit.dsl.ProxyPlatform
@@ -23,7 +24,8 @@ class McTestkitExtensionTest {
     }
 
     @Test
-    fun `应用插件后创建 mcTestkit 扩展`() {
+    @DisplayName("应用插件后应创建 mcTestkit 扩展")
+    fun createMcTestkitExtensionWhenPluginApplied() {
         val project = ProjectBuilder.builder().build()
         project.plugins.apply(McTestkitPlugin::class.java)
         val ext = project.extensions.findByName("mcTestkit")
@@ -32,7 +34,8 @@ class McTestkitExtensionTest {
     }
 
     @Test
-    fun `DSL 记录后端声明（名称 平台 版本 端口）`() {
+    @DisplayName("后端 DSL 应完整记录名称平台版本与端口")
+    fun recordBackendDeclarationFromDsl() {
         val ext = extension()
         ext.backend("s1") {
             platform = paper
@@ -48,7 +51,8 @@ class McTestkitExtensionTest {
     }
 
     @Test
-    fun `DSL 记录代理声明与路由`() {
+    @DisplayName("代理 DSL 应记录代理声明与路由目标")
+    fun recordProxyDeclarationAndRoutesFromDsl() {
         val ext = extension()
         ext.backend("s1")
         ext.proxy("wf") {
@@ -64,7 +68,8 @@ class McTestkitExtensionTest {
     }
 
     @Test
-    fun `DSL 记录场景与可选机器人驱动`() {
+    @DisplayName("场景 DSL 应记录场景与可选机器人配置")
+    fun recordScenarioAndOptionalBotFromDsl() {
         val ext = extension()
         ext.scenario("smoke")
         ext.scenario("buySuccess") {
@@ -84,7 +89,8 @@ class McTestkitExtensionTest {
     }
 
     @Test
-    fun `后端默认平台为 paper 端口未声明时为 null（留待 FR-03 拓扑解析推导）`() {
+    @DisplayName("未指定后端平台与端口时应默认使用 Paper 且端口为空")
+    fun usePaperAndNullPortAsBackendDefaults() {
         val ext = extension()
         ext.backend("s1")
         val s1 = ext.declaredBackends.single()
@@ -93,7 +99,8 @@ class McTestkitExtensionTest {
     }
 
     @Test
-    fun `dependencies 块记录待测插件注入`() {
+    @DisplayName("依赖 DSL 应记录待测插件与附加插件")
+    fun recordPluginDependenciesFromDsl() {
         val ext = extension()
         ext.dependencies {
             pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR"

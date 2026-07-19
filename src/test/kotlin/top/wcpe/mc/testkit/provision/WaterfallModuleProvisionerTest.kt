@@ -17,7 +17,7 @@ class WaterfallModuleProvisionerTest {
         )
         val api = PaperDownloadsApi(fetchText = { url ->
             when {
-                url.endsWith("/builds") -> """[{"id":578,"channel":"STABLE"}]"""
+                url.endsWith("/builds/latest") -> """{"id":578,"channel":"STABLE"}"""
                 url.endsWith("/builds/578") -> buildResponse(contents)
                 else -> error("不应请求：$url")
             }

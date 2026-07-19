@@ -149,8 +149,8 @@ class ServerJarProvisionerTest {
     /**
      * 记录下载核心收到的版本，且**全程不发网络**。
      *
-     * 机制：PaperMC fetchText 返回一个合法的"版本响应"（含构建号 1），并从被请求的 URL
-     * 反解出版本（URL 形如 `.../versions/<version>`）；同时预置该构建的缓存 jar，使
+     * 机制：PaperMC fetchText 返回一个合法的 latest 构建响应（含构建号 1），并从被请求的 URL
+     * 反解出版本（URL 形如 `.../versions/<version>/builds/latest`）；同时预置该构建的缓存 jar，使
      * [JarProvisionService] 在"命中缓存"分支即返回、不触发 download。这样既验证版本透传，
      * 又走真实解析路径而非哨兵异常。每个实例用独立缓存根，避免用例间串扰。
      */
@@ -162,7 +162,7 @@ class ServerJarProvisionerTest {
         fun asService(): JarProvisionService = JarProvisionService(
             cache = cache,
             paperApi = PaperDownloadsApi(fetchText = { url ->
-                // URL 形如 .../projects/<project>/versions/<version>/builds；project.id 即平台 id
+                // URL 形如 .../projects/<project>/versions/<version>/builds/latest；project.id 即平台 id
                 val version = url.substringAfter("/versions/").substringBefore("/builds")
                 val project = url.substringAfter("/projects/").substringBefore("/versions/")
                 lastVersion = version
@@ -171,8 +171,8 @@ class ServerJarProvisionerTest {
                     parentFile?.mkdirs()
                     writeText("dummy")
                 }
-                // 合法构建列表响应：最新构建 id 为 1
-                """[{"id":1,"channel":"STABLE"}]"""
+                // 合法 latest 构建响应：最新构建 id 为 1
+                """{"id":1,"channel":"STABLE"}"""
             }),
             bungeeApi = BungeeCordJenkinsApi(fetchText = { error("本用例不测 BungeeCord") }),
             download = { _, _, _ -> error("不应发网络：命中缓存路径不应下载") },

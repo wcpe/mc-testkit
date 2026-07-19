@@ -26,25 +26,15 @@ internal class PaperDownloadsApi(
         /** server jar 在 Fill 响应中的下载键。 */
         private const val SERVER_DOWNLOAD_KEY = "server:default"
 
-        /** PaperMC 稳定构建频道名。 */
-        private const val STABLE_CHANNEL = "STABLE"
-
         /**
-         * 从 `projects/<p>/versions/<v>/builds` 响应解析"最新构建号"。
+         * 从 `projects/<p>/versions/<v>/builds/latest` 响应解析"最新构建号"。
          *
-         * 纯函数：Fill v3 返回构建对象数组，优先取第一个 STABLE 构建；若该版本没有 STABLE（如部分 Folia
-         * 历史版本），则退回第一个构建，保持旧实现"取最新可用构建"的行为。
+         * 纯函数：Fill v3 直接返回最新构建对象，读取顶层 `id`，不依赖构建列表顺序或频道。
          *
-         * @throws IllegalStateException 无构建或字段缺失时抛中文错误。
+         * @throws IllegalStateException id 字段缺失时抛中文错误。
          */
-        fun parseLatestBuild(buildsResponseJson: String): Int {
-            val builds = JsonLite.asArray(JsonLite.parse(buildsResponseJson))
-            check(builds.isNotEmpty()) { "PaperMC 构建响应为空，无可用构建。" }
-            val selected = builds.firstOrNull { build ->
-                val obj = JsonLite.asObject(build)
-                obj["channel"] == STABLE_CHANNEL
-            } ?: builds.first()
-            val obj = JsonLite.asObject(selected)
+        fun parseLatestBuild(latestBuildResponseJson: String): Int {
+            val obj = JsonLite.asObject(JsonLite.parse(latestBuildResponseJson))
             return (obj["id"] as? Long)?.toInt()
                 ?: error("PaperMC 构建响应缺少 id 字段。")
         }
@@ -79,7 +69,7 @@ internal class PaperDownloadsApi(
 
     /** 解析指定 project + 版本的最新构建号（发网络）。 */
     fun latestBuild(project: String, version: String): Int =
-        parseLatestBuild(fetchText("$base/projects/$project/versions/$version/builds"))
+        parseLatestBuild(fetchText("$base/projects/$project/versions/$version/builds/latest"))
 
     /** 解析指定 project + 版本 + 构建号的下载产物（发网络）。 */
     fun download(project: String, version: String, build: Int): PaperDownload =

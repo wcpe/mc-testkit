@@ -9,37 +9,17 @@ import kotlin.test.assertTrue
  * [PaperDownloadsApi] 解析与 URL 读取单元测试（FR-02）。
  *
  * 喂固定的 PaperMC Fill v3 响应样本文本，校验最新构建号 / 下载产物 / 下载 URL 解析；
- * 取文本用注入替身（零网络）。样本字段对齐 PaperMC `projects/<p>/versions/<v>/builds` 与
+ * 取文本用注入替身（零网络）。样本字段对齐 PaperMC `projects/<p>/versions/<v>/builds/latest` 与
  * `.../builds/<b>` 的真实结构（精简到本模块读取的字段）。
  */
 class PaperDownloadsApiTest {
 
-    /** `projects/paper/versions/1.20.1/builds` 样本（优先取第一个 STABLE）。 */
-    private val buildsResponse = """
-        [
-          {
-            "id": 196,
-            "channel": "STABLE"
-          },
-          {
-            "id": 195,
-            "channel": "STABLE"
-          }
-        ]
-    """.trimIndent()
-
-    /** `projects/folia/versions/1.20.1/builds` 样本（无 STABLE 时退回第一个可用构建）。 */
-    private val alphaOnlyBuildsResponse = """
-        [
-          {
-            "id": 17,
-            "channel": "ALPHA"
-          },
-          {
-            "id": 16,
-            "channel": "ALPHA"
-          }
-        ]
+    /** `projects/paper/versions/1.20.1/builds/latest` 样本。 */
+    private val latestBuildResponse = """
+        {
+          "id": 196,
+          "channel": "STABLE"
+        }
     """.trimIndent()
 
     /** `projects/paper/versions/1.20.1/builds/196` 样本。 */
@@ -59,13 +39,8 @@ class PaperDownloadsApiTest {
     """.trimIndent()
 
     @Test
-    fun `解析最新构建号优先取 STABLE`() {
-        assertEquals(196, PaperDownloadsApi.parseLatestBuild(buildsResponse))
-    }
-
-    @Test
-    fun `没有 STABLE 时退回第一个可用构建`() {
-        assertEquals(17, PaperDownloadsApi.parseLatestBuild(alphaOnlyBuildsResponse))
+    fun `解析 latest 构建对象的 id`() {
+        assertEquals(196, PaperDownloadsApi.parseLatestBuild(latestBuildResponse))
     }
 
     @Test
@@ -92,22 +67,22 @@ class PaperDownloadsApiTest {
     }
 
     @Test
-    fun `经注入替身解析最新构建走预期端点路径`() {
+    fun `经注入替身解析最新构建走 builds latest 端点`() {
         var requestedUrl: String? = null
         val api = PaperDownloadsApi(fetchText = { url ->
             requestedUrl = url
-            buildsResponse
+            latestBuildResponse
         })
         assertEquals(196, api.latestBuild("paper", "1.20.1"))
-        assertEquals("https://fill.papermc.io/v3/projects/paper/versions/1.20.1/builds", requestedUrl)
+        assertEquals("https://fill.papermc.io/v3/projects/paper/versions/1.20.1/builds/latest", requestedUrl)
     }
 
     @Test
-    fun `空构建列表抛中文错误`() {
+    fun `latest 构建对象缺少 id 抛中文错误`() {
         val ex = assertFailsWith<IllegalStateException> {
-            PaperDownloadsApi.parseLatestBuild("""[]""")
+            PaperDownloadsApi.parseLatestBuild("""{"channel":"STABLE"}""")
         }
-        assertTrue(ex.message!!.contains("无可用构建"), "应提示无可用构建：${ex.message}")
+        assertTrue(ex.message!!.contains("id"), "应提示缺少 id：${ex.message}")
     }
 
     @Test

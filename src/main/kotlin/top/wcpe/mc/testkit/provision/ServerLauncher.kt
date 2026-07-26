@@ -7,6 +7,26 @@ private val isWindows: Boolean
     get() = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
 
 /**
+ * 按 Minecraft 版本选择后端程序参数。
+ *
+ * Paper/CraftBukkit **1.12.x 及更早**不识别 `--nogui`（启动即打印 help 并退出）；
+ * **1.13+** 与 **26.x 新版号方案**（无 `1.` 前缀，如 `26.2`）使用 `--nogui` 关闭图形界面。
+ *
+ * @param minecraftVersion 如 `1.12.2` / `1.20.1` / `26.2`
+ */
+fun backendServerArgs(minecraftVersion: String): List<String> {
+    val parts = minecraftVersion.trim().split('.')
+    val major = parts.getOrNull(0)?.toIntOrNull()
+    // 新版号方案（26.x 起）：第一段是年份，不是 1.x 的 minor——一律现代参数
+    if (major != null && major >= 26) {
+        return listOf("--nogui")
+    }
+    // 旧方案 1.x：第二段 ≤12 为 1.12 及更早；解析失败时保守使用现代 --nogui
+    val minor = parts.getOrNull(1)?.toIntOrNull()
+    return if (minor != null && minor <= 12) emptyList() else listOf("--nogui")
+}
+
+/**
  * 当前 JVM 自带的 `java` 可执行路径（跨平台：Windows 为 `java.exe`）。
  *
  * 用运行编排插件的同一 JDK 起服务端 / 代理，避免依赖 PATH 上的 `java`（可移植 / 可控）。

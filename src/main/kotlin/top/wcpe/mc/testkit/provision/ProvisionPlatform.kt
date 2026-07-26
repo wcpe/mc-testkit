@@ -65,7 +65,11 @@ internal enum class ProvisionPlatform(
                     "不支持的平台 '$id'：当前仅支持 Paper/Folia 后端与 Velocity/Waterfall/BungeeCord 代理（ADR-0003）。",
                 )
 
-        /** 取版本号的 major.minor（如 1.20.1 → 1.20）；不足两段（已是 major.minor 或异常串）则原样返回。 */
+        /**
+         * 取版本号的 major.minor（如 `1.20.1` → `1.20`，`26.2.1` → `26.2`）。
+         *
+         * 同时覆盖旧 `1.x.y` 与 26.x 新版号方案；不足两段（已是 major.minor 或异常串）则原样返回。
+         */
         private fun majorMinorOf(version: String): String {
             val parts = version.split('.')
             return if (parts.size >= 2) "${parts[0]}.${parts[1]}" else version

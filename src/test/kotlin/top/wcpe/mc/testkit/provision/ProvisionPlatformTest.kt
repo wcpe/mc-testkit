@@ -30,6 +30,16 @@ class ProvisionPlatformTest {
     fun preserveCompleteBackendVersion() {
         assertEquals("1.20.1", ProvisionPlatform.PAPER.downloadVersion("1.20.1"))
         assertEquals("1.20.1", ProvisionPlatform.FOLIA.downloadVersion("1.20.1"))
+        // 26.x 新版号：Paper/Folia 仍按完整版本请求 Fill API
+        assertEquals("26.2", ProvisionPlatform.PAPER.downloadVersion("26.2"))
+        assertEquals("26.2", ProvisionPlatform.FOLIA.downloadVersion("26.2"))
+    }
+
+    @Test
+    @DisplayName("Waterfall 处理 26.x 完整版本时应截到 major.minor")
+    fun truncateWaterfallNewSchemePatchVersion() {
+        assertEquals("26.2", ProvisionPlatform.WATERFALL.downloadVersion("26.2"))
+        assertEquals("26.2", ProvisionPlatform.WATERFALL.downloadVersion("26.2.1"))
     }
 
     @Test

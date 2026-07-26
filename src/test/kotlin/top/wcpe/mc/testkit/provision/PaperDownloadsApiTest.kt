@@ -83,6 +83,18 @@ class PaperDownloadsApiTest {
     }
 
     @Test
+    @DisplayName("获取 26.2 最新构建时应请求新版号路径")
+    fun requestLatestBuildEndpointForMinecraft26_2() {
+        var requestedUrl: String? = null
+        val api = PaperDownloadsApi(fetchText = { url ->
+            requestedUrl = url
+            """{"id":71,"channel":"BETA"}"""
+        })
+        assertEquals(71, api.latestBuild("paper", "26.2"))
+        assertEquals("https://fill.papermc.io/v3/projects/paper/versions/26.2/builds/latest", requestedUrl)
+    }
+
+    @Test
     @DisplayName("最新构建对象缺少 ID 时应抛出中文错误")
     fun rejectLatestBuildWithoutIdWithChineseError() {
         val ex = assertFailsWith<IllegalStateException> {

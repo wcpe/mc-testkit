@@ -25,10 +25,10 @@
 
 ```kotlin
 mcTestkit {
-    // 后端节点：platform 默认 paper；version 默认 1.20.1；port 省略则由拓扑解析按端口基数推导
+    // 后端节点：platform 默认 paper；version 默认 1.20.1（也支持 26.2 等新版号）；port 省略则由拓扑解析按端口基数推导
     backend("s1") {
         platform = paper          // paper | folia（P1 仅此二者，ADR-0003）
-        version = "1.20.1"
+        version = "1.20.1"        // 或 "26.2"（MC 新版号方案，无 1. 前缀）
         port = 25565              // Int?，可省
         env("MYPLUGIN_NODE", "s1")
         templateDirectory("MC_TESTKIT_E2E_S1_TEMPLATE_DIR")

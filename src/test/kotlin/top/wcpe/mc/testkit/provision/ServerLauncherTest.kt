@@ -28,6 +28,18 @@ class ServerLauncherTest {
     }
 
     @Test
+    @DisplayName("1.12.x 后端程序参数不应含 --nogui；1.13+ 与 26.x 应含")
+    fun backendServerArgsForLegacyPaperOmitNogui() {
+        assertEquals(emptyList(), backendServerArgs("1.12.2"))
+        assertEquals(emptyList(), backendServerArgs("1.8.8"))
+        assertEquals(listOf("--nogui"), backendServerArgs("1.13.2"))
+        assertEquals(listOf("--nogui"), backendServerArgs("1.20.1"))
+        // 新版号方案：26.2 的第二段是补丁/次版本，不能按 1.x 的 minor≤12 误判成旧服
+        assertEquals(listOf("--nogui"), backendServerArgs("26.2"))
+        assertEquals(listOf("--nogui"), backendServerArgs("26.1.2"))
+    }
+
+    @Test
     @DisplayName("解析 Java 可执行文件时应返回有效名称")
     fun resolveExistingJavaExecutable() {
         val exe = javaExecutable()

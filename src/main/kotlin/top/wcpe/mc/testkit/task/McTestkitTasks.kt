@@ -36,6 +36,7 @@ import top.wcpe.mc.testkit.provision.ProvisionPlatform
 import top.wcpe.mc.testkit.provision.ServerJarProvisioner
 import top.wcpe.mc.testkit.provision.ServerLauncher
 import top.wcpe.mc.testkit.provision.WaterfallModuleProvisioner
+import top.wcpe.mc.testkit.provision.backendServerArgs
 import top.wcpe.mc.testkit.provision.provisionPidFile
 import top.wcpe.mc.testkit.topology.ResolvedBackend
 import top.wcpe.mc.testkit.topology.ResolvedProxy
@@ -457,7 +458,7 @@ object McTestkitTasks {
             runDirectory = runDir,
             key = backend.name,
             jvmArgs = listOf("-Dterminal.ansi=false", "-Dnet.kyori.ansi.colorLevel=none"),
-            serverArgs = listOf("--nogui"),
+            serverArgs = backendServerArgs(backend.version),
             environment = mergeNodeEnvironment(
                 backend.environment,
                 mapOf(
@@ -982,7 +983,7 @@ object McTestkitTasks {
             runDirectory = runDir,
             key = backend.name,
             jvmArgs = listOf("-Dterminal.ansi=false", "-Dnet.kyori.ansi.colorLevel=none"),
-            serverArgs = listOf("--nogui"),
+            serverArgs = backendServerArgs(backend.version),
             environment = mergeNodeEnvironment(
                 backend.environment,
                 mapOf(
@@ -1176,7 +1177,7 @@ object McTestkitTasks {
             runDirectory = runDir,
             key = backend.name,
             jvmArgs = listOf("-Dterminal.ansi=false", "-Dnet.kyori.ansi.colorLevel=none"),
-            serverArgs = listOf("--nogui"),
+            serverArgs = backendServerArgs(backend.version),
             environment = mergeNodeEnvironment(
                 backend.environment,
                 mapOf(
@@ -1230,7 +1231,7 @@ object McTestkitTasks {
             runDirectory = runDir,
             key = backend.name,
             jvmArgs = listOf("-Dterminal.ansi=false", "-Dnet.kyori.ansi.colorLevel=none"),
-            serverArgs = listOf("--nogui"),
+            serverArgs = backendServerArgs(backend.version),
             environment = mergeNodeEnvironment(
                 backend.environment,
                 mapOf(

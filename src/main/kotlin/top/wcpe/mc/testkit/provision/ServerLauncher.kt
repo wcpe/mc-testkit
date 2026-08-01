@@ -63,6 +63,7 @@ object ServerLauncher {
      * @param jvmArgs 追加的 JVM 参数（如 `-Xmx1G`；放在 `-jar` 之前）。
      * @param serverArgs 追加的程序参数（如 Paper 的 `--nogui`；放在 jar 之后）。
      * @param environment 追加 / 覆盖的环境变量。
+     * @param javaPath 指定 `java` 可执行路径（FR-21 多版本 Java 选择）；null 时用当前 JVM（[javaExecutable]）。
      * @param logger 中文分级日志输出（默认 no-op；任务侧可传 `project.logger.lifecycle`）。
      * @return 已启动的 [Process]。
      */
@@ -73,6 +74,7 @@ object ServerLauncher {
         jvmArgs: List<String> = emptyList(),
         serverArgs: List<String> = emptyList(),
         environment: Map<String, String> = emptyMap(),
+        javaPath: String? = null,
         logger: (String) -> Unit = {},
     ): Process {
         require(jar.isFile) { "要运行的 jar 不存在：${jar.absolutePath}。" }
@@ -85,7 +87,7 @@ object ServerLauncher {
         if (pidFile.exists()) pidFile.delete()
 
         val command = buildList {
-            add(javaExecutable())
+            add(javaPath ?: javaExecutable())
             addAll(jvmArgs)
             add("-jar")
             add(jar.absolutePath)

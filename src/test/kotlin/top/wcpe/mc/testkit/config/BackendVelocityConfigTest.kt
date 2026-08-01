@@ -31,7 +31,7 @@ class BackendVelocityConfigTest {
     fun missingFilesAreCreatedWithVelocitySettings() {
         val runDir = tempRunDir()
 
-        BackendVelocityConfig.apply(runDir)
+        BackendVelocityConfig.apply(runDir, "1.20.1")
 
         val props = readProperties(runDir)
         assertEquals("false", props.getProperty(ServerProperties.ONLINE_MODE))
@@ -70,7 +70,7 @@ class BackendVelocityConfigTest {
             """.trimIndent() + "\n",
         )
 
-        BackendVelocityConfig.apply(runDir)
+        BackendVelocityConfig.apply(runDir, "1.20.1")
 
         val paper = File(runDir, "config/paper-global.yml").readText()
         // velocity 块补上
@@ -85,8 +85,24 @@ class BackendVelocityConfigTest {
     @DisplayName("提供自定义密钥时应覆盖默认密钥")
     fun customSecretOverridesDefaultSecret() {
         val runDir = tempRunDir()
-        BackendVelocityConfig.apply(runDir, secret = "custom-secret-123")
+        BackendVelocityConfig.apply(runDir, "1.20.1", secret = "custom-secret-123")
         val paper = File(runDir, "config/paper-global.yml").readText()
         assertTrue(paper.contains("custom-secret-123"), "应写入自定 secret，实际：\n$paper")
+    }
+
+    // ── 版本感知（FR-21）──
+
+    @Test
+    @DisplayName("1.16.5 应跳过 paper-global.yml（Velocity modern forwarding 仅 1.19+ 有效）")
+    fun modern1165SkipsPaperGlobalYml() {
+        val runDir = tempRunDir()
+        BackendVelocityConfig.apply(runDir, "1.16.5")
+
+        val props = readProperties(runDir)
+        assertEquals("false", props.getProperty(ServerProperties.ONLINE_MODE))
+        assertEquals(null, props.getProperty(ServerProperties.ENFORCE_SECURE_PROFILE), "1.16.5 不应有 enforce-secure-profile")
+
+        // Velocity modern forwarding 仅在 1.19+ 有效，旧版不应写 paper-global.yml
+        assertFalse(File(runDir, "config/paper-global.yml").exists(), "1.16.5 不应写 paper-global.yml")
     }
 }

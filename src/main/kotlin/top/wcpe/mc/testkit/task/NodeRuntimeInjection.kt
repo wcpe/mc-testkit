@@ -1,7 +1,10 @@
 package top.wcpe.mc.testkit.task
 
 import org.gradle.api.GradleException
+import top.wcpe.mc.testkit.config.PaperConfigAdapter
 import top.wcpe.mc.testkit.config.ServerProperties
+import top.wcpe.mc.testkit.config.editYaml
+import top.wcpe.mc.testkit.config.setNested
 import top.wcpe.mc.testkit.contract.McTestkitEnv
 import top.wcpe.mc.testkit.dsl.DependenciesSpec
 import top.wcpe.mc.testkit.topology.ResolvedBackend
@@ -200,15 +203,24 @@ private fun matchesType(resource: File, type: RuntimeResourceType): Boolean = wh
 
 private fun writeBackendAuthority(runDirectory: File, backend: ResolvedBackend) {
     File(runDirectory, "eula.txt").writeText("eula=true\n")
-    val overrides = linkedMapOf(
+    val rawOverrides = linkedMapOf(
         ServerProperties.SERVER_PORT to backend.port.toString(),
         ServerProperties.ONLINE_MODE to "false",
         ServerProperties.ENFORCE_SECURE_PROFILE to "false",
+        ServerProperties.LEVEL_TYPE to "minecraft:flat",
     )
     if (!ServerProperties.load(runDirectory).containsKey(ServerProperties.DIFFICULTY)) {
-        overrides[ServerProperties.DIFFICULTY] = "peaceful"
+        rawOverrides[ServerProperties.DIFFICULTY] = "peaceful"
     }
+    // 按版本过滤不支持的键 + 转换 level-type（FR-21）
+    val overrides = ServerProperties.versionAwareOverrides(backend.version, rawOverrides)
     ServerProperties.edit(runDirectory, overrides)
+    // 按版本写 Paper 配置（1.7–1.12 跳过、1.13–1.18 paper.yml、1.19+ paper-global.yml，FR-21）
+    PaperConfigAdapter.forVersion(backend.version)?.let { config ->
+        editYaml(File(runDirectory, config.fileName)) { root ->
+            setNested(root, config.path, config.value)
+        }
+    }
 }
 
 private fun injectBackendDependencies(

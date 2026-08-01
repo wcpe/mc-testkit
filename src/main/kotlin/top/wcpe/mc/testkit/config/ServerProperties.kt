@@ -86,4 +86,46 @@ object ServerProperties {
     /** 读 `server-port`，缺失 / 非法时回退 [DEFAULT_PORT]。 */
     fun port(runDir: File): Int =
         load(runDir).getProperty(SERVER_PORT)?.toIntOrNull() ?: DEFAULT_PORT
+
+    /**
+     * 按 Minecraft 版本过滤不支持的键 + 转换 `level-type`（FR-21）。
+     *
+     * 不同版本的服务端对 `server.properties` 键的支持范围不同，写入不存在的键会被忽略或导致异常。
+     * 本函数在调用方把 overrides 喂给 [edit] 之前做版本感知过滤：
+     *
+     * - **1.7.10–1.13**：移除 `simulation-distance`（1.14 才引入）。
+     * - **1.7.10–1.18**：移除 `enforce-secure-profile`（1.19 才引入）。
+     * - **`level-type` 转换**：1.7.10–1.12 用 `FLAT`（旧版字面量），1.13+ 用 `minecraft:flat`（带命名空间）。
+     *   若 overrides 含 `level-type` 则按版本改写其值，确保旧版服务端能识别。
+     *
+     * 纯函数、不读写文件，便于穷举单测。
+     *
+     * @param version Minecraft 版本（如 `1.7.10` / `1.20.1`）。
+     * @param baseOverrides 调用方构建的原始 overrides（键用本对象常量）。
+     * @return 过滤 + 转换后的 overrides（新映射，不改入参）。
+     */
+    fun versionAwareOverrides(version: String, baseOverrides: Map<String, String>): Map<String, String> {
+        val result = LinkedHashMap(baseOverrides)
+        // 1.7.10–1.13：移除 simulation-distance（1.14 才引入）
+        if (MinecraftVersionGroup.isLegacy(version) || isVersion134OrEarlier(version)) {
+            result.remove(SIMULATION_DISTANCE)
+        }
+        // 1.7.10–1.18：移除 enforce-secure-profile（1.19 才引入）
+        if (!MinecraftVersionGroup.needsPaperGlobal(version)) {
+            result.remove(ENFORCE_SECURE_PROFILE)
+        }
+        // level-type 按版本转换：1.7.10–1.12 → FLAT，1.13+ → minecraft:flat
+        if (result.containsKey(LEVEL_TYPE)) {
+            result[LEVEL_TYPE] = if (MinecraftVersionGroup.isLegacy(version)) "FLAT" else "minecraft:flat"
+        }
+        return result
+    }
+
+    /** 1.13.x 及更早（simulation-distance 在 1.14 才引入）。 */
+    private fun isVersion134OrEarlier(version: String): Boolean {
+        val parts = version.split(".")
+        val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
+        val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        return major < 2 && minor <= 13
+    }
 }

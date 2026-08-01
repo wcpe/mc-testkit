@@ -7,6 +7,7 @@ import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -96,5 +97,123 @@ class ServerPropertiesTest {
         // 文件不存在 → 回退默认端口
         val noFile = tempRunDir()
         assertEquals(ServerProperties.DEFAULT_PORT, ServerProperties.port(noFile))
+    }
+
+    // ── versionAwareOverrides（FR-21）──
+
+    @Test
+    @DisplayName("1.7.10 应移除 simulation-distance 和 enforce-secure-profile，level-type 转为 FLAT")
+    fun versionAwareOverridesForLegacy1710() {
+        val overrides = mapOf(
+            ServerProperties.SERVER_PORT to "25565",
+            ServerProperties.ONLINE_MODE to "false",
+            ServerProperties.ENFORCE_SECURE_PROFILE to "false",
+            ServerProperties.SIMULATION_DISTANCE to "8",
+            ServerProperties.LEVEL_TYPE to "minecraft:flat",
+        )
+        val result = ServerProperties.versionAwareOverrides("1.7.10", overrides)
+        assertEquals("25565", result[ServerProperties.SERVER_PORT])
+        assertEquals("false", result[ServerProperties.ONLINE_MODE])
+        assertNull(result[ServerProperties.SIMULATION_DISTANCE], "1.7.10 应移除 simulation-distance")
+        assertNull(result[ServerProperties.ENFORCE_SECURE_PROFILE], "1.7.10 应移除 enforce-secure-profile")
+        assertEquals("FLAT", result[ServerProperties.LEVEL_TYPE], "1.7.10 level-type 应为 FLAT")
+    }
+
+    @Test
+    @DisplayName("1.12.2 应移除 simulation-distance 和 enforce-secure-profile，level-type 转为 FLAT")
+    fun versionAwareOverridesForLegacy1122() {
+        val overrides = mapOf(
+            ServerProperties.SIMULATION_DISTANCE to "8",
+            ServerProperties.ENFORCE_SECURE_PROFILE to "false",
+            ServerProperties.LEVEL_TYPE to "minecraft:flat",
+        )
+        val result = ServerProperties.versionAwareOverrides("1.12.2", overrides)
+        assertNull(result[ServerProperties.SIMULATION_DISTANCE], "1.12.2 应移除 simulation-distance")
+        assertNull(result[ServerProperties.ENFORCE_SECURE_PROFILE], "1.12.2 应移除 enforce-secure-profile")
+        assertEquals("FLAT", result[ServerProperties.LEVEL_TYPE], "1.12.2 level-type 应为 FLAT")
+    }
+
+    @Test
+    @DisplayName("1.13 应移除 simulation-distance 和 enforce-secure-profile，level-type 转为 minecraft:flat")
+    fun versionAwareOverridesForModern113() {
+        val overrides = mapOf(
+            ServerProperties.SIMULATION_DISTANCE to "8",
+            ServerProperties.ENFORCE_SECURE_PROFILE to "false",
+            ServerProperties.LEVEL_TYPE to "FLAT",
+        )
+        val result = ServerProperties.versionAwareOverrides("1.13", overrides)
+        assertNull(result[ServerProperties.SIMULATION_DISTANCE], "1.13 应移除 simulation-distance")
+        assertNull(result[ServerProperties.ENFORCE_SECURE_PROFILE], "1.13 应移除 enforce-secure-profile")
+        assertEquals("minecraft:flat", result[ServerProperties.LEVEL_TYPE], "1.13 level-type 应为 minecraft:flat")
+    }
+
+    @Test
+    @DisplayName("1.16.5 应保留 simulation-distance、移除 enforce-secure-profile，level-type 转为 minecraft:flat")
+    fun versionAwareOverridesForModern1165() {
+        val overrides = mapOf(
+            ServerProperties.SIMULATION_DISTANCE to "8",
+            ServerProperties.ENFORCE_SECURE_PROFILE to "false",
+            ServerProperties.LEVEL_TYPE to "FLAT",
+        )
+        val result = ServerProperties.versionAwareOverrides("1.16.5", overrides)
+        assertEquals("8", result[ServerProperties.SIMULATION_DISTANCE], "1.16.5 应保留 simulation-distance")
+        assertNull(result[ServerProperties.ENFORCE_SECURE_PROFILE], "1.16.5 应移除 enforce-secure-profile")
+        assertEquals("minecraft:flat", result[ServerProperties.LEVEL_TYPE], "1.16.5 level-type 应为 minecraft:flat")
+    }
+
+    @Test
+    @DisplayName("1.18 应保留 simulation-distance、移除 enforce-secure-profile，level-type 转为 minecraft:flat")
+    fun versionAwareOverridesForModern118() {
+        val overrides = mapOf(
+            ServerProperties.SIMULATION_DISTANCE to "8",
+            ServerProperties.ENFORCE_SECURE_PROFILE to "false",
+        )
+        val result = ServerProperties.versionAwareOverrides("1.18", overrides)
+        assertEquals("8", result[ServerProperties.SIMULATION_DISTANCE], "1.18 应保留 simulation-distance")
+        assertNull(result[ServerProperties.ENFORCE_SECURE_PROFILE], "1.18 应移除 enforce-secure-profile")
+    }
+
+    @Test
+    @DisplayName("1.19+ 应保留 simulation-distance 和 enforce-secure-profile，level-type 转为 minecraft:flat")
+    fun versionAwareOverridesForPaperConfig119Plus() {
+        val overrides = mapOf(
+            ServerProperties.SIMULATION_DISTANCE to "8",
+            ServerProperties.ENFORCE_SECURE_PROFILE to "false",
+            ServerProperties.LEVEL_TYPE to "FLAT",
+        )
+        val result = ServerProperties.versionAwareOverrides("1.19.4", overrides)
+        assertEquals("8", result[ServerProperties.SIMULATION_DISTANCE], "1.19.4 应保留 simulation-distance")
+        assertEquals("false", result[ServerProperties.ENFORCE_SECURE_PROFILE], "1.19.4 应保留 enforce-secure-profile")
+        assertEquals("minecraft:flat", result[ServerProperties.LEVEL_TYPE], "1.19.4 level-type 应为 minecraft:flat")
+
+        // 1.20.1 / 1.21.1 同理
+        val result20 = ServerProperties.versionAwareOverrides("1.20.1", overrides)
+        assertEquals("8", result20[ServerProperties.SIMULATION_DISTANCE])
+        assertEquals("false", result20[ServerProperties.ENFORCE_SECURE_PROFILE])
+        assertEquals("minecraft:flat", result20[ServerProperties.LEVEL_TYPE])
+    }
+
+    @Test
+    @DisplayName("不含 level-type 时不应凭空补出 level-type")
+    fun versionAwareOverridesWithoutLevelTypeDoesNotAddIt() {
+        val overrides = mapOf(
+            ServerProperties.SERVER_PORT to "25565",
+            ServerProperties.ONLINE_MODE to "false",
+        )
+        val result = ServerProperties.versionAwareOverrides("1.7.10", overrides)
+        assertFalse(result.containsKey(ServerProperties.LEVEL_TYPE), "不应凭空补出 level-type")
+    }
+
+    @Test
+    @DisplayName("versionAwareOverrides 不应修改入参映射")
+    fun versionAwareOverridesDoesNotMutateInput() {
+        val overrides = LinkedHashMap<String, String>().apply {
+            put(ServerProperties.LEVEL_TYPE, "minecraft:flat")
+            put(ServerProperties.SIMULATION_DISTANCE, "8")
+        }
+        ServerProperties.versionAwareOverrides("1.7.10", overrides)
+        // 入参不应被修改
+        assertEquals("minecraft:flat", overrides[ServerProperties.LEVEL_TYPE])
+        assertEquals("8", overrides[ServerProperties.SIMULATION_DISTANCE])
     }
 }

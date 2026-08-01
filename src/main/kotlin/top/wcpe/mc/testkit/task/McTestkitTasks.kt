@@ -14,6 +14,7 @@ import top.wcpe.mc.testkit.bot.botPidFile
 import top.wcpe.mc.testkit.bot.stopProcessByPidFile
 import top.wcpe.mc.testkit.config.BackendBungeeCordConfig
 import top.wcpe.mc.testkit.config.BackendVelocityConfig
+import top.wcpe.mc.testkit.config.MinecraftVersionGroup
 import top.wcpe.mc.testkit.config.ProxyProtocolVersion
 import top.wcpe.mc.testkit.config.StressProxyBinding
 import top.wcpe.mc.testkit.config.VELOCITY_FORWARDING_SECRET_FILE
@@ -32,6 +33,7 @@ import top.wcpe.mc.testkit.dsl.ProxyPlatform
 import top.wcpe.mc.testkit.dsl.ScenarioSpec
 import top.wcpe.mc.testkit.dsl.ServeSpec
 import top.wcpe.mc.testkit.dsl.StressSpec
+import top.wcpe.mc.testkit.provision.JavaRuntimeSelector
 import top.wcpe.mc.testkit.provision.ProvisionPlatform
 import top.wcpe.mc.testkit.provision.ServerJarProvisioner
 import top.wcpe.mc.testkit.provision.ServerLauncher
@@ -227,7 +229,13 @@ object McTestkitTasks {
                 task.description = "启动场景 ${scenario.name} 的 mineflayer 机器人（声明多 bot 时起多个进程）"
                 task.dependsOn(prepare, McTestkitTaskNames.NPM_INSTALL_BOT)
                 task.doLast {
-                    launchScenarioBots(project, scenario, backendPort = backend.port, protocolVersion = null)
+                    launchScenarioBots(
+                        project,
+                        scenario,
+                        backendVersion = backend.version,
+                        backendPort = backend.port,
+                        protocolVersion = null,
+                    )
                 }
             }
         } else {
@@ -312,9 +320,9 @@ object McTestkitTasks {
                     )
                     // ① 后端切到代理模式：BungeeCord 系走三件套，Velocity 走 modern forwarding 两件套（含共享 secret）
                     if (isBungeeMode) {
-                        BackendBungeeCordConfig.apply(layout.runDir)
+                        BackendBungeeCordConfig.apply(layout.runDir, backend.version)
                     } else {
-                        BackendVelocityConfig.apply(layout.runDir)
+                        BackendVelocityConfig.apply(layout.runDir, backend.version)
                     }
                     // ② 后台起代理（写 pid 供收尾）
                     proxyProcess = startProxyBackground(project, proxy, backend, runtime.proxies.getValue(proxy.name))
@@ -322,6 +330,7 @@ object McTestkitTasks {
                     launchScenarioBots(
                         project,
                         scenario,
+                        backendVersion = backend.version,
                         backendPort = proxy.port,
                         protocolVersion = ProxyProtocolVersion.forBackend(backend.version),
                     )
@@ -394,9 +403,9 @@ object McTestkitTasks {
                         val runDir = layout.clusterBackendRunDir(backend.name)
                         prepareRunDirectory(project, backend, runDir, runtime.backends.getValue(backend.name))
                         if (proxy.platform == ProxyPlatform.VELOCITY) {
-                            BackendVelocityConfig.apply(runDir)
+                            BackendVelocityConfig.apply(runDir, backend.version)
                         } else {
-                            BackendBungeeCordConfig.apply(runDir)
+                            BackendBungeeCordConfig.apply(runDir, backend.version)
                         }
                         backendProcesses[backend.name] =
                             startBackendBackground(project, backend, runDir, scenario.name, resultFile)
@@ -416,6 +425,7 @@ object McTestkitTasks {
                     botProcesses += launchScenarioBots(
                         project,
                         scenario,
+                        backendVersion = clusterBackends.first().version,
                         backendPort = proxy.port,
                         protocolVersion = ProxyProtocolVersion.forBackend(clusterBackends.first().version),
                         sharedExtraEnv = mapOf(
@@ -467,6 +477,7 @@ object McTestkitTasks {
                     McTestkitEnv.BACKEND_NAME to backend.name,
                 ),
             ),
+            javaPath = resolveBackendJava(project, backend.version),
             logger = { project.logger.lifecycle("[mc-testkit] $it") },
         )
         layout.clusterBackendPidFile(backend.name).apply { parentFile?.mkdirs() }
@@ -627,7 +638,7 @@ object McTestkitTasks {
                     stressBackends.forEach { backend ->
                         val runDir = layout.clusterBackendRunDir(backend.name)
                         prepareRunDirectory(project, backend, runDir, runtime.backends.getValue(backend.name))
-                        if (proxy != null) BackendBungeeCordConfig.apply(runDir)
+                        if (proxy != null) BackendBungeeCordConfig.apply(runDir, backend.version)
                         backendProcesses[backend.name] =
                             startBackendBackground(project, backend, runDir, scenario.name, stressResultFile(layout, scenario.name, backend.name))
                     }
@@ -657,7 +668,16 @@ object McTestkitTasks {
                         stressBackends.forEachIndexed { index, backend ->
                             val botPort = if (proxy != null) bindings[index].listenPort else backend.port
                             val protocolVersion = if (proxy != null) ProxyProtocolVersion.forBackend(backend.version) else null
-                            botProcesses += launchStressBotsForServer(project, stress, bot, action, index + 1, botPort, protocolVersion)
+                            botProcesses += launchStressBotsForServer(
+                                project,
+                                stress,
+                                bot,
+                                action,
+                                index + 1,
+                                botPort,
+                                protocolVersion,
+                                backend.version,
+                            )
                         }
                     }
 
@@ -722,7 +742,12 @@ object McTestkitTasks {
         serverIndex: Int,
         botPort: Int,
         protocolVersion: String?,
+        backendVersion: String,
     ): List<Process> {
+        if (!MinecraftVersionGroup.isBotSupported(backendVersion)) {
+            project.logger.warn("[mc-testkit] $backendVersion 不支持 bot E2E，仅验服务端拉起（跳过压测 bot 启动）")
+            return emptyList()
+        }
         val layout = layoutOf(project)
         val botDir = layout.botDir(project.findProperty(BOT_DIR_PROPERTY)?.toString())
         val botScript = File(botDir, RunLayout.BOT_SCRIPT_RELATIVE)
@@ -928,9 +953,9 @@ object McTestkitTasks {
             // ② 经代理：写后端代理模式配置 + 后台起代理 + 等代理端口可连
             if (proxy != null) {
                 if (proxy.platform == ProxyPlatform.VELOCITY) {
-                    BackendVelocityConfig.apply(layout.runDir)
+                    BackendVelocityConfig.apply(layout.runDir, backend.version)
                 } else {
-                    BackendBungeeCordConfig.apply(layout.runDir)
+                    BackendBungeeCordConfig.apply(layout.runDir, backend.version)
                 }
                 proxyProcess = startProxyBackground(project, proxy, backend, runtime.proxies.getValue(proxy.name))
                 awaitPortOpen(project, proxy.port, "代理 ${proxy.name}")
@@ -949,7 +974,14 @@ object McTestkitTasks {
             //    经代理则协议版本固定为后端版本（环境契约 FR-05），连端口同真人（connectPort）。
             if (botSpecs.isNotEmpty()) {
                 val protocolVersion = proxy?.let { ProxyProtocolVersion.forBackend(backend.version) }
-                botProcesses += launchBots(project, serveName, botSpecs, backendPort = connectPort, protocolVersion = protocolVersion)
+                botProcesses += launchBots(
+                    project,
+                    serveName,
+                    botSpecs,
+                    backendVersion = backend.version,
+                    backendPort = connectPort,
+                    protocolVersion = protocolVersion,
+                )
                 project.logger.lifecycle("[mc-testkit] serve「$serveName」已起 ${botProcesses.size} 个 bot（人机混场，不判定）")
             }
             // ⑥ 后端日志流到控制台（手测需可见启动 / 玩家活动）
@@ -992,6 +1024,7 @@ object McTestkitTasks {
                     McTestkitEnv.BACKEND_NAME to backend.name,
                 ),
             ),
+            javaPath = resolveBackendJava(project, backend.version),
             logger = { project.logger.lifecycle("[mc-testkit] $it") },
         )
         project.logger.lifecycle(
@@ -1110,9 +1143,9 @@ object McTestkitTasks {
                 val runDir = layout.clusterBackendRunDir(backend.name)
                 prepareRunDirectory(project, backend, runDir, runtime.backends.getValue(backend.name))
                 if (proxy.platform == ProxyPlatform.VELOCITY) {
-                    BackendVelocityConfig.apply(runDir)
+                    BackendVelocityConfig.apply(runDir, backend.version)
                 } else {
-                    BackendBungeeCordConfig.apply(runDir)
+                    BackendBungeeCordConfig.apply(runDir, backend.version)
                 }
                 backendProcesses[backend.name] = startServeClusterBackend(project, backend, runDir)
             }
@@ -1139,6 +1172,7 @@ object McTestkitTasks {
                     project,
                     serveName,
                     botSpecs,
+                    backendVersion = clusterBackends.first().version,
                     backendPort = proxy.port,
                     protocolVersion = ProxyProtocolVersion.forBackend(clusterBackends.first().version),
                     sharedExtraEnv = mapOf(
@@ -1185,6 +1219,7 @@ object McTestkitTasks {
                     McTestkitEnv.BACKEND_NAME to backend.name,
                 ),
             ),
+            javaPath = resolveBackendJava(project, backend.version),
             logger = { project.logger.lifecycle("[mc-testkit] $it") },
         )
         layout.clusterBackendPidFile(backend.name).apply { parentFile?.mkdirs() }.writeText(process.pid().toString())
@@ -1240,6 +1275,7 @@ object McTestkitTasks {
                     McTestkitEnv.BACKEND_NAME to backend.name,
                 ),
             ),
+            javaPath = resolveBackendJava(project, backend.version),
             logger = { project.logger.lifecycle("[mc-testkit] $it") },
         )
         // 等被测后端跑完：以「桩写出结果文件」为权威完成信号（结果文件是真源，见 verify/），
@@ -1312,31 +1348,43 @@ object McTestkitTasks {
      * 同质复制（`count>1`）下发 `BOT_INDEX`（1..N）；并合入 [sharedExtraEnv]（如集群的 `CLUSTER_BACKENDS`，
      * 使每个 bot 都能经代理 `/server` 切换）。单 bot 时不强制 username（保留消费方 override，向后兼容）。
      *
+     * **版本范围校验（FR-21）**：[backendVersion] < 1.8（即 1.7.10）时跳过 bot 启动 + 日志告警，
+     * 场景仍继续（不因无 bot 判 FAIL）。
+     *
      * @return 全部已起进程（供调用方按需收尾；亦各自写了 `bot-<key>.pid` 供按 pid 收尾）。
      */
     private fun launchScenarioBots(
         project: Project,
         scenario: ScenarioSpec,
+        backendVersion: String,
         backendPort: Int,
         protocolVersion: String?,
         sharedExtraEnv: Map<String, String> = emptyMap(),
     ): List<Process> =
-        launchBots(project, scenario.name, scenario.botSpecs, backendPort, protocolVersion, sharedExtraEnv)
+        launchBots(project, scenario.name, scenario.botSpecs, backendVersion, backendPort, protocolVersion, sharedExtraEnv)
 
     /**
      * 起一组 bot 进程（FR-16 多 bot 展开 + 每进程 env 装配；**场景与 serve 共用**，FR-19）。
      *
      * 按 [BotProcessPlanner.expand] 逐 plan 起进程；进程数 >1 强制唯一 `BOT_USERNAME`、同质复制下发 `BOT_INDEX`、
      * 合入 [sharedExtraEnv]（如集群 `CLUSTER_BACKENDS`，使每个 bot 都能经代理 `/server` 切换）。
+     *
+     * **版本范围校验（FR-21）**：[backendVersion] < 1.8（即 1.7.10）时跳过 bot 启动 + 日志告警，
+     * 场景仍继续（不因无 bot 判 FAIL）。
      */
     private fun launchBots(
         project: Project,
         name: String,
         botSpecs: List<BotSpec>,
+        backendVersion: String,
         backendPort: Int,
         protocolVersion: String?,
         sharedExtraEnv: Map<String, String> = emptyMap(),
     ): List<Process> {
+        if (!MinecraftVersionGroup.isBotSupported(backendVersion)) {
+            project.logger.warn("[mc-testkit] $backendVersion 不支持 bot E2E，仅验服务端拉起（跳过 bot 启动）")
+            return emptyList()
+        }
         val plans = BotProcessPlanner.expand(name, botSpecs)
         // 每进程「追加 env」（唯一名 / 序号 / 共享 env）由纯函数装配，便于穷举单测
         val environments = BotProcessPlanner.extraEnvironments(plans, sharedExtraEnv)
@@ -1494,6 +1542,15 @@ object McTestkitTasks {
             project.logger.lifecycle("[mc-testkit] $it")
         }
     }
+
+    /**
+     * 按 MC 版本解析后端应用的 `java` 可执行路径（FR-21）。
+     *
+     * 优先级：`MC_TESTKIT_JAVA_HOME_<版本段>` > `JAVA_HOME` > 当前 JVM。
+     * 仅用于后端启动（代理用当前 JVM，代理 Java 版本由代理软件自身决定）。
+     */
+    private fun resolveBackendJava(project: Project, version: String): String =
+        JavaRuntimeSelector.executable(version) { project.providers.environmentVariable(it).orNull }
 
     /** 跨平台 npm 可执行名（Windows 为 `npm.cmd`）。 */
     private fun npmExecutable(): String =

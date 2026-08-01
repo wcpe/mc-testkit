@@ -17,21 +17,26 @@ import java.io.File
  */
 object BackendVelocityConfig {
 
-    /** 对运行目录落地 Velocity modern forwarding 两件套（[secret] 默认取共享 secret，与代理同源）。 */
-    fun apply(runDir: File, secret: String = McTestkitDefaults.VELOCITY_FORWARDING_SECRET) {
-        ServerProperties.edit(
-            runDir,
-            mapOf(
-                ServerProperties.ONLINE_MODE to "false",
-                ServerProperties.ENFORCE_SECURE_PROFILE to "false",
-            ),
-            comment = "mc-testkit E2E Velocity 后端 server.properties",
+    /**
+     * 对运行目录落地 Velocity modern forwarding 两件套（[secret] 默认取共享 secret，与代理同源）。
+     *
+     * @param version 后端 Minecraft 版本（决定 paper 配置文件名 + server.properties 键过滤，FR-21）。
+     */
+    fun apply(runDir: File, version: String, secret: String = McTestkitDefaults.VELOCITY_FORWARDING_SECRET) {
+        val rawOverrides = mapOf(
+            ServerProperties.ONLINE_MODE to "false",
+            ServerProperties.ENFORCE_SECURE_PROFILE to "false",
         )
-        // config/paper-global.yml：proxies.velocity.{enabled,online-mode,secret}（深合并，不误改 bungee-cord 同级键）
-        editYaml(File(runDir, "config/paper-global.yml")) { root ->
-            setNested(root, listOf("proxies", "velocity", "enabled"), true)
-            setNested(root, listOf("proxies", "velocity", "online-mode"), false)
-            setNested(root, listOf("proxies", "velocity", "secret"), secret)
+        // 按版本过滤不支持的键（FR-21）
+        val overrides = ServerProperties.versionAwareOverrides(version, rawOverrides)
+        ServerProperties.edit(runDir, overrides, comment = "mc-testkit E2E Velocity 后端 server.properties")
+        // Velocity modern forwarding 仅在 1.19+ 有效（paper-global.yml）；旧版 Paper 无此配置，跳过
+        if (MinecraftVersionGroup.needsPaperGlobal(version)) {
+            editYaml(File(runDir, "config/paper-global.yml")) { root ->
+                setNested(root, listOf("proxies", "velocity", "enabled"), true)
+                setNested(root, listOf("proxies", "velocity", "online-mode"), false)
+                setNested(root, listOf("proxies", "velocity", "secret"), secret)
+            }
         }
     }
 }

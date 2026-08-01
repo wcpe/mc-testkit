@@ -6,6 +6,7 @@ import java.nio.file.Files
 import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -31,7 +32,7 @@ class BackendBungeeCordConfigTest {
     fun missingFilesAreCreatedWithBungeeSettings() {
         val runDir = tempRunDir()
 
-        BackendBungeeCordConfig.apply(runDir)
+        BackendBungeeCordConfig.apply(runDir, "1.20.1")
 
         // server.properties
         val props = readProperties(runDir)
@@ -78,7 +79,7 @@ class BackendBungeeCordConfigTest {
             """.trimIndent() + "\n",
         )
 
-        BackendBungeeCordConfig.apply(runDir)
+        BackendBungeeCordConfig.apply(runDir, "1.20.1")
 
         val spigot = File(runDir, "spigot.yml").readText()
         assertTrue(
@@ -100,5 +101,45 @@ class BackendBungeeCordConfigTest {
         )
         // velocity 块不应被误改
         assertTrue(paper.contains("velocity:"), "不应破坏 paper-global.yml 的 velocity 块")
+    }
+
+    // ── 版本感知（FR-21）──
+
+    @Test
+    @DisplayName("1.7.10 应跳过 paper 配置且移除 enforce-secure-profile")
+    fun legacy1710SkipsPaperConfigAndRemovesEnforceSecureProfile() {
+        val runDir = tempRunDir()
+        BackendBungeeCordConfig.apply(runDir, "1.7.10")
+
+        // server.properties：enforce-secure-profile 不应存在
+        val props = readProperties(runDir)
+        assertEquals("false", props.getProperty(ServerProperties.ONLINE_MODE))
+        assertEquals(null, props.getProperty(ServerProperties.ENFORCE_SECURE_PROFILE), "1.7.10 不应有 enforce-secure-profile")
+
+        // spigot.yml 仍写（BungeeCord 模式经 spigot.yml）
+        val spigot = File(runDir, "spigot.yml").readText()
+        assertTrue(Regex("(?m)^\\s*bungeecord:\\s*true\\s*$").containsMatchIn(spigot), "spigot.yml 应含 bungeecord: true")
+
+        // paper 配置应跳过（不创建 paper-global.yml / paper.yml）
+        assertFalse(File(runDir, "config/paper-global.yml").exists(), "1.7.10 不应写 paper-global.yml")
+        assertFalse(File(runDir, "paper.yml").exists(), "1.7.10 不应写 paper.yml")
+    }
+
+    @Test
+    @DisplayName("1.16.5 应写 paper.yml 而非 paper-global.yml")
+    fun modern1165WritesPaperYml() {
+        val runDir = tempRunDir()
+        BackendBungeeCordConfig.apply(runDir, "1.16.5")
+
+        // paper.yml 应含 settings.bungeecord.online-mode: false
+        val paper = File(runDir, "paper.yml").readText()
+        assertTrue(paper.contains("bungeecord:"), "paper.yml 应含 bungeecord 块")
+        assertTrue(
+            Regex("(?m)^\\s*online-mode:\\s*false\\s*$").containsMatchIn(paper),
+            "paper.yml 应含 online-mode: false",
+        )
+
+        // 不应写 paper-global.yml
+        assertFalse(File(runDir, "config/paper-global.yml").exists(), "1.16.5 不应写 paper-global.yml")
     }
 }

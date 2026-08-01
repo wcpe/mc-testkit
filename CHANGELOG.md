@@ -18,6 +18,18 @@ _（暂无）_
 ### 移除
 _（暂无）_
 
+## [0.6.0] - 2026-07-31
+
+### 新增
+- **FR-21 多版本服务端拉起适配**：8 代表版本（1.7.10 / 1.8.8 / 1.12.2 / 1.16.5 / 1.17.1 / 1.19.4 / 1.20.1 / 1.21.1）Paper jar 下载 + 拉起 + 版本感知配置适配。
+  - `MinecraftVersionGroup`：8 代表版本常量 + 版本段分组查询（`isLegacy` / `needsPaperYml` / `needsPaperGlobal` / `isBotSupported` / `javaVersionSegment`）。
+  - `ServerProperties.versionAwareOverrides`：按 MC 版本过滤不支持的键（1.7–1.13 移除 `simulation-distance`、1.7–1.18 移除 `enforce-secure-profile`），`level-type` 按版本转换（1.7–1.12 → `FLAT`，1.13+ → `minecraft:flat`）。
+  - `PaperConfigAdapter`：按版本生成 paper 配置（1.7–1.12 跳过、1.13–1.18 写 `paper.yml`、1.19+ 写 `paper-global.yml`）。
+  - `JavaRuntimeSelector`：按 MC 版本选择 Java 运行时（`MC_TESTKIT_JAVA_HOME_<版本段>` 覆盖 > `JAVA_HOME` 回退 > 当前 JVM）。
+  - bot 版本范围校验：1.7.10 跳过 bot 启动 + 日志告警（仅验服务端拉起），1.8.8+ 正常启动 bot。
+  - `BackendBungeeCordConfig` / `BackendVelocityConfig` 按版本适配 paper 配置 + server.properties 过滤。
+  - `ServerLauncher.launch` 新增 `javaPath` 参数支持多版本 Java。
+
 ## [0.5.1] - 2026-07-19
 
 ### 变更

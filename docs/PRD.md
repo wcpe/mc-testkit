@@ -53,7 +53,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 | FR-18 | 持久开启·集群拓扑手测：`serve { }` 支持多后端 + 代理整套挂起，真人经代理 `/server` 跨服手测、人眼复现跨服 bug；停后全部后端 + 代理收尾干净、端口不漏（见 docs/specs/fr-18-cluster-serve.md，ADR-0011）| P3 | 已交付@v0.4.0 |
 | FR-19 | 持久模式可选并起 bot（人机混场）：`serve { }` 可选起场景 bot 把环境驱到某状态但**不**按结果文件收尾，挂住让真人同时连入同测；停时 bot + 后端 + 代理全收尾（见 docs/specs/fr-19-bot-mixed-serve.md，ADR-0011）| P3 | 已交付@v0.4.0 |
 | FR-20 | 节点运行时注入：保持 `dependencies { }` 仅注入后端，为 backend / proxy 增加每节点 env 与模板目录、为 proxy 增加专属插件注入，并覆盖 v0.4.2 全部 E2E / serve 启动路径；以真实 BungeeCord 下游消费、旧 DSL 兼容且不引入 `provide` 为交付门禁（见 docs/specs/fr-20-node-runtime-injection.md）| P1 | 已交付@v0.5.0 |
-| FR-21 | 多版本服务端拉起适配：增强 mc-testkit 支持 8 个代表版本（1.7.10 / 1.8.8 / 1.12.2 / 1.16.5 / 1.17.1 / 1.19.4 / 1.20.1 / 1.21.1）的 Paper 服务端拉起 + bot 协议支持——`ServerProperties.versionAwareOverrides`（版本感知键过滤 + level-type 转换）、`PaperConfigAdapter`（按版本生成 paper.yml / paper-global.yml / 跳过）、`JavaRuntimeSelector`（`MC_TESTKIT_JAVA_HOME_<版本段>` 覆盖 + `JAVA_HOME` 回退）、`MinecraftVersionGroup`（版本段分组查询）、bot 版本范围校验（1.7.10 跳过 bot + 告警，1.8.8+ 正常） | P2 | 开发中 |
+| FR-21 | 多版本服务端拉起适配：增强 mc-testkit 支持 8 个代表版本（1.7.10 / 1.8.8 / 1.12.2 / 1.16.5 / 1.17.1 / 1.19.4 / 1.20.1 / 1.21.1）的 Paper 服务端拉起 + bot 协议支持——`ServerProperties.versionAwareOverrides`（版本感知键过滤 + level-type 转换）、`PaperConfigAdapter`（按版本生成 paper.yml / paper-global.yml / 跳过）、`JavaRuntimeSelector`（`MC_TESTKIT_JAVA_HOME_<版本段>` 覆盖 + `JAVA_HOME` 回退）、`MinecraftVersionGroup`（版本段分组查询）、bot 版本范围校验（1.7.10 跳过 bot + 告警，1.8.8+ 正常） | P2 | 已交付@v0.6.0 |
 
 > 状态取值：计划 / 开发中 / 已交付@vX.Y.Z。优先级：P1(MVP 或阻断真实消费者接入的关键项) / P2 / P3。
 > 标 `已交付` 有门：该 FR 的 §6 / spec 验收标准全部满足、对应测试 / 实机验收通过后，才由 `sdd-release-version` 在发版时统一标 `已交付@vX.Y.Z`，过程中不得自行预标。

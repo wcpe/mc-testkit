@@ -26,11 +26,20 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 安装 JDK 17（Paper / Waterfall 运行所需）
+      - name: 安装 JDK 21（Velocity 3.5.x 代理所需，FR-22 显式 Java 主版本）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: 安装 JDK 17（Paper / Waterfall 运行所需，并作为默认 JAVA_HOME）
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: 导出 Velocity 专用 Java 21 路径（proxy.javaVersion 经 MC_TESTKIT_JAVA_HOME_21 解析）
+        run: echo "MC_TESTKIT_JAVA_HOME_21=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
 
       - name: 安装 Node 18（mineflayer 机器人）
         uses: actions/setup-node@v4
@@ -86,6 +95,8 @@ jobs:
               proxy("px") {
                   platform = when (e2eProxy) { "bungeecord" -> bungeecord; "velocity" -> velocity; else -> waterfall }
                   port = 25577; routesTo("s1", "s2")
+                  // Velocity 3.5.x 要求 Java 21，显式声明主版本（经 MC_TESTKIT_JAVA_HOME_21 解析，FR-22）
+                  if (e2eProxy == "velocity") { javaVersion = 21 }
               }
               // 单后端烟雾：无 bot、无代理，最轻（Folia 自举亦跑此，-Pe2e.backend=folia）
               scenario("smoke") { backend = "s1" }

@@ -359,7 +359,7 @@ class NodeRuntimeInjectionFunctionalTest {
                     jvmArg("-Dnode.runtime.sentinel=single-jvm-sentinel")
                     javaAgent("NODE_RUNTIME_AGENT_JAR")
                     env("PROBE_PORTS", "${runtimePorts.single}")
-                    env("PROBE_EXIT_MILLIS", "500")
+                    env("PROBE_EXIT_MILLIS", "${PROBE_SURVIVAL_MILLIS}")
                     templateDirectory("backend-template-sentinel")
                 }
                 backend("cluster-one-sentinel") {
@@ -368,7 +368,7 @@ class NodeRuntimeInjectionFunctionalTest {
                     jvmArg("-Dnode.runtime.sentinel=cluster-one-jvm-sentinel")
                     javaAgent("NODE_RUNTIME_AGENT_JAR")
                     env("PROBE_PORTS", "${runtimePorts.clusterOne}")
-                    env("PROBE_EXIT_MILLIS", "3000")
+                    env("PROBE_EXIT_MILLIS", "${PROBE_SURVIVAL_MILLIS}")
                     templateDirectory("backend-template-sentinel")
                 }
                 backend("cluster-two-sentinel") {
@@ -377,7 +377,7 @@ class NodeRuntimeInjectionFunctionalTest {
                     jvmArg("-Dnode.runtime.sentinel=cluster-two-jvm-sentinel")
                     javaAgent("NODE_RUNTIME_AGENT_JAR")
                     env("PROBE_PORTS", "${runtimePorts.clusterTwo}")
-                    env("PROBE_EXIT_MILLIS", "3000")
+                    env("PROBE_EXIT_MILLIS", "${PROBE_SURVIVAL_MILLIS}")
                     templateDirectory("backend-template-sentinel")
                 }
                 backend("serve-one-sentinel") {
@@ -386,7 +386,7 @@ class NodeRuntimeInjectionFunctionalTest {
                     jvmArg("-Dnode.runtime.sentinel=serve-one-jvm-sentinel")
                     javaAgent("NODE_RUNTIME_AGENT_JAR")
                     env("PROBE_PORTS", "${runtimePorts.serveOne}")
-                    env("PROBE_EXIT_MILLIS", "2000")
+                    env("PROBE_EXIT_MILLIS", "${PROBE_SURVIVAL_MILLIS}")
                     templateDirectory("backend-template-sentinel")
                 }
                 backend("serve-two-sentinel") {
@@ -395,7 +395,7 @@ class NodeRuntimeInjectionFunctionalTest {
                     jvmArg("-Dnode.runtime.sentinel=serve-two-jvm-sentinel")
                     javaAgent("NODE_RUNTIME_AGENT_JAR")
                     env("PROBE_PORTS", "${runtimePorts.serveTwo}")
-                    env("PROBE_EXIT_MILLIS", "5000")
+                    env("PROBE_EXIT_MILLIS", "${PROBE_SURVIVAL_MILLIS}")
                     templateDirectory("backend-template-sentinel")
                 }
                 proxy("px") {
@@ -412,7 +412,7 @@ class NodeRuntimeInjectionFunctionalTest {
                     jvmArg("-Dnode.runtime.sentinel=proxy-jvm-sentinel")
                     javaAgent("NODE_RUNTIME_AGENT_JAR")
                     env("PROBE_PORTS", "${runtimePorts.proxy},${runtimePorts.stressProxy}")
-                    env("PROBE_EXIT_MILLIS", "3000")
+                    env("PROBE_EXIT_MILLIS", "${PROBE_SURVIVAL_MILLIS}")
                     templateDirectory("proxy-template-sentinel")
                 }
                 scenario("single-sentinel") {
@@ -503,11 +503,42 @@ class NodeRuntimeInjectionFunctionalTest {
 
     private fun file(relativePath: String): File = File(projectDir, relativePath).apply { parentFile?.mkdirs() }
 
-    /** 为需要真实监听的功能测试分配一组临时端口，避免与开发机正在运行的服务器冲突。 */
+    companion object {
+        /**
+         * 测试端口保留段：低于 Linux 临时端口段起点 32768、也低于 Windows 的 49152，
+         * 从而避开内核的动态分配池；同时避开 Minecraft 25565 等常见服务端口。
+         */
+        private const val RESERVED_PORT_RANGE_START = 21000
+        private const val RESERVED_PORT_RANGE_END = 26000
+
+        /**
+         * 探针存活时长：集群/集群 serve 会先起全部节点（含 FR-22 的同版本串行等待）再统一等端口，
+         * 先起的节点必须活到最后一个节点启动完成；真实服务端不会几秒自行退出，这里给足窗口，
+         * 避免探针先于端口检查退出而表现为「端口在 300s 内未就绪」。
+         */
+        private const val PROBE_SURVIVAL_MILLIS = "15000"
+    }
+
+    /**
+     * 为需要真实监听的功能测试分配一组端口，避免与开发机正在运行的服务器冲突。
+     *
+     * 刻意**不用** `ServerSocket(0)`：那会从 OS 临时端口段取号，socket 一关闭端口就回到内核可用池，
+     * 测试期间任意出站连接都可能把它抢走，节点探针再绑定即失败——表现为「端口在 300s 内未就绪」
+     * 且失败点随机（每次命中的节点都不同）。这里改为在保留段内挑选当前空闲的端口。
+     */
     private fun allocateRuntimePorts(): RuntimePorts {
         val ports = linkedSetOf<Int>()
-        while (ports.size < 7) {
-            ServerSocket(0).use { socket -> ports += socket.localPort }
+        var candidate = RESERVED_PORT_RANGE_START
+        while (ports.size < 7 && candidate <= RESERVED_PORT_RANGE_END) {
+            try {
+                ServerSocket(candidate).use { ports += it.localPort }
+            } catch (ignored: java.io.IOException) {
+                // 端口已被占用，试下一个
+            }
+            candidate++
+        }
+        if (ports.size < 7) {
+            error("无法在 $RESERVED_PORT_RANGE_START-$RESERVED_PORT_RANGE_END 内分配到 7 个空闲端口")
         }
         val values = ports.toList()
         return RuntimePorts(

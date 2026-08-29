@@ -18,6 +18,10 @@ data class ResolvedBackend(
     val version: String,
     /** 监听端口（已解析）。 */
     val port: Int,
+    /** 追加到该后端 JVM 的参数（按声明顺序）。 */
+    val jvmArgs: List<String> = emptyList(),
+    /** 该后端 Java agent 的原始声明（执行期解析）。 */
+    val javaAgents: List<String> = emptyList(),
     /** 仅注入该后端进程的节点环境变量。 */
     val environment: Map<String, String> = emptyMap(),
     /** 后端模板目录的原始声明（环境变量名或路径）；null 表示回退旧全局模板。 */
@@ -34,12 +38,20 @@ data class ResolvedProxy(
     val name: String,
     /** 代理平台（P1 仅 Velocity / Waterfall / BungeeCord）。 */
     val platform: ProxyPlatform,
+    /** 代理软件版本；null 表示沿用平台默认版本策略。 */
+    val version: String? = null,
+    /** 代理进程需要的 Java 主版本；null 表示沿用当前 JVM。 */
+    val javaVersion: Int? = null,
     /** 监听端口（已解析）。 */
     val port: Int,
     /** 转发到的后端名（按声明顺序，均已校验存在）。 */
     val routes: List<String>,
     /** 该代理专属插件 jar 的原始声明（环境变量名或路径，按声明顺序）。 */
     val plugins: List<String> = emptyList(),
+    /** 追加到该代理 JVM 的参数（按声明顺序）。 */
+    val jvmArgs: List<String> = emptyList(),
+    /** 该代理 Java agent 的原始声明（执行期解析）。 */
+    val javaAgents: List<String> = emptyList(),
     /** 仅注入该代理进程的节点环境变量。 */
     val environment: Map<String, String> = emptyMap(),
     /** 代理模板目录的原始声明（环境变量名或路径）。 */

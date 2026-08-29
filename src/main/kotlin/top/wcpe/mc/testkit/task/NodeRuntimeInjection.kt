@@ -102,6 +102,31 @@ internal fun mergeNodeEnvironment(
     putAll(frameworkEnvironment)
 }
 
+/** 解析节点 Java agent 声明；环境变量非空值优先，未命中时按项目相对路径处理。 */
+internal fun resolveNodeJavaAgents(
+    projectDirectory: File,
+    nodeType: String,
+    nodeName: String,
+    declarations: List<String>,
+    readEnv: (String) -> String?,
+): List<String> = declarations.map { declaration ->
+    val rawPath = readEnv(declaration)?.takeIf { it.isNotBlank() } ?: declaration
+    val agent = resolveProjectPath(projectDirectory, rawPath)
+    if (!agent.isFile) {
+        throw GradleException(
+            "mcTestkit $nodeType「$nodeName」的 Java agent 声明「$declaration」解析为不存在的文件：${agent.absolutePath}。",
+        )
+    }
+    "-javaagent:${agent.absolutePath}"
+}
+
+/** 统一拼装启动参数，确保框架参数、消费方参数与 Java agent 都位于 `-jar` 之前。 */
+internal fun composeNodeJvmArgs(
+    frameworkArgs: List<String>,
+    configuredArgs: List<String>,
+    agentArgs: List<String>,
+): List<String> = frameworkArgs + configuredArgs + agentArgs
+
 /** 后端顺序：清理可重建内容 → 铺模板 → 写权威基础配置 → 注入 dependencies。 */
 internal fun stageBackendRuntime(
     runDirectory: File,
@@ -139,7 +164,7 @@ internal fun stageProxyRuntime(
     preparePlatformRuntime()
     val pluginsDirectory = File(runDirectory, "plugins").apply { mkdirs() }
     resources.plugins.forEach { plugin ->
-        plugin.copyTo(File(pluginsDirectory, plugin.name), overwrite = true)
+        copyOverwritingRetrying(plugin, File(pluginsDirectory, plugin.name))
         logger("已注入代理插件：${plugin.name} → plugins/${plugin.name}")
     }
 }
@@ -231,9 +256,30 @@ private fun injectBackendDependencies(
     val pluginsDirectory = File(runDirectory, "plugins").apply { mkdirs() }
     dependencies.forEach { dependency ->
         val targetName = if (dependency.underTest) "plugin-under-test.jar" else dependency.jar.name
-        dependency.jar.copyTo(File(pluginsDirectory, targetName), overwrite = true)
+        copyOverwritingRetrying(dependency.jar, File(pluginsDirectory, targetName))
         logger("已注入后端插件：${dependency.jar.name} → plugins/$targetName")
     }
+}
+
+/** Windows 下刚被强杀的服务端可能短暂持有旧 jar 句柄；对覆盖写做有限重试，避免场景间竞态。 */
+internal fun copyOverwritingRetrying(
+    source: File,
+    target: File,
+    retryMillis: Long = 60_000L,
+) {
+    val deadline = System.currentTimeMillis() + retryMillis
+    var lastError: Exception? = null
+    while (System.currentTimeMillis() < deadline) {
+        try {
+            if (target.exists()) target.delete()
+            source.copyTo(target, overwrite = false)
+            return
+        } catch (exception: Exception) {
+            lastError = exception
+            Thread.sleep(250)
+        }
+    }
+    throw GradleException("无法写入 ${target.absolutePath}：目标文件被占用（上一场景服务端句柄尚未释放）。", lastError)
 }
 
 private fun requireDirectory(directory: File, label: String) {

@@ -116,6 +116,30 @@ class ServerLauncherTest {
         }
     }
 
+    @Test
+    @DisplayName("启动器应把用户 JVM 参数置于 jar 之前并传入子进程")
+    fun launchPassesConfiguredJvmArgumentsToChildProcess() {
+        val workDir = File("build/test-launch-jvm-${System.nanoTime()}").apply { mkdirs() }
+        val jar = createImmediateExitJar(File(workDir, "hello.jar"))
+
+        val process = ServerLauncher.launch(
+            jar = jar,
+            runDirectory = workDir,
+            key = "node-jvm",
+            jvmArgs = listOf("-Dmc.testkit.jvm.sentinel=enabled"),
+        )
+        try {
+            assertTrue(process.waitFor(30, TimeUnit.SECONDS))
+            assertEquals(0, process.exitValue())
+            assertTrue(
+                File(workDir, "node-jvm.log").readText().contains("jvm=enabled"),
+                "子进程应读取到启动器传入的 JVM 参数",
+            )
+        } finally {
+            process.destroyForcibly()
+        }
+    }
+
     /**
      * 现造一个会立即退出的可运行 jar：Manifest 的 `Main-Class` 指向本测试模块已编译的辅助入口
      * [LaunchProbeMain]，并把其 .class 打入 jar。
@@ -154,6 +178,6 @@ class ServerLauncherTest {
 object LaunchProbeMain {
     @JvmStatic
     fun main(args: Array<String>) {
-        println("MC_TESTKIT_LAUNCH_OK args=${args.joinToString(",")}")
+        println("MC_TESTKIT_LAUNCH_OK args=${args.joinToString(",")} jvm=${System.getProperty("mc.testkit.jvm.sentinel")}")
     }
 }

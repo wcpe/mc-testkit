@@ -27,6 +27,9 @@ object McTestkitEnv {
     /** 后端 Folia jar 路径覆盖（同 [PAPER_JAR]）。 */
     const val FOLIA_JAR = PREFIX + "FOLIA_JAR"
 
+    /** Spigot 后端 jar 路径覆盖；未提供时从已授权的 GetBukkit 公共源下载。 */
+    const val SPIGOT_JAR = PREFIX + "SPIGOT_JAR"
+
     // ── 桩 ↔ 编排 交接（编排在起后端时下发，桩据此判定 / 写出）──
     /** 本次要执行的场景 id；编排起后端时下发，桩据此选择场景驱动（覆盖桩配置默认）。 */
     const val SCENARIO = PREFIX + "SCENARIO"
@@ -69,6 +72,9 @@ object McTestkitEnv {
     const val BOT_CONNECT_TIMEOUT_MS = PREFIX + "BOT_CONNECT_TIMEOUT_MS"
     const val BOT_RETRY_DELAY_MS = PREFIX + "BOT_RETRY_DELAY_MS"
     const val BOT_READY_TIMEOUT_MS = PREFIX + "BOT_READY_TIMEOUT_MS"
+
+    /** 机器人生命周期回执文件；只用于 E2E 排障，不包含玩家、IP 或协议载荷。 */
+    const val BOT_RECEIPT_FILE = PREFIX + "BOT_RECEIPT_FILE"
 
     // ── 集群（FR-10）/ 压测（FR-11）──
     /** 集群场景的有序后端名（逗号分隔；编排→机器人下发，bot 据此 `/server <name>` 切换目标，FR-10）。 */

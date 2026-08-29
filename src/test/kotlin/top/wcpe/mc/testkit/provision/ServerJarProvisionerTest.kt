@@ -4,6 +4,8 @@ import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.contract.McTestkitDefaults
 import top.wcpe.mc.testkit.contract.McTestkitEnv
 import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -90,10 +92,30 @@ class ServerJarProvisionerTest {
     }
 
     @Test
-    @DisplayName("解析不支持的平台时应抛出中文错误")
-    fun rejectUnsupportedPlatformWithChineseError() {
+    @DisplayName("Spigot 应走受控公共构件供应路径")
+    fun resolveSpigotThroughControlledPublicSource() {
+        val requestedUrls = mutableListOf<String>()
+        val provisioner = ServerJarProvisioner(
+            service = JarProvisionService(
+                cache = JarCache(File("build/spigot-provision-${System.nanoTime()}")),
+                download = { url, destination, _ ->
+                    requestedUrls += url
+                    writeMinimalJar(destination)
+                },
+            ),
+            readEnv = { null },
+        )
+
+        provisioner.resolve("spigot", requestedVersion = "1.20.1")
+
+        assertEquals(listOf("https://download.getbukkit.org/spigot/spigot-1.20.1.jar"), requestedUrls)
+    }
+
+    @Test
+    @DisplayName("解析真正未知的平台时应抛出中文错误")
+    fun rejectUnknownPlatformWithChineseError() {
         val provisioner = ServerJarProvisioner(explodingService(), readEnv = { null })
-        val ex = assertFailsWith<IllegalArgumentException> { provisioner.resolve("spigot") }
+        val ex = assertFailsWith<IllegalArgumentException> { provisioner.resolve("unknown-platform") }
         assertTrue(ex.message!!.contains("不支持的平台"), "应提示平台不支持：${ex.message}")
     }
 
@@ -126,6 +148,17 @@ class ServerJarProvisionerTest {
         val provisioner = ServerJarProvisioner(captured.asService(), readEnv = { null })
         provisioner.resolve("paper")
         assertEquals(McTestkitDefaults.MINECRAFT_VERSION, captured.lastVersion)
+    }
+
+    @Test
+    @DisplayName("Velocity 未声明版本时应使用受控的最新 3.x 默认版本")
+    fun useVelocityDefaultVersionWithoutOverrides() {
+        val captured = CapturingService()
+        val provisioner = ServerJarProvisioner(captured.asService(), readEnv = { null })
+
+        provisioner.resolve("velocity")
+
+        assertEquals(McTestkitDefaults.VELOCITY_VERSION, captured.lastVersion)
     }
 
     @Test
@@ -190,5 +223,14 @@ class ServerJarProvisionerTest {
             bungeeApi = BungeeCordJenkinsApi(fetchText = { error("本用例不测 BungeeCord") }),
             download = { _, _, _ -> error("不应发网络：命中缓存路径不应下载") },
         )
+    }
+
+    /** 创建结构合法的最小 jar，确保供应路径测试不会触发真实网络下载。 */
+    private fun writeMinimalJar(destination: File) {
+        ZipOutputStream(destination.outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("META-INF/MANIFEST.MF"))
+            zip.write("Manifest-Version: 1.0\n".toByteArray())
+            zip.closeEntry()
+        }
     }
 }

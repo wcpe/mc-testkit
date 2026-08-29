@@ -19,10 +19,18 @@ class BackendSpec(val name: String) {
     var port: Int? = null
 
     private val mutableEnvironment = LinkedHashMap<String, String>()
+    private val mutableJvmArgs = mutableListOf<String>()
+    private val mutableJavaAgents = mutableListOf<String>()
     private var mutableTemplateDirectory: String? = null
 
     /** 注入该后端进程的节点环境变量（后声明同名值覆盖先声明值）。 */
     val environment: Map<String, String> get() = mutableEnvironment.toMap()
+
+    /** 追加到该后端 JVM 的参数（按声明顺序）。 */
+    val jvmArgs: List<String> get() = mutableJvmArgs.toList()
+
+    /** 该后端 Java agent 的原始声明（环境变量名或路径，运行期解析）。 */
+    val javaAgents: List<String> get() = mutableJavaAgents.toList()
 
     /** 该后端模板目录的原始声明（环境变量名或路径）；null 表示回退旧全局模板环境变量。 */
     val templateDirectoryDeclaration: String? get() = mutableTemplateDirectory
@@ -30,6 +38,16 @@ class BackendSpec(val name: String) {
     /** 声明一个仅注入该后端进程的字面量环境变量。 */
     fun env(name: String, value: String) {
         mutableEnvironment[name] = value
+    }
+
+    /** 追加一个该后端专属的 JVM 参数。 */
+    fun jvmArg(value: String) {
+        mutableJvmArgs += value
+    }
+
+    /** 声明一个该后端专属 Java agent（环境变量名或路径，运行期解析）。 */
+    fun javaAgent(envOrPath: String) {
+        mutableJavaAgents += envOrPath
     }
 
     /** 声明该后端的模板目录（环境变量名或路径，运行期解析）。 */
@@ -40,6 +58,7 @@ class BackendSpec(val name: String) {
     // DSL 便捷量：consumer 可直接写 `platform = paper`，无需 import 枚举
     val paper: BackendPlatform get() = BackendPlatform.PAPER
     val folia: BackendPlatform get() = BackendPlatform.FOLIA
+    val spigot: BackendPlatform get() = BackendPlatform.SPIGOT
 }
 
 /**
@@ -50,12 +69,20 @@ class ProxySpec(val name: String) {
     /** 代理平台（默认 waterfall）。 */
     var platform: ProxyPlatform = ProxyPlatform.WATERFALL
 
+    /** 代理软件版本；null 表示沿用平台默认版本策略。 */
+    var version: String? = null
+
+    /** 代理进程需要的 Java 主版本；null 表示沿用当前 JVM。 */
+    var javaVersion: Int? = null
+
     /** 监听端口；null 表示留待拓扑解析推导。 */
     var port: Int? = null
 
     private val mutableRoutes = mutableListOf<String>()
     private val mutablePlugins = mutableListOf<String>()
     private val mutableEnvironment = LinkedHashMap<String, String>()
+    private val mutableJvmArgs = mutableListOf<String>()
+    private val mutableJavaAgents = mutableListOf<String>()
     private var mutableTemplateDirectory: String? = null
 
     /** 该代理转发到的后端名（按声明顺序，路由目标存在性由 FR-03 配置期校验）。 */
@@ -66,6 +93,12 @@ class ProxySpec(val name: String) {
 
     /** 注入该代理进程的节点环境变量（后声明同名值覆盖先声明值）。 */
     val environment: Map<String, String> get() = mutableEnvironment.toMap()
+
+    /** 追加到该代理 JVM 的参数（按声明顺序）。 */
+    val jvmArgs: List<String> get() = mutableJvmArgs.toList()
+
+    /** 该代理 Java agent 的原始声明（环境变量名或路径，运行期解析）。 */
+    val javaAgents: List<String> get() = mutableJavaAgents.toList()
 
     /** 该代理模板目录的原始声明（环境变量名或路径）。 */
     val templateDirectoryDeclaration: String? get() = mutableTemplateDirectory
@@ -83,6 +116,16 @@ class ProxySpec(val name: String) {
     /** 声明一个仅注入该代理进程的字面量环境变量。 */
     fun env(name: String, value: String) {
         mutableEnvironment[name] = value
+    }
+
+    /** 追加一个该代理专属的 JVM 参数。 */
+    fun jvmArg(value: String) {
+        mutableJvmArgs += value
+    }
+
+    /** 声明一个该代理专属 Java agent（环境变量名或路径，运行期解析）。 */
+    fun javaAgent(envOrPath: String) {
+        mutableJavaAgents += envOrPath
     }
 
     /** 声明该代理的模板目录（环境变量名或路径，运行期解析）。 */

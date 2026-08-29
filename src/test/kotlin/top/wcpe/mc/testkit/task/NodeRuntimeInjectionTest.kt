@@ -157,11 +157,52 @@ class NodeRuntimeInjectionTest {
     }
 
     @Test
+    @DisplayName("Java agent 应在执行期解析环境变量并排在用户 JVM 参数之后")
+    fun resolveJavaAgentsAndComposeJvmArgs() {
+        val agent = file("agents/serverprobe-agent.jar").apply { writeText("agent-sentinel") }
+        val resolved = resolveNodeJavaAgents(
+            projectDirectory = projectDir,
+            nodeType = "代理",
+            nodeName = "proxy-sentinel",
+            declarations = listOf("SERVERPROBE_AGENT_JAR"),
+            readEnv = { name -> if (name == "SERVERPROBE_AGENT_JAR") agent.absolutePath else null },
+        )
+
+        assertEquals(listOf("-javaagent:${agent.canonicalPath}"), resolved)
+        assertEquals(
+            listOf("-Dframework=true", "-Dconsumer=true", "-javaagent:${agent.canonicalPath}"),
+            composeNodeJvmArgs(listOf("-Dframework=true"), listOf("-Dconsumer=true"), resolved),
+        )
+    }
+
+    @Test
+    @DisplayName("Java agent 不存在时应在启动前给出中文节点上下文")
+    fun resolveJavaAgentsRejectsMissingFile() {
+        val exception = assertFailsWith<GradleException> {
+            resolveNodeJavaAgents(
+                projectDirectory = projectDir,
+                nodeType = "后端",
+                nodeName = "backend-sentinel",
+                declarations = listOf("missing-agent.jar"),
+                readEnv = { null },
+            )
+        }
+
+        assertTrue(exception.message!!.contains("后端"))
+        assertTrue(exception.message!!.contains("backend-sentinel"))
+        assertTrue(exception.message!!.contains("Java agent"))
+    }
+
+    @Test
     @DisplayName("后端 staging 时应先铺模板再写权威配置且只注入 dependencies")
     fun stageBackendRuntimeOverlaysTemplateAndInjectsDependenciesOnly() {
         val template = file("backend-template-sentinel").apply { mkdirs() }
         File(template, "server.properties").writeText("server-port=1\ndifficulty=hard\n")
         File(template, "node-template-sentinel.txt").writeText("node-template-sentinel")
+        File(template, "libraries/offline-sentinel.jar").apply {
+            parentFile.mkdirs()
+            writeText("offline-runtime-sentinel")
+        }
         val dependencyJar = file("backend-dependency-sentinel.jar").apply { writeText("backend-dependency-sentinel") }
         val runDir = file("backend-run-sentinel").apply {
             mkdirs()
@@ -180,6 +221,7 @@ class NodeRuntimeInjectionTest {
         assertTrue("difficulty=hard" in properties)
         assertTrue(File(runDir, "node-template-sentinel.txt").isFile)
         assertTrue(File(runDir, "plugins/backend-dependency-sentinel.jar").isFile)
+        assertEquals("offline-runtime-sentinel", File(runDir, "libraries/offline-sentinel.jar").readText())
         assertFalse(File(runDir, "stale-sentinel.txt").exists())
     }
 

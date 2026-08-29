@@ -34,10 +34,10 @@ object McTestkitDefaults {
     const val STRESS_RANDOM_SEED = 20260622L
 
     /**
-     * 代理 Velocity 缺省版本（Velocity 自有版本号、非 MC 版本；PaperMC 发布、Java 17 兼容，见 ADR-0010）。
+     * 代理 Velocity 缺省版本（Velocity 自有版本号、非 MC 版本；官方当前可下载的最新 3.x，需 Java 21，见 ADR-0010）。
      * 可经环境变量 [McTestkitEnv.VELOCITY_VERSION] 覆盖。
      */
-    const val VELOCITY_VERSION = "3.3.0-SNAPSHOT"
+    const val VELOCITY_VERSION = "3.5.1"
 
     /**
      * Velocity modern forwarding 的共享 secret：代理 `forwarding.secret` 文件与后端 `paper-global.yml`

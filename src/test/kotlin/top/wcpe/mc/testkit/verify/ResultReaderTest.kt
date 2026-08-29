@@ -2,6 +2,7 @@ package top.wcpe.mc.testkit.verify
 
 import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.contract.McTestkitResultFile
+import top.wcpe.mc.testkit.task.clearPreviousScenarioResult
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
@@ -85,5 +86,16 @@ class ResultReaderTest {
 
         assertEquals(McTestkitResultFile.PASS, result.status)
         assertEquals("", result.message)
+    }
+
+    @Test
+    @DisplayName("启动场景前必须删除上一次结果，避免旧 PASS 被误判")
+    fun clearsPreviousScenarioResult() {
+        val dir = tempResultsDir()
+        writeResult(dir, "repeat", "status=PASS\nmessage=旧结果\n")
+
+        clearPreviousScenarioResult(dir, "repeat")
+
+        assertTrue(!File(dir, McTestkitResultFile.fileName("repeat")).exists())
     }
 }

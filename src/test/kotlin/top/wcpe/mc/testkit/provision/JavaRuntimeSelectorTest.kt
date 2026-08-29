@@ -5,6 +5,7 @@ import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -28,6 +29,18 @@ class JavaRuntimeSelectorTest {
             }
         }
         assertEquals(fakeHome, JavaRuntimeSelector.javaHome("1.17.1", readEnv))
+    }
+
+    @Test
+    @DisplayName("1.18 后端可使用 Java 17 专属环境变量")
+    fun minecraft118UsesJava17Environment() {
+        val fakeHome = Files.createTempDirectory("mc-testkit-jdk17").toString()
+
+        val resolved = JavaRuntimeSelector.javaHome("1.18.1") { name ->
+            if (name == JavaRuntimeSelector.ENV_PREFIX + "17") fakeHome else null
+        }
+
+        assertEquals(fakeHome, resolved)
     }
 
     @Test
@@ -102,5 +115,31 @@ class JavaRuntimeSelectorTest {
             JavaRuntimeSelector.javaHome(version, readEnv)
             assertTrue(expectedEnv in captured, "$version 应查询 $expectedEnv，实际查询了：$captured")
         }
+    }
+
+    @Test
+    @DisplayName("显式 Java 主版本应只接受对应环境变量中的可执行文件")
+    fun requiredExecutableForMajorUsesDedicatedEnvironmentVariable() {
+        val fakeHome = Files.createTempDirectory("mc-testkit-jdk25").toFile()
+        val executable = File(fakeHome, "bin").apply { mkdirs() }.resolve(
+            if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "java.exe" else "java",
+        ).apply { writeText("java-sentinel") }
+
+        val resolved = JavaRuntimeSelector.requiredExecutableForMajor(25) { name ->
+            if (name == "MC_TESTKIT_JAVA_HOME_25") fakeHome.absolutePath else null
+        }
+
+        assertEquals(executable.absolutePath, resolved)
+    }
+
+    @Test
+    @DisplayName("显式 Java 主版本缺少专属环境变量时应立即中文失败")
+    fun requiredExecutableForMajorRejectsMissingDedicatedEnvironmentVariable() {
+        val exception = assertFailsWith<IllegalStateException> {
+            JavaRuntimeSelector.requiredExecutableForMajor(25) { null }
+        }
+
+        assertTrue(exception.message!!.contains("MC_TESTKIT_JAVA_HOME_25"))
+        assertTrue(exception.message!!.contains("Java 25"))
     }
 }

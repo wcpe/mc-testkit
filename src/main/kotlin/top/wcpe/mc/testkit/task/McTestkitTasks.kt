@@ -21,6 +21,7 @@ import top.wcpe.mc.testkit.config.VELOCITY_FORWARDING_SECRET_FILE
 import top.wcpe.mc.testkit.config.bungeeClusterProxyConfigYml
 import top.wcpe.mc.testkit.config.bungeeProxyConfigYml
 import top.wcpe.mc.testkit.config.bungeeStressProxyConfigYml
+import top.wcpe.mc.testkit.config.velocityForwardingModeForBackend
 import top.wcpe.mc.testkit.config.velocityProxyConfigToml
 import top.wcpe.mc.testkit.contract.McTestkitContract
 import top.wcpe.mc.testkit.contract.McTestkitDefaults
@@ -62,6 +63,10 @@ private const val BACKEND_WAIT_TIMEOUT_SECONDS = 600L
 
 /** 结果文件写出后，给后端 JVM 优雅自停的窗口（秒）；到时仍未退则强杀（不空等到上限）。 */
 private const val BACKEND_SELF_STOP_GRACE_SECONDS = 30L
+
+/** 后端与代理都需关闭 ANSI，消费者节点参数在其后、Java agent 最后追加。 */
+private val FRAMEWORK_JVM_ARGS =
+    listOf("-Dterminal.ansi=false", "-Dnet.kyori.ansi.colorLevel=none", "-Dtaboolib.debug=true")
 
 /**
  * 起 bot 前等后端 / 代理端口可连的就绪门上限（秒）。
@@ -216,7 +221,11 @@ object McTestkitTasks {
                     listOf(backend),
                     if (includeProxy) listOf(requireNotNull(viaProxy)) else emptyList(),
                 )
+                clearPreviousScenarioResult(layoutOf(project).resultsDir, scenario.name)
                 prepareRunDirectory(project, backend, layoutOf(project).runDir, preparedRuntime!!.backends.getValue(backend.name))
+                if (viaProxy?.platform == ProxyPlatform.VELOCITY) {
+                    BackendVelocityConfig.apply(layoutOf(project).runDir, backend.version)
+                }
             }
         }
 
@@ -325,7 +334,13 @@ object McTestkitTasks {
                         BackendVelocityConfig.apply(layout.runDir, backend.version)
                     }
                     // ② 后台起代理（写 pid 供收尾）
-                    proxyProcess = startProxyBackground(project, proxy, backend, runtime.proxies.getValue(proxy.name))
+                    proxyProcess = startProxyBackground(
+                        project,
+                        proxy,
+                        backend,
+                        runtime.proxies.getValue(proxy.name),
+                        scenario.name,
+                    )
                     // ③ 起全部 bot：经代理端口进服，协议版本固定为后端版本（环境契约 FR-05；多 bot 各唯一名）
                     launchScenarioBots(
                         project,
@@ -399,7 +414,18 @@ object McTestkitTasks {
                     if (resultFile.exists()) resultFile.delete() // 清上轮结果，避免误判
 
                     // ① 每后端独立运行目录 prepare + BungeeCord 模式 + 后台起（同 SCENARIO / RESULT_FILE）
+                    val sameVersionPredecessors = sameVersionStartupPredecessors(
+                        clusterBackends.map { backend -> backend.name to backend.version },
+                    )
                     clusterBackends.forEach { backend ->
+                        sameVersionPredecessors[backend.name]?.let { predecessor ->
+                            val prior = clusterBackends.first { candidate -> candidate.name == predecessor }
+                            awaitPortOpen(project, prior.port, "同版本集群后端 ${prior.name}")
+                            copyRuntimeCaches(
+                                layout.clusterBackendRunDir(prior.name),
+                                layout.clusterBackendRunDir(backend.name),
+                            )
+                        }
                         val runDir = layout.clusterBackendRunDir(backend.name)
                         prepareRunDirectory(project, backend, runDir, runtime.backends.getValue(backend.name))
                         if (proxy.platform == ProxyPlatform.VELOCITY) {
@@ -416,6 +442,8 @@ object McTestkitTasks {
                         proxy,
                         clusterBackends,
                         runtime.proxies.getValue(proxy.name),
+                        scenario.name,
+                        resultFile,
                     )
                     // ②' 确定性就绪门：等全部后端 + 代理端口可连再起 bot（不靠 bot 盲重试赛慢启动，慢 CI 上稳）
                     clusterBackends.forEach { awaitPortOpen(project, it.port, "集群后端 ${it.name}") }
@@ -467,7 +495,7 @@ object McTestkitTasks {
             jar = jar,
             runDirectory = runDir,
             key = backend.name,
-            jvmArgs = listOf("-Dterminal.ansi=false", "-Dnet.kyori.ansi.colorLevel=none"),
+            jvmArgs = backendJvmArgs(project, backend),
             serverArgs = backendServerArgs(backend.version),
             environment = mergeNodeEnvironment(
                 backend.environment,
@@ -494,10 +522,12 @@ object McTestkitTasks {
         proxy: ResolvedProxy,
         clusterBackends: List<ResolvedBackend>,
         resources: ProxyRuntimeResources,
+        scenario: String? = null,
+        resultFile: File? = null,
     ): Process {
         val layout = layoutOf(project)
         val proxyRunDir = layout.proxyRunDir
-        val requestedVersion = proxyDownloadVersion(proxy.platform, clusterBackends.first().version)
+        val requestedVersion = proxyDownloadVersion(proxy, clusterBackends.first().version)
         stageProxyRuntime(
             proxyRunDir,
             resources,
@@ -514,7 +544,19 @@ object McTestkitTasks {
             jar = jar,
             runDirectory = proxyRunDir,
             key = proxy.name,
-            environment = mergeNodeEnvironment(proxy.environment, emptyMap()),
+            jvmArgs = proxyJvmArgs(project, proxy),
+            environment = mergeNodeEnvironment(
+                proxy.environment,
+                if (scenario != null && resultFile != null) {
+                    mapOf(
+                        McTestkitEnv.SCENARIO to scenario,
+                        McTestkitEnv.RESULT_FILE to resultFile.absolutePath,
+                    )
+                } else {
+                    emptyMap()
+                },
+            ),
+            javaPath = resolveProxyJava(project, proxy),
             logger = { project.logger.lifecycle("[mc-testkit] $it") },
         )
         layout.proxyPidFile(proxy.name).apply { parentFile?.mkdirs() }.writeText(process.pid().toString())
@@ -652,7 +694,7 @@ object McTestkitTasks {
                             project,
                             proxy,
                             bindings,
-                            stressBackends.first().version,
+                            proxyDownloadVersion(proxy, stressBackends.first().version),
                             runtime.proxies.getValue(proxy.name),
                         )
                     }
@@ -722,7 +764,9 @@ object McTestkitTasks {
             jar = jar,
             runDirectory = proxyRunDir,
             key = proxy.name,
+            jvmArgs = proxyJvmArgs(project, proxy),
             environment = mergeNodeEnvironment(proxy.environment, emptyMap()),
+            javaPath = resolveProxyJava(project, proxy),
             logger = { project.logger.lifecycle("[mc-testkit] $it") },
         )
         layout.proxyPidFile(proxy.name).apply { parentFile?.mkdirs() }.writeText(process.pid().toString())
@@ -1014,7 +1058,7 @@ object McTestkitTasks {
             jar = jar,
             runDirectory = runDir,
             key = backend.name,
-            jvmArgs = listOf("-Dterminal.ansi=false", "-Dnet.kyori.ansi.colorLevel=none"),
+            jvmArgs = backendJvmArgs(project, backend),
             serverArgs = backendServerArgs(backend.version),
             environment = mergeNodeEnvironment(
                 backend.environment,
@@ -1210,7 +1254,7 @@ object McTestkitTasks {
             jar = jar,
             runDirectory = runDir,
             key = backend.name,
-            jvmArgs = listOf("-Dterminal.ansi=false", "-Dnet.kyori.ansi.colorLevel=none"),
+            jvmArgs = backendJvmArgs(project, backend),
             serverArgs = backendServerArgs(backend.version),
             environment = mergeNodeEnvironment(
                 backend.environment,
@@ -1265,7 +1309,7 @@ object McTestkitTasks {
             jar = jar,
             runDirectory = runDir,
             key = backend.name,
-            jvmArgs = listOf("-Dterminal.ansi=false", "-Dnet.kyori.ansi.colorLevel=none"),
+            jvmArgs = backendJvmArgs(project, backend),
             serverArgs = backendServerArgs(backend.version),
             environment = mergeNodeEnvironment(
                 backend.environment,
@@ -1311,10 +1355,11 @@ object McTestkitTasks {
         proxy: ResolvedProxy,
         backend: ResolvedBackend,
         resources: ProxyRuntimeResources,
+        scenario: String? = null,
     ): Process {
         val layout = layoutOf(project)
         val proxyRunDir = layout.proxyRunDir
-        val requestedVersion = proxyDownloadVersion(proxy.platform, backend.version)
+        val requestedVersion = proxyDownloadVersion(proxy, backend.version)
         stageProxyRuntime(
             proxyRunDir,
             resources,
@@ -1331,7 +1376,17 @@ object McTestkitTasks {
             jar = jar,
             runDirectory = proxyRunDir,
             key = proxy.name,
-            environment = mergeNodeEnvironment(proxy.environment, emptyMap()),
+            jvmArgs = proxyJvmArgs(project, proxy),
+            environment = mergeNodeEnvironment(
+                proxy.environment,
+                scenario?.let {
+                    mapOf(
+                        McTestkitEnv.SCENARIO to it,
+                        McTestkitEnv.RESULT_FILE to File(layout.resultsDir, McTestkitResultFile.fileName(it)).absolutePath,
+                    )
+                } ?: emptyMap(),
+            ),
+            javaPath = resolveProxyJava(project, proxy),
             logger = { project.logger.lifecycle("[mc-testkit] $it") },
         )
         layout.proxyPidFile(proxy.name).apply { parentFile?.mkdirs() }.writeText(process.pid().toString())
@@ -1444,7 +1499,10 @@ object McTestkitTasks {
             version = protocolVersion,
         )
         // 业务 bot env（scenario { bot { env(...) } } 声明）作为追加项，可覆盖通用项
-        val environment = connection.toEnvironment(extraEnvironment = extraEnv) {
+        val receiptFile = File(layout.resultsDir, "bot-$key.receipt.jsonl")
+        val environment = connection.toEnvironment(extraEnvironment = extraEnv + mapOf(
+            McTestkitEnv.BOT_RECEIPT_FILE to receiptFile.absolutePath,
+        )) {
             project.providers.environmentVariable(it).orNull
         }
         return BotLauncher.launch(
@@ -1552,6 +1610,40 @@ object McTestkitTasks {
     private fun resolveBackendJava(project: Project, version: String): String =
         JavaRuntimeSelector.executable(version) { project.providers.environmentVariable(it).orNull }
 
+    /** 显式代理 Java 主版本必须由专属环境变量提供，未声明时保留当前 JVM 行为。 */
+    private fun resolveProxyJava(project: Project, proxy: ResolvedProxy): String? =
+        proxy.javaVersion?.let { javaVersion ->
+            JavaRuntimeSelector.requiredExecutableForMajor(javaVersion) {
+                project.providers.environmentVariable(it).orNull
+            }
+        }
+
+    /** 所有后端启动入口共用的 JVM 参数拼装，避免各任务路径漂移。 */
+    private fun backendJvmArgs(project: Project, backend: ResolvedBackend): List<String> =
+        composeNodeJvmArgs(
+            FRAMEWORK_JVM_ARGS,
+            backend.jvmArgs,
+            resolveNodeJavaAgents(
+                project.projectDir,
+                "后端",
+                backend.name,
+                backend.javaAgents,
+            ) { project.providers.environmentVariable(it).orNull },
+        )
+
+    /** 所有代理启动入口共用的 JVM 参数拼装，避免各任务路径漂移。 */
+    private fun proxyJvmArgs(project: Project, proxy: ResolvedProxy): List<String> =
+        composeNodeJvmArgs(
+            FRAMEWORK_JVM_ARGS,
+            proxy.jvmArgs,
+            resolveNodeJavaAgents(
+                project.projectDir,
+                "代理",
+                proxy.name,
+                proxy.javaAgents,
+            ) { project.providers.environmentVariable(it).orNull },
+        )
+
     /** 跨平台 npm 可执行名（Windows 为 `npm.cmd`）。 */
     private fun npmExecutable(): String =
         if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "npm.cmd" else "npm"
@@ -1572,6 +1664,7 @@ object McTestkitTasks {
                 runDirectory,
                 proxy.port,
                 listOf(backend.name to "127.0.0.1:${backend.port}"),
+                backend.version,
             )
         }
     }
@@ -1588,7 +1681,13 @@ object McTestkitTasks {
             ProxyPlatform.WATERFALL, ProxyPlatform.BUNGEECORD -> File(runDirectory, "config.yml").writeText(
                 bungeeClusterProxyConfigYml(proxy.port, servers),
             )
-            ProxyPlatform.VELOCITY -> writeVelocityProxyFiles(project, runDirectory, proxy.port, servers)
+            ProxyPlatform.VELOCITY -> writeVelocityProxyFiles(
+                project,
+                runDirectory,
+                proxy.port,
+                servers,
+                backends.first().version,
+            )
         }
     }
 
@@ -1609,8 +1708,8 @@ object McTestkitTasks {
      * 其余（Waterfall/BungeeCord）取后端 MC 版本（Waterfall 由 provision 层再归一为 major.minor）。
      * env `*_VERSION` 覆盖在 provision 层仍优先（见 ServerJarProvisioner.resolveVersion）。
      */
-    private fun proxyDownloadVersion(platform: ProxyPlatform, backendVersion: String): String =
-        if (platform == ProxyPlatform.VELOCITY) McTestkitDefaults.VELOCITY_VERSION else backendVersion
+    private fun proxyDownloadVersion(proxy: ResolvedProxy, backendVersion: String): String =
+        proxy.version ?: if (proxy.platform == ProxyPlatform.VELOCITY) McTestkitDefaults.VELOCITY_VERSION else backendVersion
 
     /** Waterfall 旧模块自下载仍打已 sunset 的 v2 API，启动前用 Fill v3 预置模块。 */
     private fun provisionWaterfallModulesIfNeeded(
@@ -1633,8 +1732,8 @@ object McTestkitTasks {
     }
 
     /**
-     * 写 Velocity 代理运行目录的两个文件：`velocity.toml`（modern forwarding + N server + try）+
-     * `forwarding.secret`（共享 secret，与后端 paper-global velocity.secret 同值，见 [BackendVelocityConfig]）。
+     * 写 Velocity 代理运行目录的两个文件：`velocity.toml`（按后端版本选择 forwarding + N server + try）+
+     * `forwarding.secret`（modern 模式与后端共享；legacy 保留该文件但不使用）。
      *
      * @param servers 有序 (server 名, 地址) 列表，首个为默认落地服、全部入 try 作 fallback（FR-15）。
      */
@@ -1643,8 +1742,11 @@ object McTestkitTasks {
         proxyRunDir: File,
         listenPort: Int,
         servers: List<Pair<String, String>>,
+        backendVersion: String,
     ) {
-        File(proxyRunDir, "velocity.toml").writeText(velocityProxyConfigToml(listenPort, servers))
+        File(proxyRunDir, "velocity.toml").writeText(
+            velocityProxyConfigToml(listenPort, servers, velocityForwardingModeForBackend(backendVersion)),
+        )
         File(proxyRunDir, VELOCITY_FORWARDING_SECRET_FILE).writeText(McTestkitDefaults.VELOCITY_FORWARDING_SECRET)
         project.logger.lifecycle(
             "[mc-testkit] 已写 Velocity 代理配置：velocity.toml + $VELOCITY_FORWARDING_SECRET_FILE" +
@@ -1666,5 +1768,32 @@ object McTestkitTasks {
         } finally {
             if (pidFile.exists()) pidFile.delete()
         }
+    }
+}
+
+/** 每次单后端场景启动前清理旧结果，结果文件只能代表当前进程。 */
+internal fun clearPreviousScenarioResult(resultsDir: File, scenario: String) {
+    val resultFile = File(resultsDir, McTestkitResultFile.fileName(scenario))
+    if (resultFile.exists() && !resultFile.delete()) {
+        throw GradleException("无法删除上轮场景结果文件：${resultFile.absolutePath}")
+    }
+}
+
+/** 同一 Minecraft 版本的后端首次启动会准备共享运行库，后续节点须等前一节点就绪。 */
+internal fun sameVersionStartupPredecessors(nodes: List<Pair<String, String>>): Map<String, String> {
+    val latestByVersion = LinkedHashMap<String, String>()
+    val predecessors = LinkedHashMap<String, String>()
+    nodes.forEach { (name, version) ->
+        latestByVersion[version]?.let { predecessor -> predecessors[name] = predecessor }
+        latestByVersion[version] = name
+    }
+    return predecessors
+}
+
+/** 将已就绪后端的运行库复制给同版本后继节点，避免 Paper 重复下载同一官方基础 jar。 */
+internal fun copyRuntimeCaches(sourceRunDirectory: File, targetRunDirectory: File) {
+    RunLayout.PRESERVED_RUNTIME_CACHE_ENTRIES.forEach { name ->
+        val source = File(sourceRunDirectory, name)
+        if (source.exists()) source.copyRecursively(File(targetRunDirectory, name), overwrite = true)
     }
 }

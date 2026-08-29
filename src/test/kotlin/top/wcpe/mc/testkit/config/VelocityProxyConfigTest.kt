@@ -2,6 +2,7 @@ package top.wcpe.mc.testkit.config
 
 import org.junit.jupiter.api.DisplayName
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -53,6 +54,26 @@ class VelocityProxyConfigTest {
             tryBlock.indexOf("\"s1\"") < tryBlock.indexOf("\"s2\""),
             "try 顺序应为 s1 在前（默认服）、s2 在后（fallback）：\n$toml",
         )
+    }
+
+    @Test
+    @DisplayName("1.18 后端应选择 legacy forwarding，1.20 后端保持 modern")
+    fun backendVersionSelectsForwardingMode() {
+        assertEquals(VelocityForwardingMode.LEGACY, velocityForwardingModeForBackend("1.18.1"))
+        assertEquals(VelocityForwardingMode.MODERN, velocityForwardingModeForBackend("1.20.1"))
+    }
+
+    @Test
+    @DisplayName("legacy forwarding 配置不得误写 modern")
+    fun legacyForwardingConfigUsesLegacyMode() {
+        val toml = velocityProxyConfigToml(
+            listenPort = 25577,
+            servers = listOf("s1" to "127.0.0.1:25565"),
+            forwardingMode = VelocityForwardingMode.LEGACY,
+        )
+
+        assertTrue(toml.contains("player-info-forwarding-mode = \"legacy\""), "应为 legacy forwarding：\n$toml")
+        assertTrue(!toml.contains("player-info-forwarding-mode = \"modern\""), "legacy 不应误写 modern：\n$toml")
     }
 
     @Test

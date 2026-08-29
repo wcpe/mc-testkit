@@ -80,10 +80,14 @@ fun cleanRunDirPreservingRuntimeCaches(runDir: File) {
     if (!runDir.exists()) {
         return
     }
-    runDir.listFiles()?.forEach { child ->
-        if (child.name in RunLayout.PRESERVED_RUNTIME_CACHE_ENTRIES) {
-            return@forEach
-        }
-        child.deleteRecursively()
+    // Windows 下刚被强杀的服务端可能仍持有旧运行文件句柄(杀后 Defender 等仍可能短暂持有)；
+    // 对删除做有限重试,窗口与覆盖写一致取 60s。
+    val deadline = System.currentTimeMillis() + 60_000L
+    while (System.currentTimeMillis() < deadline) {
+        val remaining = runDir.listFiles()?.filter { it.name !in RunLayout.PRESERVED_RUNTIME_CACHE_ENTRIES } ?: return
+        if (remaining.isEmpty()) return
+        remaining.forEach { child -> child.deleteRecursively() }
+        if (remaining.none { it.exists() }) return
+        Thread.sleep(250)
     }
 }

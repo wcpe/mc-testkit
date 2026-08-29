@@ -45,6 +45,7 @@ object TopologyResolver {
     ): Topology {
         validateNames(backends, proxies)
         validateNodeEnvironments(backends, proxies)
+        validateNodeRuntimeDeclarations(proxies)
         validateRoutes(backends, proxies)
         validateScenarioRefs(backends, proxies, scenarios)
         validateServeRefs(backends, proxies, serves)
@@ -55,6 +56,8 @@ object TopologyResolver {
                 platform = spec.platform,
                 version = spec.version,
                 port = spec.port ?: (TopologyDefaults.BACKEND_BASE_PORT + index),
+                jvmArgs = spec.jvmArgs,
+                javaAgents = spec.javaAgents,
                 environment = spec.environment,
                 templateDirectory = spec.templateDirectoryDeclaration,
             )
@@ -63,9 +66,13 @@ object TopologyResolver {
             ResolvedProxy(
                 name = spec.name,
                 platform = spec.platform,
+                version = spec.version?.trim()?.takeIf { it.isNotEmpty() },
+                javaVersion = spec.javaVersion,
                 port = spec.port ?: (TopologyDefaults.PROXY_BASE_PORT + index),
                 routes = spec.routes,
                 plugins = spec.plugins,
+                jvmArgs = spec.jvmArgs,
+                javaAgents = spec.javaAgents,
                 environment = spec.environment,
                 templateDirectory = spec.templateDirectoryDeclaration,
             )
@@ -74,6 +81,15 @@ object TopologyResolver {
         validatePorts(resolvedBackends, resolvedProxies)
 
         return Topology(backends = resolvedBackends, proxies = resolvedProxies)
+    }
+
+    /** 显式 Java 主版本必须为正数，避免把明显错误的声明拖到启动期。 */
+    private fun validateNodeRuntimeDeclarations(proxies: List<ProxySpec>) {
+        proxies.forEach { proxy ->
+            if (proxy.javaVersion != null && proxy.javaVersion!! <= 0) {
+                throw GradleException("mcTestkit 代理「${proxy.name}」的 javaVersion 必须为正整数。")
+            }
+        }
     }
 
     /** 校验：后端名 / 代理名非空、各自唯一、且后端名与代理名不相撞（二者共用 routesTo / via 引用命名空间）。 */

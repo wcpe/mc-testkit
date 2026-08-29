@@ -6,12 +6,14 @@ import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
 import org.yaml.snakeyaml.Yaml
 import java.io.File
+import java.lang.instrument.Instrumentation
 import java.net.ServerSocket
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.util.Properties
 import java.util.jar.Attributes
+import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import java.util.jar.Manifest
 import kotlin.test.Test
@@ -25,10 +27,13 @@ class NodeRuntimeInjectionFunctionalTest {
     @TempDir
     lateinit var projectDir: File
 
+    private val runtimePorts by lazy(::allocateRuntimePorts)
+
     @Test
     @DisplayName("新 DSL 应在全部启动路径完成节点暂存与环境接线")
     fun wireNodeRuntimeInjectionAcrossAllLaunchPaths() {
         val runtimeJar = createProbeJar(file("runtime-probe-sentinel.jar"))
+        val agentJar = createProbeAgentJar(file("runtime-probe-agent.jar"))
         file("backend-plugin-sentinel.jar").writeText("backend-plugin-sentinel")
         file("proxy-plugin-sentinel.jar").writeText("proxy-plugin-sentinel")
         prepareTemplates()
@@ -37,6 +42,7 @@ class NodeRuntimeInjectionFunctionalTest {
         val environment = System.getenv() + mapOf(
             "MC_TESTKIT_E2E_PAPER_JAR" to runtimeJar.absolutePath,
             "MC_TESTKIT_E2E_WATERFALL_JAR" to runtimeJar.absolutePath,
+            "NODE_RUNTIME_AGENT_JAR" to agentJar.absolutePath,
             "MC_TESTKIT_E2E_SERVER_TEMPLATE_DIR" to file("legacy-template-sentinel").absolutePath,
             "MC_TESTKIT_E2E_BACKEND_NAME" to "host-backend-sentinel",
             "NODE_SENTINEL" to "host-node-sentinel",
@@ -52,46 +58,67 @@ class NodeRuntimeInjectionFunctionalTest {
         assertEquals(TaskOutcome.SUCCESS, run("e2eClusterSentinelCluster", environment).task(":e2eClusterSentinelCluster")?.outcome)
         assertEquals("cluster-one-node-sentinel", probe("build/mc-testkit/run-cluster-one-sentinel")["node-sentinel"])
         assertEquals("cluster-two-node-sentinel", probe("build/mc-testkit/run-cluster-two-sentinel")["node-sentinel"])
+        assertEquals("cluster-one-jvm-sentinel", probe("build/mc-testkit/run-cluster-one-sentinel")["jvm-sentinel"])
+        assertEquals("cluster-two-jvm-sentinel", probe("build/mc-testkit/run-cluster-two-sentinel")["jvm-sentinel"])
+        assertEquals("enabled", probe("build/mc-testkit/run-cluster-one-sentinel")["agent-sentinel"])
+        assertEquals("enabled", probe("build/mc-testkit/run-cluster-two-sentinel")["agent-sentinel"])
+        assertEquals(
+            "cluster-sentinel",
+            probe("build/mc-testkit/run-proxy")["scenario"],
+            "集群代理应收到场景标识，供代理侧验收桩写出结果",
+        )
         assertBungeeAuthority(
             linkedMapOf(
-                "cluster-one-sentinel" to "127.0.0.1:25566",
-                "cluster-two-sentinel" to "127.0.0.1:25567",
+                "cluster-one-sentinel" to "127.0.0.1:${runtimePorts.clusterOne}",
+                "cluster-two-sentinel" to "127.0.0.1:${runtimePorts.clusterTwo}",
             ),
-            listOf(25577 to listOf("cluster-one-sentinel", "cluster-two-sentinel")),
+            listOf(runtimePorts.proxy to listOf("cluster-one-sentinel", "cluster-two-sentinel")),
         )
 
         assertEquals(TaskOutcome.SUCCESS, run("e2eLoadSentinelStress", environment).task(":e2eLoadSentinelStress")?.outcome)
         assertEquals("cluster-one-node-sentinel", probe("build/mc-testkit/run-cluster-one-sentinel")["node-sentinel"])
         assertEquals("proxy-node-sentinel", probe("build/mc-testkit/run-proxy")["node-sentinel"])
+        assertEquals("cluster-one-jvm-sentinel", probe("build/mc-testkit/run-cluster-one-sentinel")["jvm-sentinel"])
+        assertEquals("proxy-jvm-sentinel", probe("build/mc-testkit/run-proxy")["jvm-sentinel"])
+        assertEquals("enabled", probe("build/mc-testkit/run-cluster-one-sentinel")["agent-sentinel"])
+        assertEquals("enabled", probe("build/mc-testkit/run-proxy")["agent-sentinel"])
         assertBungeeAuthority(
             linkedMapOf(
-                "cluster-one-sentinel" to "127.0.0.1:25566",
-                "cluster-two-sentinel" to "127.0.0.1:25567",
+                "cluster-one-sentinel" to "127.0.0.1:${runtimePorts.clusterOne}",
+                "cluster-two-sentinel" to "127.0.0.1:${runtimePorts.clusterTwo}",
             ),
             listOf(
-                25577 to listOf("cluster-one-sentinel"),
-                25578 to listOf("cluster-two-sentinel"),
+                runtimePorts.proxy to listOf("cluster-one-sentinel"),
+                runtimePorts.stressProxy to listOf("cluster-two-sentinel"),
             ),
         )
 
         assertEquals(TaskOutcome.SUCCESS, run("serveDevSentinel", environment).task(":serveDevSentinel")?.outcome)
         assertEquals("serve-one-node-sentinel", probe("build/mc-testkit/run")["node-sentinel"])
         assertEquals("__mc_testkit_serve__", probe("build/mc-testkit/run")["scenario"])
+        assertEquals("serve-one-jvm-sentinel", probe("build/mc-testkit/run")["jvm-sentinel"])
+        assertEquals("enabled", probe("build/mc-testkit/run")["agent-sentinel"])
         assertBungeeAuthority(
-            linkedMapOf("backend" to "127.0.0.1:25568"),
-            listOf(25577 to listOf("backend")),
+            linkedMapOf("backend" to "127.0.0.1:${runtimePorts.serveOne}"),
+            listOf(runtimePorts.proxy to listOf("backend")),
         )
 
         assertEquals(TaskOutcome.SUCCESS, run("serveClusterDevSentinel", environment).task(":serveClusterDevSentinel")?.outcome)
         assertEquals("serve-one-node-sentinel", probe("build/mc-testkit/run-serve-one-sentinel")["node-sentinel"])
         assertEquals("serve-two-node-sentinel", probe("build/mc-testkit/run-serve-two-sentinel")["node-sentinel"])
         assertEquals("proxy-node-sentinel", probe("build/mc-testkit/run-proxy")["node-sentinel"])
+        assertEquals("serve-one-jvm-sentinel", probe("build/mc-testkit/run-serve-one-sentinel")["jvm-sentinel"])
+        assertEquals("serve-two-jvm-sentinel", probe("build/mc-testkit/run-serve-two-sentinel")["jvm-sentinel"])
+        assertEquals("proxy-jvm-sentinel", probe("build/mc-testkit/run-proxy")["jvm-sentinel"])
+        assertEquals("enabled", probe("build/mc-testkit/run-serve-one-sentinel")["agent-sentinel"])
+        assertEquals("enabled", probe("build/mc-testkit/run-serve-two-sentinel")["agent-sentinel"])
+        assertEquals("enabled", probe("build/mc-testkit/run-proxy")["agent-sentinel"])
         assertBungeeAuthority(
             linkedMapOf(
-                "serve-one-sentinel" to "127.0.0.1:25568",
-                "serve-two-sentinel" to "127.0.0.1:25569",
+                "serve-one-sentinel" to "127.0.0.1:${runtimePorts.serveOne}",
+                "serve-two-sentinel" to "127.0.0.1:${runtimePorts.serveTwo}",
             ),
-            listOf(25577 to listOf("serve-one-sentinel", "serve-two-sentinel")),
+            listOf(runtimePorts.proxy to listOf("serve-one-sentinel", "serve-two-sentinel")),
         )
     }
 
@@ -277,15 +304,17 @@ class NodeRuntimeInjectionFunctionalTest {
         assertEquals("host-backend-sentinel", proxyProbe["backend-name"])
         assertTrue(file("build/mc-testkit/run/node-template-sentinel.txt").isFile)
         assertFalse(file("build/mc-testkit/run/legacy-template-sentinel.txt").exists())
-        assertEquals("25565", serverProperties.getProperty("server-port"))
+        assertEquals(runtimePorts.single.toString(), serverProperties.getProperty("server-port"))
+        assertEquals("single-jvm-sentinel", probe("build/mc-testkit/run")["jvm-sentinel"])
+        assertEquals("enabled", probe("build/mc-testkit/run")["agent-sentinel"])
         assertTrue(file("build/mc-testkit/run/plugins/plugin-under-test.jar").isFile)
         assertTrue(file("build/mc-testkit/run-proxy/plugins/proxy-plugin-sentinel.jar").isFile)
         assertFalse(file("build/mc-testkit/run-proxy/plugins/plugin-under-test.jar").exists())
         assertTrue(file("build/mc-testkit/run-proxy/proxy-template-sentinel.txt").isFile)
         assertFalse(file("build/mc-testkit/run-proxy/stale-sentinel.txt").exists())
         assertBungeeAuthority(
-            linkedMapOf("backend" to "127.0.0.1:25565"),
-            listOf(25577 to listOf("backend")),
+            linkedMapOf("backend" to "127.0.0.1:${runtimePorts.single}"),
+            listOf(runtimePorts.proxy to listOf("backend")),
         )
     }
 
@@ -325,42 +354,52 @@ class NodeRuntimeInjectionFunctionalTest {
             plugins { id("top.wcpe.mc-testkit") }
             mcTestkit {
                 backend("single-sentinel") {
-                    port = 25565
+                    port = ${runtimePorts.single}
                     env("NODE_SENTINEL", "single-node-sentinel")
-                    env("PROBE_PORTS", "25565")
+                    jvmArg("-Dnode.runtime.sentinel=single-jvm-sentinel")
+                    javaAgent("NODE_RUNTIME_AGENT_JAR")
+                    env("PROBE_PORTS", "${runtimePorts.single}")
                     env("PROBE_EXIT_MILLIS", "500")
                     templateDirectory("backend-template-sentinel")
                 }
                 backend("cluster-one-sentinel") {
-                    port = 25566
+                    port = ${runtimePorts.clusterOne}
                     env("NODE_SENTINEL", "cluster-one-node-sentinel")
-                    env("PROBE_PORTS", "25566")
+                    jvmArg("-Dnode.runtime.sentinel=cluster-one-jvm-sentinel")
+                    javaAgent("NODE_RUNTIME_AGENT_JAR")
+                    env("PROBE_PORTS", "${runtimePorts.clusterOne}")
                     env("PROBE_EXIT_MILLIS", "3000")
                     templateDirectory("backend-template-sentinel")
                 }
                 backend("cluster-two-sentinel") {
-                    port = 25567
+                    port = ${runtimePorts.clusterTwo}
                     env("NODE_SENTINEL", "cluster-two-node-sentinel")
-                    env("PROBE_PORTS", "25567")
+                    jvmArg("-Dnode.runtime.sentinel=cluster-two-jvm-sentinel")
+                    javaAgent("NODE_RUNTIME_AGENT_JAR")
+                    env("PROBE_PORTS", "${runtimePorts.clusterTwo}")
                     env("PROBE_EXIT_MILLIS", "3000")
                     templateDirectory("backend-template-sentinel")
                 }
                 backend("serve-one-sentinel") {
-                    port = 25568
+                    port = ${runtimePorts.serveOne}
                     env("NODE_SENTINEL", "serve-one-node-sentinel")
-                    env("PROBE_PORTS", "25568")
+                    jvmArg("-Dnode.runtime.sentinel=serve-one-jvm-sentinel")
+                    javaAgent("NODE_RUNTIME_AGENT_JAR")
+                    env("PROBE_PORTS", "${runtimePorts.serveOne}")
                     env("PROBE_EXIT_MILLIS", "2000")
                     templateDirectory("backend-template-sentinel")
                 }
                 backend("serve-two-sentinel") {
-                    port = 25569
+                    port = ${runtimePorts.serveTwo}
                     env("NODE_SENTINEL", "serve-two-node-sentinel")
-                    env("PROBE_PORTS", "25569")
+                    jvmArg("-Dnode.runtime.sentinel=serve-two-jvm-sentinel")
+                    javaAgent("NODE_RUNTIME_AGENT_JAR")
+                    env("PROBE_PORTS", "${runtimePorts.serveTwo}")
                     env("PROBE_EXIT_MILLIS", "5000")
                     templateDirectory("backend-template-sentinel")
                 }
                 proxy("px") {
-                    port = 25577
+                    port = ${runtimePorts.proxy}
                     routesTo(
                         "single-sentinel",
                         "cluster-one-sentinel",
@@ -370,7 +409,9 @@ class NodeRuntimeInjectionFunctionalTest {
                     )
                     plugin("proxy-plugin-sentinel.jar")
                     env("NODE_SENTINEL", "proxy-node-sentinel")
-                    env("PROBE_PORTS", "25577,25578")
+                    jvmArg("-Dnode.runtime.sentinel=proxy-jvm-sentinel")
+                    javaAgent("NODE_RUNTIME_AGENT_JAR")
+                    env("PROBE_PORTS", "${runtimePorts.proxy},${runtimePorts.stressProxy}")
                     env("PROBE_EXIT_MILLIS", "3000")
                     templateDirectory("proxy-template-sentinel")
                 }
@@ -435,6 +476,25 @@ class NodeRuntimeInjectionFunctionalTest {
         return target
     }
 
+    /** 生成只含 premain 入口的极小 agent，用于验证所有节点路径实际接收了 `-javaagent`。 */
+    private fun createProbeAgentJar(target: File): File {
+        val resourceName = NodeRuntimeProbeAgent::class.java.name.replace('.', '/') + ".class"
+        val classBytes = requireNotNull(NodeRuntimeProbeAgent::class.java.classLoader.getResourceAsStream(resourceName)) {
+            "找不到测试 Java agent 类：$resourceName"
+        }.use { it.readBytes() }
+        val manifest = Manifest().apply {
+            mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
+            mainAttributes.putValue("Premain-Class", NodeRuntimeProbeAgent::class.java.name)
+        }
+        target.parentFile?.mkdirs()
+        JarOutputStream(target.outputStream(), manifest).use { output ->
+            output.putNextEntry(JarEntry(resourceName))
+            output.write(classBytes)
+            output.closeEntry()
+        }
+        return target
+    }
+
     private fun codeSourceFile(clazz: Class<*>): File = File(clazz.protectionDomain.codeSource.location.toURI())
 
     private fun write(name: String, text: String) {
@@ -442,6 +502,35 @@ class NodeRuntimeInjectionFunctionalTest {
     }
 
     private fun file(relativePath: String): File = File(projectDir, relativePath).apply { parentFile?.mkdirs() }
+
+    /** 为需要真实监听的功能测试分配一组临时端口，避免与开发机正在运行的服务器冲突。 */
+    private fun allocateRuntimePorts(): RuntimePorts {
+        val ports = linkedSetOf<Int>()
+        while (ports.size < 7) {
+            ServerSocket(0).use { socket -> ports += socket.localPort }
+        }
+        val values = ports.toList()
+        return RuntimePorts(
+            single = values[0],
+            clusterOne = values[1],
+            clusterTwo = values[2],
+            serveOne = values[3],
+            serveTwo = values[4],
+            proxy = values[5],
+            stressProxy = values[6],
+        )
+    }
+
+    /** 功能测试各节点专用端口，避免复用固定业务端口。 */
+    private data class RuntimePorts(
+        val single: Int,
+        val clusterOne: Int,
+        val clusterTwo: Int,
+        val serveOne: Int,
+        val serveTwo: Int,
+        val proxy: Int,
+        val stressProxy: Int,
+    )
 }
 
 /** 测试用极小节点进程：记录环境、监听哨兵端口、按框架结果路径写 PASS 后短暂存活。 */
@@ -467,6 +556,8 @@ object NodeRuntimeProbeMain {
     private fun writeProbeFile() {
         val content = buildString {
             appendLine("node-sentinel=${System.getenv("NODE_SENTINEL").orEmpty()}")
+            appendLine("jvm-sentinel=${System.getProperty("node.runtime.sentinel").orEmpty()}")
+            appendLine("agent-sentinel=${System.getProperty("node.runtime.agent.sentinel").orEmpty()}")
             appendLine("backend-name=${System.getenv("MC_TESTKIT_E2E_BACKEND_NAME").orEmpty()}")
             appendLine("scenario=${System.getenv("MC_TESTKIT_E2E_SCENARIO").orEmpty()}")
         }
@@ -488,5 +579,14 @@ object NodeRuntimeProbeMain {
             StandardOpenOption.CREATE,
             StandardOpenOption.TRUNCATE_EXISTING,
         )
+    }
+}
+
+/** 测试 Java agent：仅设置系统属性，供子进程证明 premain 确实执行。 */
+object NodeRuntimeProbeAgent {
+    @JvmStatic
+    @Suppress("UNUSED_PARAMETER")
+    fun premain(arguments: String?, instrumentation: Instrumentation) {
+        System.setProperty("node.runtime.agent.sentinel", "enabled")
     }
 }

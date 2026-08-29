@@ -3,13 +3,14 @@ package top.wcpe.mc.testkit.provision
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.Properties
 import java.util.jar.JarFile
 
 /**
  * 按 平台 + 版本 解析并缓存 jar（FR-02 下载核心）。
  *
  * 流程：
- * 1. 定构建号——PaperMC 平台取版本的最新构建；BungeeCord 取最新成功 Jenkins 构建。
+ * 1. 定构建号——PaperMC 平台取版本的最新构建；BungeeCord 取最新成功 Jenkins 构建；Spigot 固定版本走 GetBukkit。
  * 2. 缓存命中且本地 hash 与记录一致 → 直接复用，不发下载。
  * 3. 否则下载到临时文件 → PaperMC 校验远端 sha256 / BungeeCord 校验"结构合法 jar" → 移入缓存。
  *
@@ -40,9 +41,42 @@ internal class JarProvisionService(
     fun resolve(platform: ProvisionPlatform, version: String?, logger: (String) -> Unit = {}): File {
         return if (platform.usesPaperApi) {
             resolveViaPaper(platform, requireVersion(platform, version), logger)
+        } else if (platform.usesGetBukkit) {
+            resolveViaGetBukkit(platform, requireVersion(platform, version), logger)
         } else {
             resolveBungeeCord(platform, logger)
         }
+    }
+
+    /** 下载 Spigot 固定版本构件，并把来源、版本和本地 SHA-256 写到同目录溯源文件。 */
+    private fun resolveViaGetBukkit(platform: ProvisionPlatform, version: String, logger: (String) -> Unit): File {
+        val cached = cache.jarFile(platform, version, GETBUKKIT_BUILD)
+        val provenance = File(cached.parentFile, PROVENANCE_FILE)
+        val sources = platform.downloadUrls(version)
+        if (cached.isFile && provenanceMatches(provenance, sources, version, cached)) {
+            logger("命中缓存：${platform.id} $version（已校验来源与本地 SHA-256）")
+            return cached
+        }
+        cached.delete()
+        provenance.delete()
+        val failures = mutableListOf<String>()
+        sources.forEachIndexed { index, source ->
+            val temp = createTempJar(cached, platform, GETBUKKIT_BUILD)
+            try {
+                logger("下载 ${platform.id} $version（公共源 ${index + 1}/${sources.size}）…")
+                download(source, temp, logger)
+                requireValidJar(temp, platform, GETBUKKIT_BUILD)
+                val resolved = moveIntoCache(temp, cached)
+                writeProvenance(provenance, source, version, resolved.sha256())
+                logger("已记录 ${platform.id} 构件来源、版本与 SHA-256：${provenance.absolutePath}")
+                return resolved
+            } catch (exception: Exception) {
+                failures += "${source.substringBefore('/', "来源")}: ${exception.message}"
+            } finally {
+                temp.delete()
+            }
+        }
+        throw IllegalStateException("下载 ${platform.id} $version 的全部公共构件源失败：${failures.joinToString("；")}")
     }
 
     /** PaperMC 平台（Paper/Folia/Velocity/Waterfall）：取最新构建 → 命中复用 / 校验 sha256 下载。 */
@@ -101,6 +135,27 @@ internal class JarProvisionService(
         }
     }
 
+    /** 命中缓存时重新核对溯源信息与当前文件哈希，防止手工替换后误用。 */
+    private fun provenanceMatches(provenance: File, sources: List<String>, version: String, file: File): Boolean = runCatching {
+        if (!provenance.isFile) return false
+        val values = Properties().apply { provenance.inputStream().use(::load) }
+        values.getProperty(KEY_SOURCE) in sources && values.getProperty(KEY_VERSION) == version &&
+            values.getProperty(KEY_SHA256) == file.sha256()
+    }.getOrDefault(false)
+
+    /** 溯源文件只存公开来源与构件校验值，不含凭据。 */
+    private fun writeProvenance(provenance: File, source: String, version: String, sha256: String) {
+        provenance.parentFile?.mkdirs()
+        provenance.outputStream().use { output ->
+            Properties().apply {
+                setProperty(KEY_SOURCE, source)
+                setProperty(KEY_VERSION, version)
+                setProperty(KEY_SHA256, sha256)
+                store(output, "mc-testkit 外部构件溯源")
+            }
+        }
+    }
+
     /**
      * 将临时文件**原子**移入缓存目标（覆盖已存在）。temp 与 destination 同目录（见 [createTempJar]），
      * 故 [StandardCopyOption.ATOMIC_MOVE] 走同卷原子重命名——并发读者只会看到「无文件」或「完整文件」，
@@ -131,5 +186,13 @@ internal class JarProvisionService(
     private fun requireVersion(platform: ProvisionPlatform, version: String?): String {
         require(!version.isNullOrBlank()) { "平台 ${platform.id} 需要指定版本号才能下载。" }
         return version
+    }
+
+    private companion object {
+        private const val GETBUKKIT_BUILD = 0
+        private const val PROVENANCE_FILE = "source.properties"
+        private const val KEY_SOURCE = "source"
+        private const val KEY_VERSION = "version"
+        private const val KEY_SHA256 = "sha256"
     }
 }

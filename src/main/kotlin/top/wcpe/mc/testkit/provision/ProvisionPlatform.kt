@@ -5,9 +5,8 @@ import top.wcpe.mc.testkit.contract.McTestkitEnv
 /**
  * P1 五平台 → 下载源 + 环境变量覆盖名 的映射（内部用，FR-02）。
  *
- * 后端 Paper/Folia 与代理 Velocity/Waterfall 走 PaperMC 下载 API（同一端点、project 名不同）；
- * 代理 BungeeCord 走 SpigotMC Jenkins（无版本，仅构建号）。**只含 P1 范围**——不预置
- * Spigot/Bukkit/Sponge 空壳（scope-discipline / ADR-0003）。本枚举不对外暴露：DSL 侧已有
+ * 后端 Paper/Folia 与代理 Velocity/Waterfall 走 PaperMC 下载 API；BungeeCord 走 SpigotMC Jenkins；
+ * Spigot 依次使用经授权的 GetBukkit 与 GitHub 构件镜像。本枚举不对外暴露：DSL 侧已有
  * `dsl/Platforms` 的对外平台枚举，本枚举只供下载模块内部解析下载源。
  *
  * @property id 平台标识（与 DSL 平台便捷量字面量一致，便于 FR-04 接线时按名映射）。
@@ -30,7 +29,10 @@ internal enum class ProvisionPlatform(
     /** Folia 后端（PaperMC API）。后端 jar 覆盖名取 [McTestkitEnv.FOLIA_JAR]。 */
     FOLIA("folia", "folia", McTestkitEnv.FOLIA_JAR, McTestkitEnv.MINECRAFT_VERSION),
 
-    /** Velocity 代理（PaperMC API）。版本为 Velocity 自有版本号（如 3.3.0-SNAPSHOT），非 MC 版本。 */
+    /** Spigot 后端（经授权的公共构件源；下载后记录实际来源、版本与本地 SHA-256）。 */
+    SPIGOT("spigot", null, McTestkitEnv.SPIGOT_JAR, McTestkitEnv.MINECRAFT_VERSION),
+
+    /** Velocity 代理（PaperMC API）。版本为 Velocity 自有版本号（如 3.5.1），非 MC 版本。 */
     VELOCITY("velocity", "velocity", McTestkitEnv.VELOCITY_JAR, McTestkitEnv.VELOCITY_VERSION),
 
     /** Waterfall 代理（PaperMC API）。PaperMC 仅按 major.minor 发布（如 1.20），故 [versionedByMajorMinor] = true。 */
@@ -42,6 +44,18 @@ internal enum class ProvisionPlatform(
 
     /** 是否经 PaperMC 下载 API（否则经 SpigotMC Jenkins）。 */
     val usesPaperApi: Boolean get() = paperProject != null
+
+    /** 是否使用固定版本的 Spigot 公共构件地址。 */
+    val usesGetBukkit: Boolean get() = this == SPIGOT
+
+    /** Spigot 的固定版本构件地址，首源不可达时按顺序回退。 */
+    fun downloadUrls(version: String): List<String> {
+        require(usesGetBukkit) { "平台 $id 不使用 GetBukkit 下载源。" }
+        return listOf(
+            "https://download.getbukkit.org/spigot/spigot-$version.jar",
+            "https://github.com/BaldGang/spigot-build/releases/latest/download/spigot-$version.jar",
+        )
+    }
 
     /**
      * 把"请求版本"归一为该平台下载源实际可用的版本。
@@ -57,12 +71,12 @@ internal enum class ProvisionPlatform(
         /**
          * 按平台 id 解析（大小写不敏感）。
          *
-         * @throws IllegalArgumentException 平台不在 P1 范围（如 spigot/bukkit/sponge）时抛中文错误。
+         * @throws IllegalArgumentException 平台不受支持时抛中文错误。
          */
         fun fromId(id: String): ProvisionPlatform =
             entries.firstOrNull { it.id.equals(id, ignoreCase = true) }
                 ?: throw IllegalArgumentException(
-                    "不支持的平台 '$id'：当前仅支持 Paper/Folia 后端与 Velocity/Waterfall/BungeeCord 代理（ADR-0003）。",
+                    "不支持的平台 '$id'：当前支持 Paper/Folia/Spigot 后端与 Velocity/Waterfall/BungeeCord 代理。",
                 )
 
         /**

@@ -93,7 +93,29 @@ class BackendVelocityConfigTest {
     // ── 版本感知（FR-21）──
 
     @Test
-    @DisplayName("1.16.5 应跳过 paper-global.yml（Velocity modern forwarding 仅 1.19+ 有效）")
+    @DisplayName("1.18.1 应切换 BungeeCord 后端模式并关闭 Velocity modern forwarding")
+    fun legacy118WritesBungeeCordSettingsToPaperYml() {
+        val runDir = tempRunDir()
+
+        BackendVelocityConfig.apply(runDir, "1.18.1", secret = "shared-velocity-secret")
+
+        val paper = File(runDir, "paper.yml").readText()
+        assertTrue(paper.contains("bungeecord:"), "paper.yml 应含 bungeecord 块，实际：\n$paper")
+        assertTrue(
+            Regex("(?ms)bungeecord:\\s*.*?online-mode:\\s*false").containsMatchIn(paper),
+            "bungeecord.online-mode 应为 false，实际：\n$paper",
+        )
+        assertTrue(
+            Regex("(?ms)velocity-support:\\s*.*?enabled:\\s*false").containsMatchIn(paper),
+            "legacy 模式应关闭 velocity-support，实际：\n$paper",
+        )
+        val spigot = File(runDir, "spigot.yml").readText()
+        assertTrue(Regex("(?ms)settings:\\s*.*?bungeecord:\\s*true").containsMatchIn(spigot), "spigot 应开启 bungeecord")
+        assertFalse(File(runDir, "config/paper-global.yml").exists(), "1.18.1 不应写 paper-global.yml")
+    }
+
+    @Test
+    @DisplayName("1.16.5 不应写入 Velocity modern forwarding 配置")
     fun modern1165SkipsPaperGlobalYml() {
         val runDir = tempRunDir()
         BackendVelocityConfig.apply(runDir, "1.16.5")
@@ -102,7 +124,8 @@ class BackendVelocityConfigTest {
         assertEquals("false", props.getProperty(ServerProperties.ONLINE_MODE))
         assertEquals(null, props.getProperty(ServerProperties.ENFORCE_SECURE_PROFILE), "1.16.5 不应有 enforce-secure-profile")
 
-        // Velocity modern forwarding 仅在 1.19+ 有效，旧版不应写 paper-global.yml
+        // FR13 仅为 1.17/1.18 补 paper.yml；更早版本不应写任一 Velocity 配置。
         assertFalse(File(runDir, "config/paper-global.yml").exists(), "1.16.5 不应写 paper-global.yml")
+        assertFalse(File(runDir, "paper.yml").exists(), "1.16.5 不应写 paper.yml")
     }
 }

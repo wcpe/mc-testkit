@@ -47,4 +47,16 @@ class ProvisionPlatformTest {
     fun preserveVelocityVersion() {
         assertEquals("3.3.0-SNAPSHOT", ProvisionPlatform.VELOCITY.downloadVersion("3.3.0-SNAPSHOT"))
     }
+
+    @Test
+    @DisplayName("Spigot 使用固定版本公共构件地址并保留回退顺序")
+    fun resolveSpigotGetBukkitSource() {
+        assertEquals(
+            listOf(
+                "https://download.getbukkit.org/spigot/spigot-1.20.1.jar",
+                "https://github.com/BaldGang/spigot-build/releases/latest/download/spigot-1.20.1.jar",
+            ),
+            ProvisionPlatform.SPIGOT.downloadUrls("1.20.1"),
+        )
+    }
 }

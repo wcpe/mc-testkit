@@ -2,6 +2,9 @@ package top.wcpe.mc.testkit.provision
 
 import org.junit.jupiter.api.DisplayName
 import java.io.File
+import java.util.Properties
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -64,5 +67,57 @@ class JarProvisionServiceTest {
         val resolved = service.resolve(paper, "1.20.1")
         assertTrue(resolved.isFile, "应返回缓存中的完整 jar")
         assertEquals(content, resolved.readText(), "缓存内容应与下载内容一致（原子移入，无损坏）")
+    }
+
+    @Test
+    @DisplayName("Spigot 下载后应记录来源、版本与本地 SHA-256")
+    fun recordSpigotProvenanceAfterDownload() {
+        val cache = freshCache()
+        val service = JarProvisionService(
+            cache = cache,
+            download = { url, dest, _ ->
+                assertEquals("https://download.getbukkit.org/spigot/spigot-1.20.1.jar", url)
+                writeMinimalJar(dest)
+            },
+        )
+
+        val resolved = service.resolve(ProvisionPlatform.SPIGOT, "1.20.1")
+        val provenance = Properties().apply {
+            File(resolved.parentFile, "source.properties").inputStream().use(::load)
+        }
+
+        assertEquals("https://download.getbukkit.org/spigot/spigot-1.20.1.jar", provenance.getProperty("source"))
+        assertEquals("1.20.1", provenance.getProperty("version"))
+        assertEquals(resolved.sha256(), provenance.getProperty("sha256"))
+    }
+
+    @Test
+    @DisplayName("GetBukkit 不可达时应回退到可记录来源的镜像")
+    fun fallBackWhenGetBukkitUnavailable() {
+        val cache = freshCache()
+        val fallback = "https://github.com/BaldGang/spigot-build/releases/latest/download/spigot-1.20.1.jar"
+        val service = JarProvisionService(
+            cache = cache,
+            download = { url, dest, _ ->
+                if (url.contains("getbukkit")) throw IllegalStateException("TLS 握手失败")
+                assertEquals(fallback, url)
+                writeMinimalJar(dest)
+            },
+        )
+
+        val resolved = service.resolve(ProvisionPlatform.SPIGOT, "1.20.1")
+        val provenance = Properties().apply {
+            File(resolved.parentFile, "source.properties").inputStream().use(::load)
+        }
+        assertEquals(fallback, provenance.getProperty("source"))
+    }
+
+    /** 创建结构合法的最小 jar，避免测试用文本冒充真实服务器构件。 */
+    private fun writeMinimalJar(destination: File) {
+        ZipOutputStream(destination.outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("META-INF/MANIFEST.MF"))
+            zip.write("Manifest-Version: 1.0\n".toByteArray())
+            zip.closeEntry()
+        }
     }
 }

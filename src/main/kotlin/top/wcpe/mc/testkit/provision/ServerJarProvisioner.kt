@@ -62,10 +62,14 @@ class ServerJarProvisioner internal constructor(
         }
         val resolved = readEnv(platform.versionEnv)?.takeIf { it.isNotBlank() }
             ?: requestedVersion?.takeIf { it.isNotBlank() }
-            ?: McTestkitDefaults.MINECRAFT_VERSION
+            ?: defaultVersion(platform)
         // 按平台版本粒度归一：Waterfall 在 PaperMC 仅按 major.minor 发布（1.20.1 → 1.20），否则 404；其余原样。
         return platform.downloadVersion(resolved)
     }
+
+    /** Velocity 与 Minecraft 后端使用不同的版本命名空间，默认值不得混用。 */
+    private fun defaultVersion(platform: ProvisionPlatform): String =
+        if (platform == ProvisionPlatform.VELOCITY) McTestkitDefaults.VELOCITY_VERSION else McTestkitDefaults.MINECRAFT_VERSION
 
     companion object {
         /**

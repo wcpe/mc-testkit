@@ -54,6 +54,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 | FR-19 | 持久模式可选并起 bot（人机混场）：`serve { }` 可选起场景 bot 把环境驱到某状态但**不**按结果文件收尾，挂住让真人同时连入同测；停时 bot + 后端 + 代理全收尾（见 docs/specs/fr-19-bot-mixed-serve.md，ADR-0011）| P3 | 已交付@v0.4.0 |
 | FR-20 | 节点运行时注入：保持 `dependencies { }` 仅注入后端，为 backend / proxy 增加每节点 env 与模板目录、为 proxy 增加专属插件注入，并覆盖 v0.4.2 全部 E2E / serve 启动路径；以真实 BungeeCord 下游消费、旧 DSL 兼容且不引入 `provide` 为交付门禁（见 docs/specs/fr-20-node-runtime-injection.md）| P1 | 已交付@v0.5.0 |
 | FR-21 | 多版本服务端拉起适配：增强 mc-testkit 支持 8 个代表版本（1.7.10 / 1.8.8 / 1.12.2 / 1.16.5 / 1.17.1 / 1.19.4 / 1.20.1 / 1.21.1）的 Paper 服务端拉起 + bot 协议支持——`ServerProperties.versionAwareOverrides`（版本感知键过滤 + level-type 转换）、`PaperConfigAdapter`（按版本生成 paper.yml / paper-global.yml / 跳过）、`JavaRuntimeSelector`（`MC_TESTKIT_JAVA_HOME_<版本段>` 覆盖 + `JAVA_HOME` 回退）、`MinecraftVersionGroup`（版本段分组查询）、bot 版本范围校验（1.7.10 跳过 bot + 告警，1.8.8+ 正常） | P2 | 已交付@v0.6.0 |
+| FR-22 | 多版本代理与诊断型 JVM 编排：代理 DSL 增加独立 `version` 与 Java 运行时/JVM 参数声明，Velocity 支持 3.1.1、最新 3.x、4.1.0（含 Java 25）矩阵；后端/代理均可注入 `-javaagent`；提供消费方协议流量客户端与诊断 fixture 接线能力，支撑 ServerProbe 全平台网络取证和 Arthas MCP 真机验收，同时保持旧 DSL/env/任务向后兼容 | P1 | 开发中 |
 
 > 状态取值：计划 / 开发中 / 已交付@vX.Y.Z。优先级：P1(MVP 或阻断真实消费者接入的关键项) / P2 / P3。
 > 标 `已交付` 有门：该 FR 的 §6 / spec 验收标准全部满足、对应测试 / 实机验收通过后，才由 `sdd-release-version` 在发版时统一标 `已交付@vX.Y.Z`，过程中不得自行预标。
@@ -76,6 +77,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 - 后台进程在任务结束/失败后均被收尾，端口释放、无残留（实机维度，需确认）。
 - 集群/压测下各后端经 `MC_TESTKIT_E2E_BACKEND_NAME` 收到各自声明名，消费方据此派生**不同** `server-id`（FR-12）；smoke 结果含 `backendName=s1`、集群到达服结果含其服名（已自举验证），下游跨服一致性 / 转服不丢数据断言由消费方桩查共享 DB 自证（**实机维度，需用户确认**）。
 - [x] FR-20 以真实 BungeeCord 消费验证为交付门禁：下游代理插件经代理节点专属声明成功加载，backend / proxy 每节点 env 与模板分别生效；旧 DSL 与 `dependencies { }` 仅后端注入语义不回归；公共 DSL / 任务不引入 `provide`（**Beacon 真实消费与完整构建已确认**）。
+- [ ] FR-22：同一消费项目可分别拉起 Velocity 3.1.1、最新 3.x（固定为 3.5.1）、4.1.0 并选择匹配 Java（4.1.0 使用 Java 25）；backend/proxy 节点 JVM 参数能传入 `-javaagent` 且不泄露本机路径到公共契约；真实协议流量与诊断 fixture 结果仍由 harness 结果文件判定；旧 DSL、任务名及 `MC_TESTKIT_E2E_` 冻结契约全部回归通过。
 
 ## 7. 分期（路线）
 

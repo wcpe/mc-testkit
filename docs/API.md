@@ -36,9 +36,13 @@ mcTestkit {
     // 代理节点与路由
     proxy("wf") {
         platform = waterfall      // velocity | waterfall | bungeecord
+        version = "3.1.1"         // 可省；Velocity 使用自身版本号
+        javaVersion = 17          // 可省；按 MC_TESTKIT_JAVA_HOME_17 选择运行时
         port = 25577              // Int?，可省
         routesTo("s1")            // 转发到的后端名（路由目标存在性配置期校验）
         plugin("MC_TESTKIT_E2E_PROXY_PLUGIN_JAR")
+        jvmArg("-Dexample.flag=true")
+        javaAgent("SERVERPROBE_AGENT_JAR")
         env("MYPLUGIN_PROXY_NODE", "wf")
         templateDirectory("MC_TESTKIT_E2E_PROXY_TEMPLATE_DIR")
     }
@@ -95,7 +99,7 @@ mcTestkit {
 }
 ```
 
-**节点运行时注入（FR-20）**：`BackendSpec` 提供 `env(name, value)` 与 `templateDirectory(envOrPath)`；`ProxySpec` 提供 `plugin(envOrPath)`、`env(name, value)` 与 `templateDirectory(envOrPath)`。同一节点重复声明同名 `env` 时后值覆盖前值，不同节点互不共享。`dependencies { }` 的语义不变，仍只把待测与依赖插件注入后端；代理插件只能经对应代理节点的 `plugin(...)` 声明。
+**节点运行时注入（FR-20/22）**：`BackendSpec` 提供 `env(name, value)`、`templateDirectory(envOrPath)`、`jvmArg(value)` 与 `javaAgent(envOrPath)`；`ProxySpec` 额外提供独立 `version`、`javaVersion`、`plugin(envOrPath)`、`env(name, value)`、`templateDirectory(envOrPath)`、`jvmArg(value)` 与 `javaAgent(envOrPath)`。`javaAgent` 在执行期优先按环境变量取值，否则按路径解析；同一节点重复声明同名 `env` 时后值覆盖前值，不同节点互不共享。`dependencies { }` 的语义不变，仍只把待测与依赖插件注入后端；代理插件只能经对应代理节点的 `plugin(...)` 声明。
 
 新增 `BackendSpec` / `ProxySpec` 的 `envOrPath` 先按环境变量名读取：非空环境值优先且不再回退；未设置或空值时把声明本身作为路径。绝对路径原样使用，相对路径相对应用插件的 `Project.projectDir` 解析；代理插件必须是存在的普通 `.jar` 文件，模板必须是存在的目录，否则在启动任务涉及的任一节点前中文失败。后端未声明节点模板时继续兼容旧全局 `MC_TESTKIT_E2E_SERVER_TEMPLATE_DIR`，声明后只使用节点模板。
 
@@ -107,7 +111,7 @@ mcTestkit {
 
 > **持久手测 serve（FR-17，ADR-0011）经新增第 5 个顶层块** `serve("name") { backend = …; via = … }` 引入：声明「把后端（+ 可选经代理）拉起并**挂住**供真人客户端手测」。这是 DSL 由「四块」演进为「五块」的**加法、非破坏**变更（既有声明不受影响，按 SemVer minor；不改既有四块语义）。与 `scenario` 区别：serve **不跑 bot、不判 PASS/FAIL**，只起服并阻塞到手动停。`backend` 省略=默认/单后端，`via` 省略=直连（设了 `via` 则该代理须 `routesTo` 目标后端，配置期校验）。声明 `backends(...)`（与 `backend` 互斥、须配 `via`）即**集群 serve**（FR-18）：N 后端 + 代理整套挂起，真人经代理 `/server` 切服手测（复用 FR-10 集群编排）。可选 `bot { }` / `bot("角色") { }`（FR-19，多 bot 规则同 FR-16）：serve 起声明的 bot 把环境驱到某状态、**不判定**，挂住「人机混场」让真人同时连入——bot 应是**自驱** action（serve 桩空闲、不发 `E2E_READY`，勿复用等桩 ready 的场景 action）。
 
-> 经 **Velocity 代理**走 modern forwarding（代理 `velocity.toml` + 后端 `paper-global proxies.velocity`，共享 forwarding secret，见 ADR-0010）：支持单后端经代理 / 集群 `/server` 切换 / 崩溃接管 fallback；**不支持压测钉服**（Velocity 单端口无「一端口对一后端」，`stress + via=velocity` 配置期中文报错）。Velocity 用自有版本号（env `…VELOCITY_VERSION` 缺省 `3.3.0-SNAPSHOT`，非后端 MC 版本）；Waterfall/BungeeCord 经代理写 `config.yml`、Velocity 写 `velocity.toml` + `forwarding.secret`。
+> 经 **Velocity 代理**走 modern forwarding（代理 `velocity.toml` + 后端 `paper-global proxies.velocity`，共享 forwarding secret，见 ADR-0010）：支持单后端经代理 / 集群 `/server` 切换 / 崩溃接管 fallback；**不支持压测钉服**（Velocity 单端口无「一端口对一后端」，`stress + via=velocity` 配置期中文报错）。Velocity 用自有版本号（env `…VELOCITY_VERSION` 缺省 `3.5.1`，即受控的最新 3.x，非后端 MC 版本）；Waterfall/BungeeCord 经代理写 `config.yml`、Velocity 写 `velocity.toml` + `forwarding.secret`。
 
 **机器人目录定位（Gradle 属性，非 DSL 块）**：消费方照抄 `template/bot` 到其项目；编排经 Gradle 属性 `mcTestkit.botDir` 定位（缺省相对**根工程**的 `e2e-bot`，入口脚本固定 `<botDir>/src/connectAndWait.js`）。目录命名不同的用 `-PmcTestkit.botDir=<目录>` 覆盖（相对路径相对根工程解析，绝对路径直接采用），保证可移植、不写死本机绝对路径。这是 FR-04 唯一新增可配项，刻意走 Gradle 属性而非新增 DSL 顶层块（保持 §3.1 冻结形态不变）。
 
@@ -145,6 +149,7 @@ mcTestkit {
 - 桩↔编排交接（编排起后端时下发，桩据此判定）：`…SCENARIO`（本次场景 id = **DSL 场景名原样下发**，桩据此选场景；故 DSL 场景名须与桩 `ScenarioName` id、机器人 `action` 用**同一个 kebab-case id**、三处一致，否则桩无法匹配场景而判失败）、`…RESULT_FILE`（结果文件**绝对路径** = verify 读取处，桩写到这里二者对齐）、`…BACKEND_NAME`（**本后端的声明名**，编排起**每个**后端时下发，与 `…CLUSTER_BACKENDS` 同源、有序对应；集群/压测下各服各不相同，消费方据此 per-backend 派生身份——典型用法是拼不同 `server-id` 后缀。编排只「告诉每个后端它是谁」，不规定怎么用，见 FR-12）。
 - **持久手测保留场景 id**（FR-17，ADR-0011）：serve 起后端时经 `…SCENARIO` 下发保留 id `__mc_testkit_serve__`（契约常量 `McTestkitContract.SERVE_SCENARIO_ID`），告诉桩**空闲**（不驱动 / 不判定 / 不关服）；`template/harness` 据此空闲（未同步新模板的老桩遇此未知 id 在 `onEnable` 抛错被禁用、服务端照常挂起，对任何桩都安全）。serve **不下发** `…RESULT_FILE`（不判定）。此 id 用双下划线前后缀与消费方 kebab-case 业务场景名划清边界。
 - 代理（jar/版本/端口）：`…WATERFALL_JAR`/`…WATERFALL_VERSION`、`…VELOCITY_JAR`/`…VELOCITY_VERSION`、`…BUNGEECORD_JAR`/`…BUNGEECORD_VERSION`、`…PROXY_PORT`、`…PROXY_BASE_PORT`。
+- 节点 Java（FR-22）：`MC_TESTKIT_JAVA_HOME_<主版本>`，如 `MC_TESTKIT_JAVA_HOME_25`。显式声明的 proxy `javaVersion` 缺失时启动前中文失败；backend 继续沿用 MC 版本段选择并可通过 `jvmArg`/`javaAgent` 注入诊断参数。
 - 机器人：`…BOT_ACTION`（场景 action / 场景 id，机器人内核据此分发）、`…BOT_HOST`/`…BOT_PORT`/`…BOT_USERNAME`/`…BOT_AUTH`/`…BOT_VERSION`、`…BOT_CONNECT_TIMEOUT_MS`/`…BOT_RETRY_DELAY_MS`/`…BOT_READY_TIMEOUT_MS`。
 - 集群（FR-10）：`…CLUSTER_BACKENDS`（集群场景的**有序后端名**，逗号分隔；编排起 bot 时下发，bot 据此经代理 `/server <name>` 逐个切换到后续后端）。
 - 压测（FR-11）：`…STRESS_DURATION_SECONDS`（施压秒数，编排→bot 与桩）、`…BOT_INDEX`（每 bot 进程序号；FR-16 同质批量复制亦复用）、`…STRESS_RANDOM_SEED`（共享随机种子；bot 用 `seed xor botIndex` 播种 RNG 使各 bot 可复现且互异）。规模（服数 / 每服 bot 数）由 DSL `backends(...)` + `stress { botsPerServer }` 表达，不走 env。经代理时机器人协议版本仍由编排固定为后端版本（环境契约，FR-05）。

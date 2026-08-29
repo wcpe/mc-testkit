@@ -8,12 +8,14 @@
 
 ### 新增
 - **Minecraft 26.x 新版号支持**（`provision/`）：`backendServerArgs` / Waterfall 版本归一识别 `26.2` 等无 `1.` 前缀的版本；Fill v3 路径与单测覆盖 26.2。
+- **FR-22 多版本代理与诊断型 JVM 编排**：`proxy` 可声明独立 `version`、`javaVersion`、`jvmArg(...)` 与 `javaAgent(...)`；`backend` 可声明 `jvmArg(...)` 与 `javaAgent(...)`。普通/代理/集群/压测/serve 全部节点启动路径统一传入参数，显式 Java 主版本经 `MC_TESTKIT_JAVA_HOME_<主版本>` 严格选择。
 
 ### 变更
-_（暂无）_
+- **Velocity 默认版本**：缺省版本更新为官方当前可下载的受控最新 3.x `3.5.1`；兼容矩阵以可下载的 `3.1.1` 覆盖 3.0 代际、`3.5.1` 覆盖最新 3.x、`4.1.0` 覆盖 Java 25 代际。
 
 ### 修复
 - **`backendServerArgs("26.2")` 误判为旧服**：原先按第二段 `<=12` 判定 1.12 及更早，会把 `26.2` 当成 legacy 而不带 `--nogui`；现按 major≥26 走现代参数。
+- **Velocity 直接 provision 的默认版本**：此前未显式请求版本时错误回退为 Minecraft 版本；现在按平台代理选择 Velocity 自身默认版本。
 
 ### 移除
 _（暂无）_

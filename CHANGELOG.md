@@ -4,7 +4,7 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## 未发布版本
+## [0.7.0] - 2026-08-29
 
 ### 新增
 - **Minecraft 26.x 新版号支持**（`provision/`）：`backendServerArgs` / Waterfall 版本归一识别 `26.2` 等无 `1.` 前缀的版本；Fill v3 路径与单测覆盖 26.2。

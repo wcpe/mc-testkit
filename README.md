@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/wcpe/mc-testkit/actions/workflows/ci.yml/badge.svg)](https://github.com/wcpe/mc-testkit/actions/workflows/ci.yml)
 [![E2E](https://github.com/wcpe/mc-testkit/actions/workflows/e2e.yml/badge.svg)](https://github.com/wcpe/mc-testkit/actions/workflows/e2e.yml)
-[![version](https://img.shields.io/badge/version-v0.6.0-blue)](VERSION)
+[![version](https://img.shields.io/badge/version-v0.7.0-blue)](VERSION)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 > 面向 Minecraft 插件的**全平台端到端测试编排** Gradle 插件 + 配套脚手架模板：把真实服务端/代理拉起、互联成测试拓扑，用机器人驱动端到端场景、判定结果并收尾，统一各插件五花八门的 E2E 做法。
@@ -13,6 +13,7 @@
 - **内置下载与运行**：自实现 Paper/Folia 后端与 Velocity/Waterfall/BungeeCord 代理的下载与运行（不外挂第三方下载库，ADR-0001），jar 缓存 + hash 校验复用，`MC_TESTKIT_E2E_*_JAR` 环境变量可覆盖。
 - **多版本服务端拉起（v0.6.0，FR-21）**：8 个代表版本（1.7.10 / 1.8.8 / 1.12.2 / 1.16.5 / 1.17.1 / 1.19.4 / 1.20.1 / 1.21.1）Paper 下载、拉起与版本感知配置适配——按版本过滤 `server.properties` 键、生成 `paper.yml` / `paper-global.yml`、选择 Java 运行时（`MC_TESTKIT_JAVA_HOME_<版本段>` 覆盖 > `JAVA_HOME` 回退）；1.7.10 自动跳过 bot 并告警。另支持 Minecraft 26.x 新版号识别。
 - **全平台代理**：Velocity（modern forwarding）/ Waterfall / BungeeCord，单后端经代理、集群 `/server` 切换、崩溃接管 fallback 均实机跑通（ADR-0010）。
+- **多版本代理与诊断型 JVM 编排（v0.7.0，FR-22）**：`proxy` 可声明独立 `version`、`javaVersion`、`jvmArg(...)` 与 `javaAgent(...)`，`backend` 可声明 `jvmArg(...)` 与 `javaAgent(...)`；普通/代理/集群/压测/serve 全部启动路径统一传参，显式 Java 主版本经 `MC_TESTKIT_JAVA_HOME_<主版本>` 严格选择，不回退到不匹配的运行时（ADR-0012）。
 - **多后端集群（FR-10/15）**：N 后端 + 代理「单 listener + N server」，bot 经代理跨服切换、桩跨服判定；默认后端宕机时 bot 重连回退到存活后端，支撑「崩溃接管」类 E2E。
 - **多后端持续压测（FR-11）**：N 服 × M bot 钉服施压，各服桩收集聚合结果、框架统一判定。
 - **单场景多 bot（FR-16）**：异质具名角色 + 同质批量复制（`bot { count = N }`），各唯一 username、经 `BOT_INDEX` 区分。
@@ -28,7 +29,7 @@
 | 角色 | 平台 | 说明 |
 |---|---|---|
 | 后端 | Paper / Folia | 1.7.10–1.21.1 代表版本（v0.6.0 起，FR-21）；按版本适配配置与 Java 运行时 |
-| 代理 | Velocity / Waterfall / BungeeCord | 含 Velocity modern forwarding；`stress + via=velocity` 因单端口不支持（配置期中文报错） |
+| 代理 | Velocity / Waterfall / BungeeCord | 含 Velocity modern forwarding；v0.7.0 起 Velocity 可指定版本（3.1.1 / 最新 3.x，4.1.0 需 Java 25）；`stress + via=velocity` 因单端口不支持（配置期中文报错） |
 | 机器人 | mineflayer（Node.js） | 随 `template/` 提供内核；1.7.10 不支持（跳过 + 日志告警） |
 | 范围外 | Spigot / Bukkit / Sponge | 平台范围见 ADR-0003 |
 
@@ -49,7 +50,7 @@ pluginManagement {
 
 ```kotlin
 plugins {
-    id("top.wcpe.mc-testkit") version "0.6.0"
+    id("top.wcpe.mc-testkit") version "0.7.0"
 }
 
 mcTestkit {
@@ -126,7 +127,7 @@ mc-testkit/
 
 ## 版本与变更
 
-当前 **v0.6.0**（发布到 [maven.wcpe.top](https://maven.wcpe.top)）。完整变更见 [`CHANGELOG.md`](CHANGELOG.md)；能力与进度以 [`docs/PRD.md`](docs/PRD.md) §4 FR 表状态列为准。
+当前 **v0.7.0**（发布到 [maven.wcpe.top](https://maven.wcpe.top)）。完整变更见 [`CHANGELOG.md`](CHANGELOG.md)；能力与进度以 [`docs/PRD.md`](docs/PRD.md) §4 FR 表状态列为准。
 
 ## 贡献
 

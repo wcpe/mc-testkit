@@ -32,3 +32,4 @@ Thumbs.db
 **/e2e-results/
 **/node_modules/
 *.log
+/.workbuddy/

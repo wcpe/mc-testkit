@@ -50,7 +50,9 @@ module.exports = async function runFr11NetworkForensics({ bot, log, reconnectOnD
 
   await sleep(PROXY_PIPELINE_READY_MS)
   sendFr11PluginMessages(secondClient)
-  log(`重连后已发送 ${BURST_COUNT} 个 ${BURST_PAYLOAD_BYTES} 字节 Plugin Message 与 ${LARGE_PAYLOAD_BYTES} 字节截断验收载荷`)
+  log(
+    `重连后已发送 ${BURST_COUNT} 个 ${BURST_PAYLOAD_BYTES} 字节 Plugin Message 与 ${LARGE_PAYLOAD_BYTES} 字节截断验收载荷`
+  )
 }
 
 module.exports.sendFr11PluginMessages = sendFr11PluginMessages

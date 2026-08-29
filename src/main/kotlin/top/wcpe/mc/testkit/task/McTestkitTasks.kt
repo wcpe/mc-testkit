@@ -1500,9 +1500,11 @@ object McTestkitTasks {
         )
         // 业务 bot env（scenario { bot { env(...) } } 声明）作为追加项，可覆盖通用项
         val receiptFile = File(layout.resultsDir, "bot-$key.receipt.jsonl")
-        val environment = connection.toEnvironment(extraEnvironment = extraEnv + mapOf(
-            McTestkitEnv.BOT_RECEIPT_FILE to receiptFile.absolutePath,
-        )) {
+        val environment = connection.toEnvironment(
+            extraEnvironment = extraEnv + mapOf(
+                McTestkitEnv.BOT_RECEIPT_FILE to receiptFile.absolutePath,
+            ),
+        ) {
             project.providers.environmentVariable(it).orNull
         }
         return BotLauncher.launch(

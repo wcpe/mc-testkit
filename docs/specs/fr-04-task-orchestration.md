@@ -1,6 +1,6 @@
 # 功能规格：任务自动编排
 
-> 状态：开发中　·　关联 PRD：FR-04　·　分支：feature/fr-04-orchestration
+> 状态：已交付@v0.1.0　·　关联 PRD：FR-04
 
 ## 1. 背景与目标
 
@@ -24,7 +24,7 @@ FR-04 是第一期（MVP）的**整合器**：把已落地的各包（`contract/
   - 不碰其他包的内部实现（只调其公开 API）；不改 `contract/` / `dsl/` / `model/` / `provision/` / `serverconfig/` / `bot/` / `verify/` 源（可改 `McTestkitPlugin` 接线）。
   - 不实现集群/压测多服编排的完整链路（FR-03 拓扑已支持多后端，但本期消费者验证以单后端/单代理为主；集群任务名留待真实多服需求，沿用同前缀风格，不预置空壳）。
   - **不在 TestKit / CI 真跑**：不真实下载、不起进程、不连服——真实起服/起代理/起 bot 判定属 FR-08 实机维度。注册任务时配置期不触发下载/起进程（全部放 `doLast`/lazy）。
-  - 不实现 Spigot/Bukkit/Sponge（不在项目计划内）；不发布共享桩/机器人库。
+  - 不实现 Bukkit/Sponge（不在项目计划内，见 ADR-0013）；不发布共享桩/机器人库。
   - 不改 env 前缀为 DSL 可配（ADR-0006）。
 
 ## 3. 设计（怎么做）
@@ -47,11 +47,11 @@ FR-04 是第一期（MVP）的**整合器**：把已落地的各包（`contract/
 
 ## 4. 任务拆分
 
-- [ ] 测试先行（TestKit）：消费者 build 配置 `mcTestkit { backend/proxy/scenario(含 bot)/dependencies }` → 断言任务按命名约定注册（`prepareE2e<Key>` / `e2e<Key>` / `e2e<Key>Via<Proxy>` / `launch<Key>Bot` / `e2e<Key>WithBot` / `npmInstallE2eBot` / `syncE2eRuntimeCache` / `purgeE2eRuntimeCache`），`help` / `tasks` 成功、任务依赖关系存在。
-- [ ] 测试先行（配置期）：非法拓扑（路由目标不存在 / 重名 / 缺必填 / 路径不存在 / 场景引用缺失）→ 配置期 build 失败且含**中文**错误。
-- [ ] 实现 `task/` 包（路径推导纯函数 + 数据驱动任务注册 + 进程收尾）。
-- [ ] `McTestkitPlugin.apply()` 接线调用装配入口。
-- [ ] 文档同步：PRD 状态、ARCHITECTURE（`task/` 条精化）、API.md（§3.1 botDir 属性、§3.2 任务名核对）、CHANGELOG。
+- [x] 测试先行（TestKit）：消费者 build 配置 `mcTestkit { backend/proxy/scenario(含 bot)/dependencies }` → 断言任务按命名约定注册（`prepareE2e<Key>` / `e2e<Key>` / `e2e<Key>Via<Proxy>` / `launch<Key>Bot` / `e2e<Key>WithBot` / `npmInstallE2eBot` / `syncE2eRuntimeCache` / `purgeE2eRuntimeCache`），`help` / `tasks` 成功、任务依赖关系存在。
+- [x] 测试先行（配置期）：非法拓扑（路由目标不存在 / 重名 / 缺必填 / 路径不存在 / 场景引用缺失）→ 配置期 build 失败且含**中文**错误。
+- [x] 实现 `task/` 包（路径推导纯函数 + 数据驱动任务注册 + 进程收尾）。
+- [x] `McTestkitPlugin.apply()` 接线调用装配入口。
+- [x] 文档同步：PRD 状态、ARCHITECTURE（`task/` 条精化）、API.md（§3.1 botDir 属性、§3.2 任务名核对）、CHANGELOG。
 
 ## 5. 验收标准
 

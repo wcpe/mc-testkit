@@ -1,6 +1,6 @@
 # 功能规格：FR-11 压测编排
 
-> 状态：开发中　·　关联 PRD：FR-11、ADR-0008（DSL/编排决策）、ADR-0004（编排模型）　·　分支：master
+> 状态：已交付@v0.1.0　·　关联 PRD：FR-11、ADR-0008（DSL/编排决策）、ADR-0004（编排模型）
 
 ## 1. 背景与目标
 
@@ -22,11 +22,11 @@ v0.2.0 有了跨服切换集群（FR-10），但首个接入项目的 `continuou
 
 ## 4. 任务拆分
 
-- [ ] PRD FR-11 → 开发中、本 spec（ADR-0008 已定方向，不另写 ADR）。
-- [ ] DSL `stress{}` + 契约 env/任务名 + 校验（测试先行）。
-- [ ] 编排器 `registerStressTask` + N-listener 代理配置 + per-server 聚合 + 收尾；RunLayout per-server/per-bot 路径。
-- [ ] template 薄压测桩/bot 示例 + `lib/random.js`。
-- [ ] 实机自举验收 + doc-sync（API/ARCHITECTURE/CHANGELOG）+ 中文提交。
+- [x] PRD FR-11 → 开发中、本 spec（ADR-0008 已定方向，不另写 ADR）。
+- [x] DSL `stress{}` + 契约 env/任务名 + 校验（测试先行）。
+- [x] 编排器 `registerStressTask` + N-listener 代理配置 + per-server 聚合 + 收尾；RunLayout per-server/per-bot 路径。
+- [x] template 薄压测桩/bot 示例 + `lib/random.js`。
+- [x] 实机自举验收 + doc-sync（API/ARCHITECTURE/CHANGELOG）+ 中文提交。
 
 ## 5. 验收标准
 

@@ -1,6 +1,6 @@
 # 功能规格：FR-16 单场景多 bot
 
-> 状态：已交付@v0.2.2　·　关联 PRD：FR-16、ADR-0009（单场景多 bot 的 scenario 块扩展，补 ADR-0008）、ADR-0006（对外契约·env 前缀/任务命名）　·　分支：master
+> 状态：已交付@v0.2.2　·　关联 PRD：FR-16、ADR-0009（单场景多 bot 的 scenario 块扩展，补 ADR-0008）、ADR-0006（对外契约·env 前缀/任务命名）
 
 ## 1. 背景与目标
 
@@ -62,7 +62,7 @@ mc-testkit 现状：每个 `scenario { }` 最多一个 `bot { }`——
 - [x] 功能测试（TestKit）：集群 `count=N` 与单后端双角色注册任务 + 集群 finalizedBy 收尾 + 配置期中文报错。
 - [x] 文档同步：PRD（FR-16）、ARCHITECTURE（多 bot 机制）、API（DSL + 任务表注）、CHANGELOG、ADR-0009。
 - [x] 单元/TestKit + 根 `build` 绿（含 ktlint），向后兼容既有测试不改语义（184 测试全绿、FR-16 新增 34）。
-- [ ] 实机（PRD §6 维度，下游闭环）：下游 AllinInventorySync 加 g16 / gui-edit 跑通验收 + 退役 `integration-test/`。
+- [ ] 实机（PRD §6 维度，下游闭环）：下游 AllinInventorySync 加 g16 / gui-edit 跑通验收 + 退役 `integration-test/`（**待实机确认**）。
 
 ## 5. 验收标准
 

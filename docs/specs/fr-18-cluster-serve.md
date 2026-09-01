@@ -1,6 +1,6 @@
 # 功能规格：持久开启·集群拓扑手测（serve 集群）
 
-> 状态：已交付@v0.4.0　·　关联 PRD：FR-18　·　分支：master　·　决策：[ADR-0011](../adr/0011-persistent-serve-mode.md)　·　依赖：FR-17（serve 内核）
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-18　·　决策：[ADR-0011](../adr/0011-persistent-serve-mode.md)　·　依赖：FR-17（serve 内核）
 
 ## 1. 背景与目标
 
@@ -24,12 +24,12 @@ FR-17 的 serve 只起**单后端**（+ 可选经代理）。集群一致性 / �
 
 ## 4. 任务拆分
 
-- [ ] DSL：`ServeSpec.backends(...)` + `backendRefs`
-- [ ] 校验：集群 serve（须 via / 路由覆盖 / 互斥单后端 / 名唯一）扩 `validateServeRefs` + 单测
-- [ ] 任务：`registerServeTasks` 分流 + `serveClusterForeground` + stop 集群分支
-- [ ] 集成测试（TestKit）：集群 serve 注册 `serve<Key>` / `stop<Key>Serve`、配置期校验中文报错
-- [ ] 文档同步：PRD 状态、ARCHITECTURE（serve 机制补集群）、API.md（serve 块 backends + 任务表注）、CHANGELOG
-- [ ] 真机 / 手动验收（见 §5）
+- [x] DSL：`ServeSpec.backends(...)` + `backendRefs`
+- [x] 校验：集群 serve（须 via / 路由覆盖 / 互斥单后端 / 名唯一）扩 `validateServeRefs` + 单测
+- [x] 任务：`registerServeTasks` 分流 + `serveClusterForeground` + stop 集群分支
+- [x] 集成测试（TestKit）：集群 serve 注册 `serve<Key>` / `stop<Key>Serve`、配置期校验中文报错
+- [x] 文档同步：PRD 状态、ARCHITECTURE（serve 机制补集群）、API.md（serve 块 backends + 任务表注）、CHANGELOG
+- [x] 真机 / 手动验收（见 §5）
 
 ## 5. 验收标准
 

@@ -1,6 +1,6 @@
 # 功能规格：持久开启·单后端手测模式（serve）
 
-> 状态：已交付@v0.4.0　·　关联 PRD：FR-17　·　分支：feature/fr-17-persistent-serve　·　决策：[ADR-0011](../adr/0011-persistent-serve-mode.md)
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-17　·　决策：[ADR-0011](../adr/0011-persistent-serve-mode.md)
 
 ## 1. 背景与目标
 
@@ -45,17 +45,17 @@ FR-17 落 **serve 模式核心**：单后端（+ 可选经代理）持久挂起�
 
 ## 4. 任务拆分
 
-- [ ] ADR-0011 落地（已写草案，待审核通过）
-- [ ] 契约：`McTestkitContract.SERVE_SCENARIO_ID = "__mc_testkit_serve__"` 哨兵常量 + 契约测试
-- [ ] `template/harness` 空闲分支：`ScenarioName.SERVE` + `bootstrapScenario` / `onPlayerJoin` 空闲（不驱动 / 不关服 / 不动真人玩家）
-- [ ] DSL：`ServeSpec` + `McTestkitExtension.serve(){}` + `declaredServes`
-- [ ] 配置期校验：serve 引用存在性 / 路由一致 / 名唯一不撞 scenario（中文报错）+ 纯函数单测
-- [ ] 任务命名：`McTestkitTaskNames.serve` / `stopServe` + 单测
-- [ ] 任务注册 + serve 任务体（prepare →(via) 起代理 → 前台起后端 → await port → 打印 + 日志 tail → shutdown hook → 阻塞 → finally 收尾）
-- [ ] `stop<Key>Serve` 任务（按 pid 收尾后端 + 代理）
-- [ ] 集成测试（Gradle TestKit）：声明 serve 注册 `serve<Key>` / `stop<Key>Serve`、配置期校验中文报错、任务图无环 / 任务名稳定
-- [ ] 文档同步：PRD 状态、ARCHITECTURE（serve 持久机制 + 桩空闲哨兵 + 依赖）、API.md（§3.1 五块 + serve DSL + §3.2 serve 任务名 + §3.3 保留哨兵场景 id `__mc_testkit_serve__`）、template/README（serve 空闲场景）、CHANGELOG、OPERATIONS/README（serve 用法 + Ctrl+C/--no-daemon 行为提示）
-- [ ] 真机 / 手动验收（见 §5）
+- [x] ADR-0011 落地（已写草案，待审核通过）
+- [x] 契约：`McTestkitContract.SERVE_SCENARIO_ID = "__mc_testkit_serve__"` 哨兵常量 + 契约测试
+- [x] `template/harness` 空闲分支：`ScenarioName.SERVE` + `bootstrapScenario` / `onPlayerJoin` 空闲（不驱动 / 不关服 / 不动真人玩家）
+- [x] DSL：`ServeSpec` + `McTestkitExtension.serve(){}` + `declaredServes`
+- [x] 配置期校验：serve 引用存在性 / 路由一致 / 名唯一不撞 scenario（中文报错）+ 纯函数单测
+- [x] 任务命名：`McTestkitTaskNames.serve` / `stopServe` + 单测
+- [x] 任务注册 + serve 任务体（prepare →(via) 起代理 → 前台起后端 → await port → 打印 + 日志 tail → shutdown hook → 阻塞 → finally 收尾）
+- [x] `stop<Key>Serve` 任务（按 pid 收尾后端 + 代理）
+- [x] 集成测试（Gradle TestKit）：声明 serve 注册 `serve<Key>` / `stop<Key>Serve`、配置期校验中文报错、任务图无环 / 任务名稳定
+- [x] 文档同步：PRD 状态、ARCHITECTURE（serve 持久机制 + 桩空闲哨兵 + 依赖）、API.md（§3.1 五块 + serve DSL + §3.2 serve 任务名 + §3.3 保留哨兵场景 id `__mc_testkit_serve__`）、template/README（serve 空闲场景）、CHANGELOG、OPERATIONS/README（serve 用法 + Ctrl+C/--no-daemon 行为提示）
+- [x] 真机 / 手动验收（见 §5）
 
 ## 5. 验收标准
 

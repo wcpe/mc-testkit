@@ -1,6 +1,6 @@
 # 功能规格：固化环境契约
 
-> 状态：开发中　·　关联 PRD：FR-05　·　分支：feature/fr-05-serverconfig
+> 状态：已交付@v0.1.0　·　关联 PRD：FR-05
 
 ## 1. 背景与目标
 
@@ -25,7 +25,7 @@
   - 不注册任何 Gradle 任务（FR-04）；不碰 `contract/` / `dsl/` / `model/` / `provision/` / `bot/` / `verify/` / 插件入口 / `build.gradle.kts`。
   - 不写消费方业务配置模板（业务场景 / 某依赖插件 / 具体插件配置）——只留通用服务端配置编辑。
   - 不下载 / 不起进程 / 不做拓扑解析。
-  - 不实现 Spigot/Bukkit/Sponge（不在项目计划内）。
+  - 不实现 Bukkit/Sponge（不在项目计划内，见 ADR-0013）。
   - 真实经代理拉起后端、验证握手成功属 FR-08 实机维度，本规格不在 CI 跑真服。
 
 ## 3. 设计（怎么做）
@@ -49,12 +49,12 @@
 
 ## 4. 任务拆分
 
-- [ ] 测试先行：`ServerProperties.edit` 保留未涉及键、改对涉及键。
-- [ ] 测试先行：`BackendBungeeCordConfig.apply` 写后 `spigot.yml` / `paper-global.yml` / `server.properties` 三处值正确（含文件已存在 / 不存在两路径）。
-- [ ] 测试先行：`DependencyInjections.requireAll` 缺失 → 中文错误（含缺项名）；齐全 → 不报错。
-- [ ] 测试先行：`ProxyProtocolVersion.forBackend` 返回后端版本。
-- [ ] 实现 `serverconfig/` 四个能力。
-- [ ] 文档同步：PRD 状态、ARCHITECTURE（serverconfig 条核对）、CHANGELOG。
+- [x] 测试先行：`ServerProperties.edit` 保留未涉及键、改对涉及键。
+- [x] 测试先行：`BackendBungeeCordConfig.apply` 写后 `spigot.yml` / `paper-global.yml` / `server.properties` 三处值正确（含文件已存在 / 不存在两路径）。
+- [x] 测试先行：`DependencyInjections.requireAll` 缺失 → 中文错误（含缺项名）；齐全 → 不报错。
+- [x] 测试先行：`ProxyProtocolVersion.forBackend` 返回后端版本。
+- [x] 实现 `serverconfig/` 四个能力。
+- [x] 文档同步：PRD 状态、ARCHITECTURE（serverconfig 条核对）、CHANGELOG。
 
 ## 5. 验收标准
 

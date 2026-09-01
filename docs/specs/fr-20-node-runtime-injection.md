@@ -1,6 +1,6 @@
 # 功能规格：节点运行时注入（代理插件、每节点环境变量与模板目录）
 
-> 状态：已交付@v0.5.0　·　关联 PRD：FR-20　·　目标版本：v0.5.0　·　分支：feat/node-runtime-injection-v0.5.0　·　相关决策：[ADR-0004](../adr/0004-orchestration-model.md)、[ADR-0006](../adr/0006-public-contract-conventions.md)、[ADR-0011](../adr/0011-persistent-serve-mode.md)
+> 状态：已交付@v0.5.0　·　关联 PRD：FR-20　·　相关决策：[ADR-0004](../adr/0004-orchestration-model.md)、[ADR-0006](../adr/0006-public-contract-conventions.md)、[ADR-0011](../adr/0011-persistent-serve-mode.md)
 
 ## 1. 背景与目标
 

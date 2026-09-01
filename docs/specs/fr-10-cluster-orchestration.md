@@ -1,6 +1,6 @@
 # 功能规格：FR-10 多后端集群编排
 
-> 状态：开发中　·　关联 PRD：FR-10、ADR-0008（DSL/编排决策）、ADR-0004（编排模型）　·　分支：master
+> 状态：已交付@v0.1.0　·　关联 PRD：FR-10、ADR-0008（DSL/编排决策）、ADR-0004（编排模型）
 
 ## 1. 背景与目标
 
@@ -22,11 +22,11 @@ v0.1.0 只支持单后端（±1 代理）。下游消费者的跨服一致性 E2
 
 ## 4. 任务拆分
 
-- [ ] PRD FR-10/11 登记、ADR-0008、本 spec。
-- [ ] DSL + 契约 + 校验（测试先行）：ScenarioSpec.backends、TaskNames.cluster、env CLUSTER_BACKENDS、TopologyResolver 集群校验。
-- [ ] 编排器：ProxyConfig 集群变体、RunLayout per-backend、McTestkitTasks.registerClusterTask（含收尾）。
-- [ ] template 跨服桩/bot 示例。
-- [ ] 实机验收 + doc-sync（API.md/ARCHITECTURE/CHANGELOG）+ 中文提交。
+- [x] PRD FR-10/11 登记、ADR-0008、本 spec。
+- [x] DSL + 契约 + 校验（测试先行）：ScenarioSpec.backends、TaskNames.cluster、env CLUSTER_BACKENDS、TopologyResolver 集群校验。
+- [x] 编排器：ProxyConfig 集群变体、RunLayout per-backend、McTestkitTasks.registerClusterTask（含收尾）。
+- [x] template 跨服桩/bot 示例。
+- [x] 实机验收 + doc-sync（API.md/ARCHITECTURE/CHANGELOG）+ 中文提交。
 
 ## 5. 验收标准
 

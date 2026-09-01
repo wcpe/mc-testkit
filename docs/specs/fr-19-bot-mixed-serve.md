@@ -1,6 +1,6 @@
 # 功能规格：持久模式可选并起 bot（人机混场，serve）
 
-> 状态：已交付@v0.4.0　·　关联 PRD：FR-19　·　分支：master　·　决策：[ADR-0011](../adr/0011-persistent-serve-mode.md)　·　依赖：FR-17（serve 内核）
+> 状态：已交付@v0.4.0　·　关联 PRD：FR-19　·　决策：[ADR-0011](../adr/0011-persistent-serve-mode.md)　·　依赖：FR-17（serve 内核）
 
 ## 1. 背景与目标
 
@@ -25,7 +25,7 @@ serve（FR-17/18）默认纯手测。有时想让 bot 把环境**驱到某状态
 - [x] 校验：serve bots count / 唯一 role（`validateServeBots`）+ 展开 key 唯一（`register`）
 - [x] 任务：抽 `launchBots` / `stopBots` 共用；serve 就绪后起 bot + 三重收尾含 bot + `dependsOn` npm
 - [x] 测试：单元（DSL / 校验）+ TestKit（注册）
-- [ ] 文档同步：PRD 状态、ARCHITECTURE、API.md、CHANGELOG
+- [x] 文档同步：PRD 状态、ARCHITECTURE、API.md、CHANGELOG
 - [x] 本机真机验收（见 §5）
 
 ## 5. 验收标准

@@ -1,6 +1,6 @@
 # 功能规格：`template/` 脚手架（桩插件骨架 + 机器人内核 + 示例场景 + 复制说明）
 
-> 状态：开发中　·　关联 PRD：FR-07　·　分支：feature/fr-07-template
+> 状态：已交付@v0.1.0　·　关联 PRD：FR-07
 
 ## 1. 背景与目标
 
@@ -32,7 +32,7 @@
 - 不实现编排插件侧任何任务 / DSL / model（那是 FR-02/03/04/06）。
 - 不剥出可发布的共享桩基类库 / npm 包（ADR-0002，留 P2 FR-09）。
 - 不绑任何具体框架（那是消费方的私有选择）、不留业务场景 / 支付 / 具体依赖插件名等业务。
-- 不实现 Spigot/Bukkit/Sponge 专属能力（不在项目计划内）。
+- 不实现 Bukkit/Sponge 专属能力（不在项目计划内，见 ADR-0013）。
 - `template/` **不进** root `settings.gradle.kts`、不被插件代码依赖、不进插件构建产物（架构不变量）。
 
 ## 3. 设计（怎么做）
@@ -53,12 +53,12 @@
 > 不涉及新架构决策（ADR-0002 已覆盖「只做模板、不发库」）。无需新 ADR。
 
 ## 4. 任务拆分
-- [ ] 写本规格；PRD §4 FR-07 状态「计划」→「开发中」。
-- [ ] `template/harness/`：build.gradle.kts + settings.gradle.kts + plugin.yml + config.yml + 4 个 Kotlin 文件。
-- [ ] `template/bot/`：connectAndWait.js + lib/3 + scenarios/exampleBot.js + package.json + eslint/prettier 配置。
-- [ ] `template/README.md` 复制接线说明。
-- [ ] 文档同步：PRD 状态、ARCHITECTURE §2（template 条核对）、CHANGELOG 未发布段追加一行。
-- [ ] 验证：bot `npm install` + eslint/`node --check` 通过；harness 独立 `gradlew compileKotlin` 通过（受网络阻则如实报告卡点）。
+- [x] 写本规格；PRD §4 FR-07 状态「计划」→「开发中」。
+- [x] `template/harness/`：build.gradle.kts + settings.gradle.kts + plugin.yml + config.yml + 4 个 Kotlin 文件。
+- [x] `template/bot/`：connectAndWait.js + lib/3 + scenarios/exampleBot.js + package.json + eslint/prettier 配置。
+- [x] `template/README.md` 复制接线说明。
+- [x] 文档同步：PRD 状态、ARCHITECTURE §2（template 条核对）、CHANGELOG 未发布段追加一行。
+- [x] 验证：bot `npm install` + eslint/`node --check` 通过；harness 独立 `gradlew compileKotlin` 通过（受网络阻则如实报告卡点）。
 
 ## 5. 验收标准
 - `cd template/bot && npm install` 成功，`npx eslint .`（或对每个 `.js` 跑 `node --check`）通过。

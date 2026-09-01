@@ -1,6 +1,6 @@
 # 功能规格：FR-03 声明式拓扑 DSL（内存拓扑模型 + 解析 + 端口推导 + 配置期校验）
 
-> 状态：开发中　·　关联 PRD：FR-03　·　分支：feature/fr-03-topology-dsl
+> 状态：已交付@v0.1.0　·　关联 PRD：FR-03
 
 ## 1. 背景与目标
 
@@ -17,7 +17,7 @@ FR-01 已冻结 `mcTestkit { }` 的四个顶层块形态（`backend` / `proxy` /
   - **配置期校验**（抛 `GradleException`，消息中文，说明缺什么 / 怎么补）：节点名非空且唯一、后端名与代理名不撞、`proxy.routesTo` 目标后端存在、代理至少路由到一个后端、解析后端口全局不冲突、`scenario.backend` / `scenario.via` 引用存在。
 - 不做（范围外）：
   - 任务注册 / 任务图（FR-04）、下载/运行（FR-02）、`server.properties` / `paper-global.yml` / BungeeCord 三件套与数据源 / Redis 注入校验（FR-05）、机器人与判定（FR-06）。
-  - 任何 Spigot/Bukkit/Sponge 平台分支或空壳（不在项目计划内，scope-discipline）。
+  - 任何 Bukkit/Sponge 平台分支或空壳（不在项目计划内，见 ADR-0013，scope-discipline）。
   - 不为「未来多代理 / 多路由形态」预留抽象、配置项、字段（YAGNI）。
 
 ## 3. 设计（怎么做）
@@ -33,9 +33,9 @@ FR-01 已冻结 `mcTestkit { }` 的四个顶层块形态（`backend` / `proxy` /
 ## 4. 任务拆分
 
 - [x] 写规格 + PRD §4 FR-03 行状态改「开发中」。
-- [ ] 测试先行：端口推导（多后端基数+序号、显式优先、显式与推导冲突报错）、各类校验失败的中文错误、happy path 构出正确 `Topology`。
-- [ ] 实现 `model/`：模型 + 端口基数常量 + 纯函数解析 / 校验。
-- [ ] 文档同步：ARCHITECTURE §2 `model` 条核对、CHANGELOG 未发布段追加一行。
+- [x] 测试先行：端口推导（多后端基数+序号、显式优先、显式与推导冲突报错）、各类校验失败的中文错误、happy path 构出正确 `Topology`。
+- [x] 实现 `model/`：模型 + 端口基数常量 + 纯函数解析 / 校验。
+- [x] 文档同步：ARCHITECTURE §2 `model` 条核对、CHANGELOG 未发布段追加一行。
 
 ## 5. 验收标准
 

@@ -24,9 +24,12 @@
     - `serverconfig/`（FR-05）：环境契约固化（纯函数，仅依赖 `contract/` 与 JDK）——`ServerProperties`（`server.properties` 读改写回、保留未涉及键）、`BackendBungeeCordConfig`（BungeeCord 三件套：`server.properties online-mode=false` + `spigot.yml settings.bungeecord` + `config/paper-global.yml proxies.bungee-cord.online-mode`）、`ProxyProtocolVersion`（经代理时机器人协议版本=后端版本的固定规则）、`DependencyInjections`（依赖注入缺失的**通用**中文报错机制，不写死具体依赖名）。不注册任务（由 `task/` 接入）。
     - `bot/` + `verify/`（FR-06）：机器人子进程启动与 pid 收尾、结果文件读取判 PASS/FAIL。`bot/` 含 `nodeCommand()`（跨平台 node 可执行）、`BotConnection`（按 `MC_TESTKIT_E2E_` 名构建机器人环境变量的纯函数）、`BotLauncher`（后台启 mineflayer、写 pid、场景 action 经 env `BOT_ACTION` 传给机器人内核）、`stopProcessByPidFile`（ProcessHandle 温和退出→超时强杀，缺失/已退出安全 no-op）；`verify/` 含 `ResultReader`（读 `<scenario>.properties`，缺失或 status≠PASS 抛中文错误）。仅依赖 `contract/` 与 JDK，不注册任务（由 `task/` 接入）。
     - `task/`（FR-04，整合器）：在 `McTestkitPlugin.apply()` 的 `afterEvaluate` 里，经 `TopologyResolver.resolve` 复用配置期校验后，按 `mcTestkit { }` 声明**数据驱动**注册任务。`NodeRuntimeInjection` 统一完成 FR-20 资源预检、`envOrPath` 解析、backend/proxy staging 与环境合并：一次任务先解析全部参与节点资源，成功后后端按“清理并保留运行库缓存 → 铺模板 → 写权威配置 → 注入 `dependencies { }`”准备；代理按“整目录清理 → 铺模板 → 写权威配置 → 平台准备 → 注入代理专属插件”准备。普通直连/经代理、集群、压测、单 serve、集群 serve 的全部既有启动入口都复用该入口，最终仍只由 `ServerLauncher` 启动 JVM 子进程。路径推导（`RunLayout`）、依赖解析（`resolveDependencyJars`）、代理配置生成与多 bot 展开保持原职责；任务副作用全在 `doLast`，后台进程继续以 pid + `finalizedBy`/`try-finally` 双保险收尾。只调上述各包公开 API，不反依赖消费项目 / `template/`。
+- **共享协议胶水构件**（FR-09，ADR-0014 取代 ADR-0002 的「暂不发布」条款；仓库内独立工程，不入 root settings）
+  - `harness-core/`（`top.wcpe.mc:harness-core`，Maven / maven.wcpe.top）：桩插件协议胶水库，**纯 Java、零 Kotlin 依赖**、paper-api compileOnly——`McTestkitEnv`（契约 env 常量 + 读取 + serve 空闲判断）、`McTestkitProtocol`（冻结控制协议常量）、`McTestkitResultWriter`（结果文件原子写出）、`McTestkitHarnessPlugin`（Bukkit 抽象基类：场景/结果文件解析、serve 空闲短路、判定收尾、E2E_READY、Paper/Folia 兼容调度）。
+  - `bot-core/`（`@wcpe/mc-testkit-bot`，npm）：mineflayer 机器人公共内核——`runBot({ scenarios })`（端口探测 / 重试 / action 分发 / 断线重连 / 优雅收尾）+ lib 工具（env / messages / normalize / random）。
 - **`template/`**（脚手架，纯拷贝物，不被插件代码依赖；FR-07）
-  - `harness/`：服务端桩插件骨架（Kotlin，框架无关的 Bukkit/Paper 插件，**独立 Gradle 子工程**，自带 `settings.gradle.kts` / `build.gradle.kts`、`paper-api` compileOnly，不入 root settings）：配置加载、入服派发场景、结果写出、与机器人的控制协议、内置 `smoke` + `example-bot` 两个场景。
-  - `bot/`：mineflayer 机器人内核（Node ≥18）：端口探测 + 连接/重试、控制消息等待、文本归一、按 action 分发场景、`example-bot` 示例；eslint + prettier。窗口/背包辅助、压测循环刻意不预置（避免把业务玩法固化进骨架），消费方按真实场景自补。
+  - `harness/`：服务端桩插件骨架（Kotlin，框架无关的 Bukkit/Paper 插件，**独立 Gradle 子工程**，自带 `settings.gradle.kts` / `build.gradle.kts`、`paper-api` compileOnly，不入 root settings）：**依赖 `harness-core`**，继承 `McTestkitHarnessPlugin`，只保留业务配置与示例场景（配置加载、入服派发场景、内置 `smoke` + `example-bot` 等）。
+  - `bot/`：mineflayer 机器人脚手架（Node ≥18）：**依赖 `@wcpe/mc-testkit-bot`**，入口只登记 action → 场景驱动表，场景驱动与示例留在 `src/scenarios/`；eslint + prettier。
   - 复制接线说明（`template/README.md`）。
   - 协议消息名 / 结果文件键 / env 名以**字面量**对齐 `contract/`（docs/API.md §3.3/3.4/3.5），不 import 插件包——保持 template 与插件零编译期耦合（双向都不依赖）。
 
@@ -64,8 +67,8 @@
 ## 7. 关键裁决与不做项
 
 - 技术栈与形态（Kotlin + Gradle 插件）+ 下载/运行自实现（不外挂第三方下载库）：见 [ADR-0001](adr/0001-gradle-plugin-and-self-provisioning.md)。
-- 复用策略（本期只做插件 + 模板，不发布共享桩/机器人库）：见 [ADR-0002](adr/0002-plugin-and-template-only.md)。
-- 平台范围（Paper/Folia + 三代理；不含 Spigot/Bukkit/Sponge）：见 [ADR-0003](adr/0003-p1-platform-scope.md)。
+- 复用策略（插件 + 模板 + 共享协议胶水构件 harness-core / bot-core）：见 [ADR-0002](adr/0002-plugin-and-template-only.md) 与取代它的 [ADR-0014](adr/0014-shared-harness-bot.md)。
+- 平台范围（Paper/Folia/Spigot 后端 + 三代理；不含 Bukkit/Sponge）：见 [ADR-0003](adr/0003-p1-platform-scope.md) 与取代它的 [ADR-0013](adr/0013-spigot-backend-support.md)。
 - 进程编排模型（后台代理/集群 + 前台 runServer + pid 收尾 + 环境契约固化）：见 [ADR-0004](adr/0004-orchestration-model.md)。
 - Kotlin 语言/API 版本锁 1.9（KTS 构建、纯 Kotlin、兼容 K1/K2 与 Gradle 版本范围）：见 [ADR-0005](adr/0005-kotlin-language-version.md)。
 - 集群/压测 DSL 与编排（场景块加法新增 `backends(...)`，不增顶层块；集群 = N 后端全后台 + 单 listener 代理 + 轮询结果文件；补充 ADR-0004/0006）：见 [ADR-0008](adr/0008-cluster-and-stress-dsl.md)。
@@ -73,4 +76,4 @@
 - Velocity modern forwarding（代理 `velocity.toml` + 后端 `paper-global proxies.velocity` + 共享 secret，Velocity 自有版本号；单端口故**不支持压测钉服**、`stress + via=velocity` 配置期报错；补充 ADR-0004/0008）：见 [ADR-0010](adr/0010-velocity-modern-forwarding.md)。
 - 持久手测 serve 模式（非自停挂起生命周期 + 新增 `serve` 顶层块 + 桩空闲保留哨兵场景 id，补充 ADR-0004）：见 [ADR-0011](adr/0011-persistent-serve-mode.md)。
 - 代理版本、独立 Java 运行时与 Java Agent 注入（FR-22，加法 DSL，补充 ADR-0010）：见 [ADR-0012](adr/0012-proxy-runtime-and-javaagent.md)。
-- **当前不做**：真实游戏客户端驱动；Spigot/Bukkit/Sponge 后端；共享桩 / 机器人发布物（留待第 2 个消费者验证后）。
+- **当前不做**：真实游戏客户端驱动；Bukkit/Sponge 后端；共享桩 / 机器人发布物（留待第 2 个消费者验证后）。Spigot 后端已纳入范围，见 [ADR-0013](adr/0013-spigot-backend-support.md)。

@@ -10,7 +10,7 @@
 ## 特性
 
 - **声明式拓扑 DSL**：`mcTestkit { }` 一行声明「后端 + 代理」拓扑，自动注册 prepare / 启动 bot / runServer / proxy / cluster / stress / verify / 缓存回写等任务，配置期中文报错。
-- **内置下载与运行**：自实现 Paper/Folia 后端与 Velocity/Waterfall/BungeeCord 代理的下载与运行（不外挂第三方下载库，ADR-0001），jar 缓存 + hash 校验复用，`MC_TESTKIT_E2E_*_JAR` 环境变量可覆盖。
+- **内置下载与运行**：自实现 Paper/Folia/Spigot 后端与 Velocity/Waterfall/BungeeCord 代理的下载与运行（不外挂第三方下载库，ADR-0001；Spigot 走受控公共构件源 + 多源回退 + 溯源，ADR-0013），jar 缓存 + hash 校验复用，`MC_TESTKIT_E2E_*_JAR` 环境变量可覆盖；启动按构件形态选路——自包含 jar 与 paperclip 引导件走 `java -jar`，运行目录带 `libraries/` 的 thin jar 经启动器 jar 传完整 classpath。
 - **多版本服务端拉起（v0.6.0，FR-21）**：8 个代表版本（1.7.10 / 1.8.8 / 1.12.2 / 1.16.5 / 1.17.1 / 1.19.4 / 1.20.1 / 1.21.1）Paper 下载、拉起与版本感知配置适配——按版本过滤 `server.properties` 键、生成 `paper.yml` / `paper-global.yml`、选择 Java 运行时（`MC_TESTKIT_JAVA_HOME_<版本段>` 覆盖 > `JAVA_HOME` 回退）；1.7.10 自动跳过 bot 并告警。另支持 Minecraft 26.x 新版号识别。
 - **全平台代理**：Velocity（modern forwarding）/ Waterfall / BungeeCord，单后端经代理、集群 `/server` 切换、崩溃接管 fallback 均实机跑通（ADR-0010）。
 - **多版本代理与诊断型 JVM 编排（v0.7.0，FR-22）**：`proxy` 可声明独立 `version`、`javaVersion`、`jvmArg(...)` 与 `javaAgent(...)`，`backend` 可声明 `jvmArg(...)` 与 `javaAgent(...)`；普通/代理/集群/压测/serve 全部启动路径统一传参，显式 Java 主版本经 `MC_TESTKIT_JAVA_HOME_<主版本>` 严格选择，不回退到不匹配的运行时（ADR-0012）。
@@ -22,6 +22,7 @@
 - **持久手测 serve（v0.4.0，FR-17/18/19）**：复用同一拓扑声明把「（代理 +）后端 + 插件」挂起供真人客户端连入手测——单后端 / 集群 `/server` 切服 / 可选并起 bot 人机混场；Ctrl+C / `stop<Key>Serve` 三重收尾、端口不漏。
 - **固化环境契约**：`server.properties` 真实读改写回、BungeeCord/Velocity 配置 YAML 对象化深合并、经代理固定 bot 协议版本、依赖（数据源/Redis）注入校验，一处固化消费方默认生效。
 - **脚手架模板**：`template/` 提供桩插件骨架（Paper/Folia 双兼容）+ mineflayer bot 内核 + 示例场景，照抄即用。
+- **共享协议胶水构件（FR-09，ADR-0014）**：桩侧 `harness-core`（Maven，纯 Java 零 Kotlin 依赖：契约 env / 结果原子写出 / 桩基类）+ 机器人侧 `@wcpe/mc-testkit-bot`（npm：端口探测 / 重连 / action 分发内核）——`template/` 是它们的示例消费者，消费方依赖构件而非手写胶水。
 - **自举实机 E2E**：CI 实机跑通全矩阵——单服(±bot) / 经代理（Waterfall·BungeeCord·Velocity）/ 集群 / 压测 / 单场景多 bot / 崩溃接管 / Folia 后端。
 
 ## 支持的平台
@@ -97,7 +98,7 @@ proxy("wf") {
 
 三层协作（详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)）：
 
-- **Gradle 编排插件**（本仓库核心，`top.wcpe.mc-testkit`）：内置下载并运行 Paper/Folia 后端与 Velocity/Waterfall/BungeeCord 代理（下载/运行模块自实现，不外挂第三方下载库，见 ADR-0001）；用 `mcTestkit { }` DSL 声明「代理 + 多后端」拓扑，自动注册 prepare / 启动 bot / runServer / proxy / cluster / stress / verify / 缓存回写等任务，并固化已知环境契约。
+- **Gradle 编排插件**（本仓库核心，`top.wcpe.mc-testkit`）：内置下载并运行 Paper/Folia/Spigot 后端与 Velocity/Waterfall/BungeeCord 代理（下载/运行模块自实现，不外挂第三方下载库，见 ADR-0001；Spigot 见 ADR-0013）；用 `mcTestkit { }` DSL 声明「代理 + 多后端」拓扑，自动注册 prepare / 启动 bot / runServer / proxy / cluster / stress / verify / 缓存回写等任务，并固化已知环境契约。
 - **服务端桩插件**（随项目，模板提供骨架）：装备入服玩家、按场景驱动、与 bot 收发控制消息、判定结果写结果文件。
 - **mineflayer 机器人**（随项目，模板提供内核）：模拟真实玩家入服，驱动购买/交互等端到端场景。
 

@@ -11,7 +11,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 ### 非目标
 
 - 不替消费项目编写具体业务场景与断言（场景逻辑天然项目特定，框架只提供骨架与编排）。
-- 本期不发布共享 Kotlin 桩基类库、不发布共享 npm 机器人包（避免从单一用例过早抽象，留待第 2 个真实消费者验证后再抽，见 ADR-0002）。
+- 已发布共享协议胶水构件：`harness-core`（Maven，桩侧）+ `@wcpe/mc-testkit-bot`（npm，机器人侧，见 ADR-0014 取代 ADR-0002）。共享的是**协议胶水**；消费方业务场景 / 断言仍留在各项目，不入库。
 - 不取代单元测试框架（JUnit / MockBukkit 等仍是单元/集成测试的职责）。
 - 不驱动真实游戏客户端（Fabric/Forge mod 客户端）；客户端行为由 mineflayer 机器人模拟。
 - 不支持 Bukkit/Sponge 后端（不列入计划，见 ADR-0003；Spigot 已纳入，见 ADR-0013）。
@@ -41,7 +41,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 | FR-06 | 机器人驱动 + 结果判定：启动机器人进程、机器人↔桩控制协议、读结果文件判 PASS/FAIL | P1 | 已交付@v0.1.0 |
 | FR-07 | `template/` 脚手架：桩插件骨架 + mineflayer 机器人内核 + 一个示例场景 + 复制说明 | P1 | 已交付@v0.1.0 |
 | FR-08 | 以首个接入的真实插件项目作消费者验证：迁移其编排到本插件，跑通 smoke 与「经 Waterfall 代理购买」 | P1 | 已交付@v0.1.0 |
-| FR-09 | 抽出可发布的共享桩基类库 / 机器人包（第 2 个消费者验证后） | P2 | 计划 |
+| FR-09 | 抽出可发布的共享桩基类库 / 机器人包：`harness-core`（Maven，桩协议胶水：契约 env / 结果原子写出 / serve 空闲 / 桩基类）+ `@wcpe/mc-testkit-bot`（npm，机器人内核：端口探测 / 重连 / action 分发 / 收尾），`template/` 改为依赖构件（第 2 个消费者验证后，见 ADR-0014 取代 ADR-0002）| P2 | 开发中 |
 | FR-10 | 多后端集群编排：声明「N 后端（同 data-group）+ 代理」拓扑，机器人经代理在后端间 `/server` 切换，桩跨服判定一致性（扩展 scenario 块 `backends(...)`，见 ADR-0008）| P3 | 已交付@v0.1.0 |
 | FR-11 | 压测编排：N 服 × M bot 钉服持续随机动作（N-listener 代理或直连），每服桩收集各 bot `E2E_STRESS_RESULT` 聚合判定；业务不变量（不超卖）由消费方桩查共享 DB 断言（扩展 scenario 块 `stress{}` + 规模 env，见 ADR-0008）| P3 | 已交付@v0.1.0 |
 | FR-12 | 每后端身份注入：编排起每个后端时下发本后端声明名 env `MC_TESTKIT_E2E_BACKEND_NAME`（与下发给 bot 的 `CLUSTER_BACKENDS` 同源、有序对应），消费方据此 per-backend 派生身份（如各服不同 `server-id`）；编排只负责告诉每个后端「它是谁」，不规定怎么用（见 docs/specs/fr-12-per-backend-identity.md）| P1 | 已交付@v0.2.0 |
@@ -84,7 +84,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 
 各期只描述**主题 / 目标**；具体哪个 FR 属于哪期，以 §4 FR 表的优先级列为唯一来源。
 
-- **第一期（MVP）**：把核心立起来——Gradle 编排插件（Paper/Folia 后端 + Velocity/Waterfall/BungeeCord 代理）+ 脚手架模板，以首个接入项目跑通。
+- **第一期（MVP）**：把核心立起来——Gradle 编排插件（Paper/Folia/Spigot 后端 + Velocity/Waterfall/BungeeCord 代理）+ 脚手架模板，以首个接入项目跑通。
 - **第二期**：在第 2 个真实消费者验证后抽出可发布的共享桩 / 机器人库。
 - **第三期**：完善——更多拓扑形态、并发压测沉淀、持久手测/沙盒模式（serve）、文档与示例丰富。
 
@@ -92,7 +92,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 
 ## 8. 术语表
 
-- **后端（backend）**：承载游戏逻辑的服务端（Paper/Folia）。
+- **后端（backend）**：承载游戏逻辑的服务端（Paper/Folia/Spigot，见 ADR-0013）。
 - **代理（proxy）**：玩家入口、转发到后端的代理（Velocity/Waterfall/BungeeCord）。
 - **拓扑（topology）**：一次测试里代理与后端的组合与路由关系。
 - **桩插件（harness）**：装进被测后端、装备玩家/驱动场景/判定结果的测试用服务端插件。

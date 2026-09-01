@@ -8,6 +8,7 @@
 
 ### 新增
 - **非自包含（thin jar）服务端拉起**（`provision/`）：`ServerLauncher` 识别运行目录下的 `libraries/`，对这类构件改用「只含清单的启动器 jar」传完整 classpath（同时规避 Windows 命令行长度限制）；`Class-Path` 条目按 UTF-8 百分号编码，路径含空格 / 中文时不再被 JVM 截断。自包含 jar 与 paperclip 引导件仍走 `java -jar`，启动前清理上一轮残留的启动器 jar。
+- **共享协议胶水构件（FR-09，ADR-0014 取代 ADR-0002 的「暂不发布」条款）**：桩侧 `harness-core`（`top.wcpe.mc:harness-core:0.1.0`，Maven——契约 env 读取 / 结果文件原子写出 / serve 空闲 / 桩基类 `McTestkitHarnessPlugin`，**纯 Java 零 Kotlin 依赖**）+ 机器人侧 `@wcpe/mc-testkit-bot@0.1.0`（npm——`runBot({ scenarios })` 端口探测 / 重连 / action 分发内核）。`template/harness` 与 `template/bot` 改为依赖构件；真实消费者 MCE（MultiCurrencyEconomy）已迁移并实机跑通离线存款 → relay → 事件投递 E2E。
 
 ## [0.7.0] - 2026-08-29
 

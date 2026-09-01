@@ -145,12 +145,12 @@ mcTestkit {
 
 用于覆盖默认值、提供 jar / 模板路径、调节规模与超时（须可移植、不写死本机绝对路径）。前缀固定 `MC_TESTKIT_E2E_`（ADR-0006，本期不做 DSL 可配）。已冻结的核心名（**全集随 FR-02/04/06 补全，前缀与风格不变**）：
 
-- 服务端/模板：`…MINECRAFT_VERSION`、`…SERVER_TEMPLATE_DIR`、`…PLUGIN_UNDER_TEST_JAR`、`…PAPER_JAR`/`…FOLIA_JAR`（后端 jar 覆盖，离线/CI 逃生口）。其中旧全局 `…SERVER_TEMPLATE_DIR` 的相对值按 JVM / Gradle 当前工作目录解析；新增节点 `templateDirectory(envOrPath)` 的相对值才按应用项目 `Project.projectDir` 解析。
+- 服务端/模板：`…MINECRAFT_VERSION`、`…SERVER_TEMPLATE_DIR`、`…PLUGIN_UNDER_TEST_JAR`、`…PAPER_JAR`/`…FOLIA_JAR`/`…SPIGOT_JAR`（后端 jar 覆盖，离线/CI 逃生口）。其中旧全局 `…SERVER_TEMPLATE_DIR` 的相对值按 JVM / Gradle 当前工作目录解析；新增节点 `templateDirectory(envOrPath)` 的相对值才按应用项目 `Project.projectDir` 解析。
 - 桩↔编排交接（编排起后端时下发，桩据此判定）：`…SCENARIO`（本次场景 id = **DSL 场景名原样下发**，桩据此选场景；故 DSL 场景名须与桩 `ScenarioName` id、机器人 `action` 用**同一个 kebab-case id**、三处一致，否则桩无法匹配场景而判失败）、`…RESULT_FILE`（结果文件**绝对路径** = verify 读取处，桩写到这里二者对齐）、`…BACKEND_NAME`（**本后端的声明名**，编排起**每个**后端时下发，与 `…CLUSTER_BACKENDS` 同源、有序对应；集群/压测下各服各不相同，消费方据此 per-backend 派生身份——典型用法是拼不同 `server-id` 后缀。编排只「告诉每个后端它是谁」，不规定怎么用，见 FR-12）。
 - **持久手测保留场景 id**（FR-17，ADR-0011）：serve 起后端时经 `…SCENARIO` 下发保留 id `__mc_testkit_serve__`（契约常量 `McTestkitContract.SERVE_SCENARIO_ID`），告诉桩**空闲**（不驱动 / 不判定 / 不关服）；`template/harness` 据此空闲（未同步新模板的老桩遇此未知 id 在 `onEnable` 抛错被禁用、服务端照常挂起，对任何桩都安全）。serve **不下发** `…RESULT_FILE`（不判定）。此 id 用双下划线前后缀与消费方 kebab-case 业务场景名划清边界。
 - 代理（jar/版本/端口）：`…WATERFALL_JAR`/`…WATERFALL_VERSION`、`…VELOCITY_JAR`/`…VELOCITY_VERSION`、`…BUNGEECORD_JAR`/`…BUNGEECORD_VERSION`、`…PROXY_PORT`、`…PROXY_BASE_PORT`。
 - 节点 Java（FR-22）：`MC_TESTKIT_JAVA_HOME_<主版本>`，如 `MC_TESTKIT_JAVA_HOME_25`。显式声明的 proxy `javaVersion` 缺失时启动前中文失败；backend 继续沿用 MC 版本段选择并可通过 `jvmArg`/`javaAgent` 注入诊断参数。
-- 机器人：`…BOT_ACTION`（场景 action / 场景 id，机器人内核据此分发）、`…BOT_HOST`/`…BOT_PORT`/`…BOT_USERNAME`/`…BOT_AUTH`/`…BOT_VERSION`、`…BOT_CONNECT_TIMEOUT_MS`/`…BOT_RETRY_DELAY_MS`/`…BOT_READY_TIMEOUT_MS`。
+- 机器人：`…BOT_ACTION`（场景 action / 场景 id，机器人内核据此分发）、`…BOT_HOST`/`…BOT_PORT`/`…BOT_USERNAME`/`…BOT_AUTH`/`…BOT_VERSION`、`…BOT_CONNECT_TIMEOUT_MS`/`…BOT_RETRY_DELAY_MS`/`…BOT_READY_TIMEOUT_MS`、`…BOT_RECEIPT_FILE`（机器人**就绪回执文件**的绝对路径，位于结果目录 `bot-<key>.receipt.jsonl`；机器人就绪/超时状态落此文件，供编排判机器人是否入服，属框架 ↔ 机器人契约，消费方一般不需改动）。
 - 集群（FR-10）：`…CLUSTER_BACKENDS`（集群场景的**有序后端名**，逗号分隔；编排起 bot 时下发，bot 据此经代理 `/server <name>` 逐个切换到后续后端）。
 - 压测（FR-11）：`…STRESS_DURATION_SECONDS`（施压秒数，编排→bot 与桩）、`…BOT_INDEX`（每 bot 进程序号；FR-16 同质批量复制亦复用）、`…STRESS_RANDOM_SEED`（共享随机种子；bot 用 `seed xor botIndex` 播种 RNG 使各 bot 可复现且互异）。规模（服数 / 每服 bot 数）由 DSL `backends(...)` + `stress { botsPerServer }` 表达，不走 env。经代理时机器人协议版本仍由编排固定为后端版本（环境契约，FR-05）。
 - 单场景多 bot（FR-16）：**不新增 env**，复用 `…BOT_USERNAME`（多进程时编排强制下发**唯一**名，盖过消费方单值 override）、`…BOT_ACTION`（各 bot 各自的分发动作）、`…BOT_INDEX`（同质 `count = N` 复制时下发 1..N，桩据此按 index 聚合）；集群下每个 bot 仍各自收到 `…CLUSTER_BACKENDS` 以经代理 `/server` 切换。规模（份数 / 角色）由 DSL `bot { count }` + 多个 `bot("角色")` 表达，不走 env（ADR-0009）。
@@ -180,4 +180,13 @@ mcTestkit {
 
 > **桩怎么知道写哪**：编排起后端时经 `MC_TESTKIT_E2E_SCENARIO` / `MC_TESTKIT_E2E_RESULT_FILE`（§3.3）下发场景与结果文件绝对路径；桩优先读这两个 env（覆盖自身配置默认），把结果写到 `RESULT_FILE` = verify 读取处。这样通用编排无需知道各消费方桩的配置格式即可对齐结果位置。`template/harness` 已按此实现。
 >
-> **须原子落盘**：桩写结果文件必须**原子**完成（写同目录临时文件 + 原子 rename 替换），避免编排 verify 读到「写了一半」的结果文件而误判。单后端前台路径靠「后端进程退出后才 verify」时序天然隔离，但集群/压测轮询结果文件、以及消费方桩异步写时存在并发窗口，故约定为契约。`template/harness` 的 `ScenarioResultWriter` 已按此实现（消费方自写桩须照此保证）。
+> **须原子落盘**：桩写结果文件必须**原子**完成（写同目录临时文件 + 原子 rename 替换），避免编排 verify 读到「写了一半」的结果文件而误判。单后端前台路径靠「后端进程退出后才 verify」时序天然隔离，但集群/压测轮询结果文件、以及消费方桩异步写时存在并发窗口，故约定为契约。共享库 `harness-core` 的 `McTestkitResultWriter` 已按此实现；`template/harness` 继承 `McTestkitHarnessPlugin` 即获得该保证（消费方自写桩须照此保证，见 §4）。
+
+## 4. 共享构件（FR-09，ADR-0014）
+
+桩与机器人的协议胶水以可发布构件提供，消费方依赖构件而非照抄 / 手写（见 docs/specs/fr-09-shared-harness-bot.md）：
+
+- **`harness-core`**：`top.wcpe.mc:harness-core:0.1.0`（Maven，maven.wcpe.top）。纯 Java、零 Kotlin 依赖、paper-api 仅 compileOnly。提供 `McTestkitEnv`（契约 env 常量 / 读取 / serve 空闲判断）、`McTestkitProtocol`（冻结控制协议常量）、`McTestkitResultWriter`（结果文件原子写出）、`McTestkitHarnessPlugin`（Bukkit 抽象基类：场景/结果文件解析、serve 空闲短路、判定收尾、E2E_READY、Paper/Folia 兼容调度）。
+- **`@wcpe/mc-testkit-bot`**：`@wcpe/mc-testkit-bot@0.1.0`（npm）。mineflayer 公共内核 `runBot({ scenarios })`（端口探测 / 重试 / action 分发 / 断线重连 / 优雅收尾），子路径 `@wcpe/mc-testkit-bot/lib/{messages,random,normalize,env}`。
+
+**消费方接线**：桩插件 `implementation("top.wcpe.mc:harness-core:0.1.0")`（打进插件 jar），继承 `McTestkitHarnessPlugin` 写业务场景；机器人 `npm i @wcpe/mc-testkit-bot`，入口登记 action → 场景驱动表。`template/` 是这两个构件的示例消费者。

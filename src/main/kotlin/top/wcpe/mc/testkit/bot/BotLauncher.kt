@@ -19,12 +19,12 @@ fun botLogFile(resultsDir: File, key: String): File = File(resultsDir, "bot-$key
 fun botPidFile(resultsDir: File, key: String): File = File(resultsDir, "bot-$key.pid")
 
 /**
- * 机器人子进程启动器（FR-06，编排模型见 ADR-0004）。
+ * 机器人子进程启动器（机器人驱动与结果判定，编排模型见 ADR-0004）。
  *
  * 把 mineflayer 机器人作为**后台进程**拉起：`node <脚本>` 在机器人工作目录运行、合并 stderr、
  * 日志 append 到 `bot-<key>.log`、pid 写 `bot-<key>.pid` 供收尾按 pid 杀（保证不残留占端口）。
  *
- * 不在此连真服 / 判定——那是机器人 Node 内核（FR-07 template/）与桩写出的结果文件（[top.wcpe.mc.testkit.verify.ResultReader]）的事。
+ * 不在此连真服 / 判定——那是机器人 Node 内核（模板脚手架 template/）与桩写出的结果文件（[top.wcpe.mc.testkit.verify.ResultReader]）的事。
  */
 object BotLauncher {
 

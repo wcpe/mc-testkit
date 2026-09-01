@@ -5,7 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 
 /**
- * 集群代理配置（FR-10，ADR-0008）：单 listener + N 具名 server（server 名=后端名，供 bot `/server` 切换）。
+ * 集群代理配置（集群编排，ADR-0008）：单 listener + N 具名 server（server 名=后端名，供 bot `/server` 切换）。
  */
 class ClusterProxyConfigTest {
 

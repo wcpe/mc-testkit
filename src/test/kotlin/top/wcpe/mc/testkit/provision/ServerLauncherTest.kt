@@ -17,9 +17,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * [ServerLauncher] 启动助手单元测试（FR-02）。
+ * [ServerLauncher] 启动助手单元测试（内置下载与运行）。
  *
- * 不连真实服务端 / 代理（那属 FR-08 实机维度）。这里用一个**自带 main 的极小可运行 jar**
+ * 不连真实服务端 / 代理（那属 首个消费者验证 实机维度）。这里用一个**自带 main 的极小可运行 jar**
  * （现造一个会立即退出的 JVM 程序）验证：以子进程 `java -jar` 启动、写 pid 文件、日志落盘、
  * cwd 为运行目录、进程能正常起止。覆盖跨平台进程启动 / pid 落盘这一高风险区的正常路径。
  *

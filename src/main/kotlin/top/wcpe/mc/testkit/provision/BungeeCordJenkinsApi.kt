@@ -1,7 +1,7 @@
 package top.wcpe.mc.testkit.provision
 
 /**
- * SpigotMC Jenkins 客户端，用于解析 BungeeCord 构建（FR-02）。
+ * SpigotMC Jenkins 客户端，用于解析 BungeeCord 构建（内置下载与运行）。
  *
  * BungeeCord 无版本，仅由 Jenkins 构建号标识，且 Jenkins 不暴露与下载产物匹配的校验和——
  * 故下载侧不校验远端 hash，只校验"结构合法 jar"+ 记录本地 hash 防本地损坏（见 [JarProvisionService]）。

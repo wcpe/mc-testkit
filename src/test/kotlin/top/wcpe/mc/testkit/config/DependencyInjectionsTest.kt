@@ -8,7 +8,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * 依赖注入缺失校验单元测试（FR-05，环境契约高风险区）。
+ * 依赖注入缺失校验单元测试（环境契约，环境契约高风险区）。
  *
  * 验证「缺失 → 明确中文报错；齐全 → 不报错」，且机制通用、不写死具体依赖名。
  */

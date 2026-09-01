@@ -11,7 +11,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * 单场景多 bot（FR-16，ADR-0009）的配置期校验：count≥1、多 bot 须各有唯一 role、压测禁 count/多 bot。
+ * 单场景多 bot（单场景多 bot，ADR-0009）的配置期校验：count≥1、多 bot 须各有唯一 role、压测禁 count/多 bot。
  * 纯函数穷举，复用 [TopologyResolver]。
  */
 class MultiBotValidationTest {

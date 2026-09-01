@@ -5,7 +5,7 @@ import top.wcpe.mc.testkit.contract.McTestkitDefaults
 /**
  * 后端节点声明。
  *
- * FR-01 只承载「声明值」；端口推导、平台落地为下载/运行任务等行为属 FR-03/FR-02/FR-04。
+ * 插件骨架 只承载「声明值」；端口推导、平台落地为下载/运行任务等行为属 拓扑 DSL/内置下载与运行/任务自动编排。
  */
 @McTestkitDsl
 class BackendSpec(val name: String) {
@@ -15,7 +15,7 @@ class BackendSpec(val name: String) {
     /** Minecraft 版本（默认 [McTestkitDefaults.MINECRAFT_VERSION]）。 */
     var version: String = McTestkitDefaults.MINECRAFT_VERSION
 
-    /** 监听端口；null 表示留待拓扑解析（FR-03）按端口基数推导。 */
+    /** 监听端口；null 表示留待拓扑解析（拓扑 DSL）按端口基数推导。 */
     var port: Int? = null
 
     private val mutableEnvironment = LinkedHashMap<String, String>()
@@ -85,7 +85,7 @@ class ProxySpec(val name: String) {
     private val mutableJavaAgents = mutableListOf<String>()
     private var mutableTemplateDirectory: String? = null
 
-    /** 该代理转发到的后端名（按声明顺序，路由目标存在性由 FR-03 配置期校验）。 */
+    /** 该代理转发到的后端名（按声明顺序，路由目标存在性由 拓扑 DSL 配置期校验）。 */
     val routes: List<String> get() = mutableRoutes.toList()
 
     /** 该代理专属插件 jar 的原始声明（环境变量名或路径，按声明顺序）。 */
@@ -139,7 +139,7 @@ class ProxySpec(val name: String) {
 }
 
 /**
- * 机器人驱动声明（场景内可选；一个场景可声明多个，FR-16）。
+ * 机器人驱动声明（场景内可选；一个场景可声明多个，单场景多 bot）。
  *
  * @property role 角色标签（`bot("admin") { }` 的名字；匿名 `bot { }` 为 null）。同场景声明多个 bot 时
  *   须各有唯一 role 以区分（异质角色 / 多进程的日志·pid·username 基名），见 ADR-0009。
@@ -153,7 +153,7 @@ class BotSpec(val role: String? = null) {
     var action: String? = null
 
     /**
-     * 同质复制份数（FR-16）：>1 表示把本 bot 复制 N 份，各唯一 username（基名 + 序号）、经 `BOT_INDEX`
+     * 同质复制份数（单场景多 bot）：>1 表示把本 bot 复制 N 份，各唯一 username（基名 + 序号）、经 `BOT_INDEX`
      * （1..N）区分，都用同一 action / env。默认 1（单进程）。压测场景禁用（规模用 `stress { botsPerServer }`
      * 表达）。
      *
@@ -180,7 +180,7 @@ class BotSpec(val role: String? = null) {
 }
 
 /**
- * 压测维度声明（场景内可选，FR-11）。声明 `stress` 即「压测场景」（ADR-0008）：复用
+ * 压测维度声明（场景内可选，压测编排）。声明 `stress` 即「压测场景」（ADR-0008）：复用
  * [ScenarioSpec.backends] 表 N 服，每服起 [botsPerServer] 个 bot 进程**钉在本服**持续随机施压
  * （不 `/server` 切换，区别于集群跨服场景）。规模与时长在配置期校验须为正。
  */
@@ -210,7 +210,7 @@ class ScenarioSpec(val name: String) {
     private val mutableBackends = mutableListOf<String>()
 
     /**
-     * 集群场景的多后端引用（按声明顺序）。非空即「集群场景」（FR-10，ADR-0008）：
+     * 集群场景的多后端引用（按声明顺序）。非空即「集群场景」（集群编排，ADR-0008）：
      * 须配 [via] 代理（bot 经代理 `/server` 在后端间切换），且与单后端 [backend] 互斥。
      */
     val backendRefs: List<String> get() = mutableBackends.toList()
@@ -222,7 +222,7 @@ class ScenarioSpec(val name: String) {
 
     private val mutableBots = mutableListOf<BotSpec>()
 
-    /** 该场景声明的全部机器人驱动（按声明顺序；空表示无机器人，仅 prepare + verify，FR-16）。 */
+    /** 该场景声明的全部机器人驱动（按声明顺序；空表示无机器人，仅 prepare + verify，单场景多 bot）。 */
     val botSpecs: List<BotSpec> get() = mutableBots.toList()
 
     /** 首个机器人声明（向后兼容单 bot 读取 + 压测取首个）；null 表示无机器人。 */
@@ -234,7 +234,7 @@ class ScenarioSpec(val name: String) {
     }
 
     /**
-     * 声明该场景由一个**具名角色** mineflayer 机器人驱动（FR-16）。同场景声明多个 bot 时须各有唯一
+     * 声明该场景由一个**具名角色** mineflayer 机器人驱动（单场景多 bot）。同场景声明多个 bot 时须各有唯一
      * role（异质角色，如 `admin` / `target`）；role 兼作该 bot 的日志/pid/username 基名。
      */
     fun bot(role: String, configure: BotSpec.() -> Unit) {
@@ -244,7 +244,7 @@ class ScenarioSpec(val name: String) {
     private var mutableStress: StressSpec? = null
 
     /**
-     * 该场景的压测维度声明；非 null 即「压测场景」（FR-11，ADR-0008）：复用 [backends] 表 N 服、
+     * 该场景的压测维度声明；非 null 即「压测场景」（压测编排，ADR-0008）：复用 [backends] 表 N 服、
      * 每服起 `botsPerServer` 个 bot 钉服持续施压，`via` 可选（有→N-listener 钉服代理，无→直连）。
      */
     val stressSpec: StressSpec? get() = mutableStress
@@ -256,7 +256,7 @@ class ScenarioSpec(val name: String) {
 }
 
 /**
- * 持久手测（serve）目标声明（FR-17，ADR-0011）。
+ * 持久手测（serve）目标声明（持久手测 serve，ADR-0011）。
  *
  * 声明「把哪个后端（+ 可选经哪个代理）拉起并挂住，供真人客户端连入手测」。与 [ScenarioSpec] 不同，
  * serve **不驱动 bot、不判定 PASS/FAIL**——它只起服并阻塞到手动停。生成 `serve<Key>` / `stop<Key>Serve`
@@ -275,12 +275,12 @@ class ServeSpec(val name: String) {
     private val mutableBackends = mutableListOf<String>()
 
     /**
-     * 集群 serve 的多后端引用（按声明顺序，FR-18）。非空即**集群 serve**：把这些后端 + 代理整套挂起，
+     * 集群 serve 的多后端引用（按声明顺序，集群 serve）。非空即**集群 serve**：把这些后端 + 代理整套挂起，
      * 真人经代理 `/server` 在它们间切换手测。须配 [via] 代理，且与单后端 [backend] 互斥。
      */
     val backendRefs: List<String> get() = mutableBackends.toList()
 
-    /** 声明集群 serve 同时挂起的多个后端（真人经代理 `/server` 在它们间切换手测，FR-18）。 */
+    /** 声明集群 serve 同时挂起的多个后端（真人经代理 `/server` 在它们间切换手测，集群 serve）。 */
     fun backends(vararg names: String) {
         mutableBackends += names
     }
@@ -288,18 +288,18 @@ class ServeSpec(val name: String) {
     private val mutableBots = mutableListOf<BotSpec>()
 
     /**
-     * 该 serve 期间可选起的机器人驱动（FR-19；空 = 纯手测无 bot）。serve 起这些 bot 把环境驱到某状态
+     * 该 serve 期间可选起的机器人驱动（serve 人机混场；空 = 纯手测无 bot）。serve 起这些 bot 把环境驱到某状态
      * （如造点数据 / 模拟其他玩家），但**不按结果文件判定 / 收尾**——挂住让真人同时连入「人机混场」同测，
-     * 直到手动停时随后端 / 代理一并收尾。多 bot 规则同场景（FR-16）：各唯一 role、`count` 同质复制。
+     * 直到手动停时随后端 / 代理一并收尾。多 bot 规则同场景（单场景多 bot）：各唯一 role、`count` 同质复制。
      */
     val botSpecs: List<BotSpec> get() = mutableBots.toList()
 
-    /** 声明一个匿名 bot 在 serve 期间驱动（人机混场，FR-19）。 */
+    /** 声明一个匿名 bot 在 serve 期间驱动（人机混场，serve 人机混场）。 */
     fun bot(configure: BotSpec.() -> Unit) {
         mutableBots += BotSpec().apply(configure)
     }
 
-    /** 声明一个具名角色 bot 在 serve 期间驱动（同 serve 多 bot 须各唯一 role，FR-19）。 */
+    /** 声明一个具名角色 bot 在 serve 期间驱动（同 serve 多 bot 须各唯一 role，serve 人机混场）。 */
     fun bot(role: String, configure: BotSpec.() -> Unit) {
         mutableBots += BotSpec(role).apply(configure)
     }

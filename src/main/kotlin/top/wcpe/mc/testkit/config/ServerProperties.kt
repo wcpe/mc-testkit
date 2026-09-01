@@ -4,7 +4,7 @@ import java.io.File
 import java.util.Properties
 
 /**
- * 运行目录 `server.properties` 的纯函数式编辑（FR-05）。
+ * 运行目录 `server.properties` 的纯函数式编辑（环境契约）。
  *
  * 「读现有 properties → 改指定键 → 写回」，**保留未涉及键**；只依赖 JDK [Properties] / [File]，
  * 不耦合 Gradle，便于用临时目录穷举单测。键名是 Minecraft `server.properties` 既定字面量，
@@ -45,7 +45,7 @@ object ServerProperties {
     /** 出生点保护半径（设 0 便于 bot 在出生点附近活动）。 */
     const val SPAWN_PROTECTION = "spawn-protection"
 
-    /** 难度（测试环境默认 `peaceful`，保护测试玩家不被怪物 / 环境杀；消费方模板已设则保留，见 FR-13）。 */
+    /** 难度（测试环境默认 `peaceful`，保护测试玩家不被怪物 / 环境杀；消费方模板已设则保留，见 默认 peaceful 难度）。 */
     const val DIFFICULTY = "difficulty"
 
     /** 端口缺省回退值（运行目录无 `server.properties` 或未写 server-port 时用）。 */
@@ -88,7 +88,7 @@ object ServerProperties {
         load(runDir).getProperty(SERVER_PORT)?.toIntOrNull() ?: DEFAULT_PORT
 
     /**
-     * 按 Minecraft 版本过滤不支持的键 + 转换 `level-type`（FR-21）。
+     * 按 Minecraft 版本过滤不支持的键 + 转换 `level-type`（多版本服务端拉起）。
      *
      * 不同版本的服务端对 `server.properties` 键的支持范围不同，写入不存在的键会被忽略或导致异常。
      * 本函数在调用方把 overrides 喂给 [edit] 之前做版本感知过滤：

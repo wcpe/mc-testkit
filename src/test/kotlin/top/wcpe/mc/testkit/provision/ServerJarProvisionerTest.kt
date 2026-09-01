@@ -12,7 +12,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * [ServerJarProvisioner] 解析优先级单元测试（FR-02 核心行为）。
+ * [ServerJarProvisioner] 解析优先级单元测试（内置下载与运行 核心行为）。
  *
  * 重点验证："设了 `*_JAR` 环境变量 → 返回该覆盖路径且**全程不发网络**"，以及 `*_VERSION` 覆盖被采纳。
  * 用「会爆炸的下载核心」做替身：两 API 与下载函数一旦被调用即抛错——任何走到网络的路径都会

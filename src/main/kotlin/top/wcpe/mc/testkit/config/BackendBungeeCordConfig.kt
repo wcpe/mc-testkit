@@ -3,14 +3,14 @@ package top.wcpe.mc.testkit.config
 import java.io.File
 
 /**
- * 让后端进 BungeeCord 代理模式的三件套（FR-05，一处固化、消费方默认生效；见 ADR-0004）。
+ * 让后端进 BungeeCord 代理模式的三件套（环境契约，一处固化、消费方默认生效；见 ADR-0004）。
  *
  * 经代理（Waterfall/BungeeCord 等）跑场景时，三件事缺一不可，否则后端会拒绝代理握手或 UUID 不一致：
  * 1. `server.properties`：`online-mode=false` + `enforce-secure-profile=false`（离线 bot 经离线代理进服）。
  * 2. `spigot.yml`：`settings.bungeecord: true`（接受代理转发的握手）。
  * 3. `config/paper-global.yml`：`proxies.bungee-cord.online-mode: false`（按转发 UUID 处理）。
  *
- * **版本感知（FR-21）**：[version] 决定第三件写哪个文件——1.19+ 写 `config/paper-global.yml`（已有逻辑保留），
+ * **版本感知（多版本服务端拉起）**：[version] 决定第三件写哪个文件——1.19+ 写 `config/paper-global.yml`（已有逻辑保留），
  * 1.13–1.18 写 `paper.yml`，1.7–1.12 跳过（BungeeCord 模式经 `spigot.yml` 即可）。`server.properties` 的
  * overrides 经 [ServerProperties.versionAwareOverrides] 按版本过滤不支持的键。
  *
@@ -29,14 +29,14 @@ object BackendBungeeCordConfig {
             ServerProperties.ONLINE_MODE to "false",
             ServerProperties.ENFORCE_SECURE_PROFILE to "false",
         )
-        // 按版本过滤不支持的键（FR-21）
+        // 按版本过滤不支持的键（多版本服务端拉起）
         val overrides = ServerProperties.versionAwareOverrides(version, rawOverrides)
         ServerProperties.edit(runDir, overrides, comment = "mc-testkit E2E BungeeCord 后端 server.properties")
         // spigot.yml：settings.bungeecord = true（深合并，保留其它 settings 键）
         editYaml(File(runDir, "spigot.yml")) { root ->
             setNested(root, listOf("settings", "bungeecord"), true)
         }
-        // paper 代理在线模式配置：1.19+ → config/paper-global.yml，1.13–1.18 → paper.yml，1.7–1.12 跳过（FR-21）
+        // paper 代理在线模式配置：1.19+ → config/paper-global.yml，1.13–1.18 → paper.yml，1.7–1.12 跳过（多版本服务端拉起）
         if (MinecraftVersionGroup.needsPaperGlobal(version)) {
             editYaml(File(runDir, "config/paper-global.yml")) { root ->
                 setNested(root, listOf("proxies", "bungee-cord", "online-mode"), false)

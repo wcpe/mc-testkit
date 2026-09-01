@@ -3,7 +3,7 @@ package top.wcpe.mc.testkit.provision
 import java.io.File
 
 /**
- * 下载 jar 的缓存路径推导（FR-02，纯函数）。
+ * 下载 jar 的缓存路径推导（内置下载与运行，纯函数）。
  *
  * 布局：`<cacheRoot>/<platform>/<version>/<build>.jar`；BungeeCord 无版本，版本段用固定占位
  * `bungeecord` 以让分层一致。缓存根由调用方注入（任务侧传 Gradle 共享缓存目录），**不写死本机

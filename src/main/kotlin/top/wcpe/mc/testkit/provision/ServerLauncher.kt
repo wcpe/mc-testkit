@@ -53,7 +53,7 @@ internal fun javaExecutable(): String {
     return if (candidate.isFile) candidate.absolutePath else name
 }
 
-/** 某进程 key 的 pid 文件：`<key>.pid`（供收尾按 pid 杀；与 FR-06 同款思路，本包自带不改 `bot/`）。 */
+/** 某进程 key 的 pid 文件：`<key>.pid`（供收尾按 pid 杀；与 机器人驱动与结果判定 同款思路，本包自带不改 `bot/`）。 */
 fun provisionPidFile(runDirectory: File, key: String): File = File(runDirectory, "$key.pid")
 
 /** 某进程 key 的 classpath 启动器：`.mc-testkit-<key>-classpath.jar`（仅运行库场景生成，见 [ServerLauncher]）。 */
@@ -61,11 +61,11 @@ internal fun provisionClasspathFile(runDirectory: File, key: String): File =
     File(runDirectory, ".mc-testkit-$key-classpath.jar")
 
 /**
- * 精简的服务端 / 代理启动助手（FR-02）。
+ * 精简的服务端 / 代理启动助手（内置下载与运行）。
  *
  * 只做一件事：给定 jar + 运行目录 + JVM 参数，以**子进程**启动 server/proxy，返回 [Process]，
  * 并把 pid 落盘供收尾（按 pid 杀，保证不残留占端口）。不做就绪等待、不做前台 / 后台编排、
- * 不做集群批量与收尾接线——那是 FR-04 整合器的事（本包只提供启动原语）。
+ * 不做集群批量与收尾接线——那是 任务自动编排 整合器的事（本包只提供启动原语）。
  *
  * 自包含构件（Paper / 代理 jar）走 `java <jvmArgs> -jar <jar> <serverArgs>`；
  * 运行目录下存在 `libraries/` 的 thin jar 构件（如部分 Folia / Forge 系）走
@@ -86,7 +86,7 @@ object ServerLauncher {
      * @param jvmArgs 追加的 JVM 参数（如 `-Xmx1G`；放在 `-jar` / `-cp` 之前）。
      * @param serverArgs 追加的程序参数（如 Paper 的 `--nogui`；放在 jar / 主类之后）。
      * @param environment 追加 / 覆盖的环境变量。
-     * @param javaPath 指定 `java` 可执行路径（FR-21 多版本 Java 选择）；null 时用当前 JVM（[javaExecutable]）。
+     * @param javaPath 指定 `java` 可执行路径（多版本服务端拉起 多版本 Java 选择）；null 时用当前 JVM（[javaExecutable]）。
      * @param logger 中文分级日志输出（默认 no-op；任务侧可传 `project.logger.lifecycle`）。
      * @return 已启动的 [Process]。
      */

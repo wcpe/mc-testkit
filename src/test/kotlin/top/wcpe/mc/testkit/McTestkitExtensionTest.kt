@@ -11,9 +11,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * mcTestkit DSL 形态（FR-01）单元测试：用 ProjectBuilder 应用插件、调用 DSL、读回声明。
+ * mcTestkit DSL 形态（插件骨架）单元测试：用 ProjectBuilder 应用插件、调用 DSL、读回声明。
  *
- * FR-01 只验证「DSL 形态 + 声明被忠实记录」；拓扑解析/端口推导/校验属 FR-03，不在此测。
+ * 插件骨架 只验证「DSL 形态 + 声明被忠实记录」；拓扑解析/端口推导/校验属 拓扑 DSL，不在此测。
  */
 class McTestkitExtensionTest {
 

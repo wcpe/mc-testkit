@@ -10,7 +10,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * BungeeCord 后端三件套单元测试（FR-05，环境契约高风险区）。
+ * BungeeCord 后端三件套单元测试（环境契约，环境契约高风险区）。
  *
  * 验证对临时 runDir 应用后三处值正确：
  * - `server.properties`：`online-mode=false`；
@@ -103,7 +103,7 @@ class BackendBungeeCordConfigTest {
         assertTrue(paper.contains("velocity:"), "不应破坏 paper-global.yml 的 velocity 块")
     }
 
-    // ── 版本感知（FR-21）──
+    // ── 版本感知（多版本服务端拉起）──
 
     @Test
     @DisplayName("1.7.10 应跳过 paper 配置且移除 enforce-secure-profile")

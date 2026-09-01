@@ -10,7 +10,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * 单场景多 bot（FR-16，ADR-0009）以消费者视角驱动的 TestKit 集成测试：声明多 bot 时既有任务
+ * 单场景多 bot（单场景多 bot，ADR-0009）以消费者视角驱动的 TestKit 集成测试：声明多 bot 时既有任务
  * （`e2e<Key>Cluster` / `launch<Key>Bot` / `e2e<Key>WithBot`）照常注册（不新增任务名），非法多 bot
  * 配置期中文报错。**不真跑**任务体（不下载 / 不起服 / 不起 bot）——真实多 bot 跑通属实机维度。
  */

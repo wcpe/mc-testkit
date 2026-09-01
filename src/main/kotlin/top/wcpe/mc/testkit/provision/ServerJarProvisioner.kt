@@ -4,7 +4,7 @@ import top.wcpe.mc.testkit.contract.McTestkitDefaults
 import java.io.File
 
 /**
- * 服务端 / 代理 jar 解析入口（FR-02）。
+ * 服务端 / 代理 jar 解析入口（内置下载与运行）。
  *
  * 解析优先级（对齐契约的"环境变量逃生口"，docs/API.md §3.3）：
  * 1. **`*_JAR` 覆盖存在** → 直接返回该路径、**全程不发网络**（离线 / CI 友好；文件不存在则抛中文错误）。
@@ -27,10 +27,10 @@ class ServerJarProvisioner internal constructor(
     /**
      * 解析某平台 + 可选请求版本的 jar，返回可用的 `File`。
      *
-     * @param platformId 平台 id（`paper`/`folia`/`velocity`/`waterfall`/`bungeecord`，大小写不敏感）。
+     * @param platformId 平台 id（`paper`/`folia`/`spigot`/`velocity`/`waterfall`/`bungeecord`，大小写不敏感）。
      * @param requestedVersion DSL / 拓扑请求的版本（可空；env `*_VERSION` 覆盖优先于它，再退到缺省）。
      * @param logger 中文分级日志输出（默认 no-op）。
-     * @throws IllegalArgumentException 平台不在 P1 范围时抛中文错误。
+     * @throws IllegalArgumentException 平台不受支持时抛中文错误。
      * @throws IllegalStateException `*_JAR` 指向的文件不存在时抛中文错误。
      */
     fun resolve(platformId: String, requestedVersion: String? = null, logger: (String) -> Unit = {}): File {

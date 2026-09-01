@@ -8,7 +8,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * [JsonLite] 极简 JSON 解析器单元测试（FR-02）。
+ * [JsonLite] 极简 JSON 解析器单元测试（内置下载与运行）。
  *
  * 喂固定文本穷举对象 / 数组 / 标量 / 转义 / 嵌套 / 非法输入；纯函数，不打网络。
  */

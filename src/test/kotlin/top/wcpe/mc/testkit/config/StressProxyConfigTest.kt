@@ -6,7 +6,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * 压测 N-listener 钉服代理配置生成（FR-11）的纯函数测试：一端口对一后端、priority 钉服、全后端 servers。
+ * 压测 N-listener 钉服代理配置生成（压测编排）的纯函数测试：一端口对一后端、priority 钉服、全后端 servers。
  */
 class StressProxyConfigTest {
 

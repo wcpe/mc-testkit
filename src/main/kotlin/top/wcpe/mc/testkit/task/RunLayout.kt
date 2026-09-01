@@ -3,7 +3,7 @@ package top.wcpe.mc.testkit.task
 import java.io.File
 
 /**
- * E2E 运行目录与缓存的路径推导（FR-04 整合器，纯函数）。
+ * E2E 运行目录与缓存的路径推导（任务自动编排 整合器，纯函数）。
  *
  * 只依赖入参的 `buildDir` / `gradleUserHome` / `rootDir`，不读全局状态、不写死本机绝对路径
  * （可移植 / 幂等可重跑，NFR）。任务侧用 `project.layout` / `gradle.gradleUserHomeDir` /
@@ -39,7 +39,7 @@ class RunLayout(
     /** 某代理节点的 pid 文件（落结果目录，供收尾按 pid 杀）。 */
     fun proxyPidFile(proxyName: String): File = File(resultsDir, "proxy-$proxyName.pid")
 
-    /** 某集群后端的运行目录（cwd；与其它后端 / 单后端运行目录隔离，FR-10）。 */
+    /** 某集群后端的运行目录（cwd；与其它后端 / 单后端运行目录隔离，集群编排）。 */
     fun clusterBackendRunDir(backendName: String): File = File(workRoot, "run-$backendName")
 
     /** 某集群后端的 pid 文件（落结果目录，供收尾按 pid 杀）。 */

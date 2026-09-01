@@ -13,7 +13,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** FR-20 节点资源解析、环境合并与 staging 单元测试。 */
+/** 节点运行时注入 节点资源解析、环境合并与 staging 单元测试。 */
 class NodeRuntimeInjectionTest {
 
     @TempDir

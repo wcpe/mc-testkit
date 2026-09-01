@@ -10,10 +10,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * 拓扑解析从 `mcTestkit { }` 扩展入口（FR-03）的集成视角测试。
+ * 拓扑解析从 `mcTestkit { }` 扩展入口（拓扑 DSL）的集成视角测试。
  *
  * 用 ProjectBuilder 应用插件、走 DSL 声明，再经 [TopologyResolver.resolve] 扩展重载解析，
- * 验证平台 / 版本 / 端口推导被正确带入模型——这是 FR-04 编排将走的真实入口。
+ * 验证平台 / 版本 / 端口推导被正确带入模型——这是 任务自动编排 编排将走的真实入口。
  */
 class TopologyFromExtensionTest {
 

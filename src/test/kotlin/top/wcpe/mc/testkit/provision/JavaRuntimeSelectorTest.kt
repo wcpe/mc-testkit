@@ -10,7 +10,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * [JavaRuntimeSelector] 环境变量解析 + 回退单元测试（FR-21）。
+ * [JavaRuntimeSelector] 环境变量解析 + 回退单元测试（多版本服务端拉起）。
  *
  * 验证版本段变量覆盖 > `JAVA_HOME` 回退 > 当前 JVM 回退的优先级链。
  * 用替身取值器（不读 `System.getenv`），零环境依赖、确定性强。

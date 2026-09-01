@@ -7,7 +7,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * [MinecraftVersionGroup] 版本分组查询单元测试（FR-21）。
+ * [MinecraftVersionGroup] 版本分组查询单元测试（多版本服务端拉起）。
  *
  * 穷举 8 个代表版本的分组归属 + 边界版本 + javaVersionSegment。
  */

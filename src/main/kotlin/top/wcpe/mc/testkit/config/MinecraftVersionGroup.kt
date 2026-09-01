@@ -1,7 +1,7 @@
 package top.wcpe.mc.testkit.config
 
 /**
- * Minecraft 版本分组常量与查询函数（FR-21）。
+ * Minecraft 版本分组常量与查询函数（多版本服务端拉起）。
  *
  * 定义 8 个代表版本（覆盖 Legacy → Modern → PaperConfig 三段），并按版本段分组提供查询函数，
  * 供 [ServerProperties.versionAwareOverrides] / [PaperConfigAdapter] / [JavaRuntimeSelector] /
@@ -14,7 +14,7 @@ package top.wcpe.mc.testkit.config
  */
 object MinecraftVersionGroup {
 
-    /** 8 个代表版本（FR-21 覆盖范围，按时间序）。 */
+    /** 8 个代表版本（多版本服务端拉起 覆盖范围，按时间序）。 */
     val REPRESENTATIVE_VERSIONS: List<String> = listOf(
         "1.7.10",
         "1.8.8",

@@ -6,7 +6,7 @@ import top.wcpe.mc.testkit.dsl.ProxySpec
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/** FR-22 节点运行时 DSL 到不可变拓扑模型的验收测试。 */
+/** 多版本代理与诊断编排 节点运行时 DSL 到不可变拓扑模型的验收测试。 */
 class NodeRuntimeDslTest {
 
     @Test

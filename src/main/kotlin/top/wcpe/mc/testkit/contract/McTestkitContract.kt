@@ -24,7 +24,7 @@ object McTestkitContract {
 /**
  * 编排默认值（端口 / 版本等）。消费方可经环境变量覆盖（见 [McTestkitEnv]）。
  *
- * 当前只放 FR-01 契约必需的最小集；具体编排默认值随实现 FR 在此补全。
+ * 当前只放 插件骨架 契约必需的最小集；具体编排默认值随实现 FR 在此补全。
  */
 object McTestkitDefaults {
     /** 后端默认 Minecraft 版本。 */

@@ -5,7 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 
 /**
- * [bungeeProxyConfigYml] 纯函数单测（FR-04）：生成的 BungeeCord 系代理配置含关键转发项。
+ * [bungeeProxyConfigYml] 纯函数单测（任务自动编排）：生成的 BungeeCord 系代理配置含关键转发项。
  */
 class ProxyConfigTest {
 

@@ -11,7 +11,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-/** FR-20 节点级 DSL 与解析模型测试。 */
+/** 节点运行时注入 节点级 DSL 与解析模型测试。 */
 class NodeRuntimeInjectionDslTest {
 
     @Test

@@ -10,7 +10,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * 压测编排（FR-11）以消费者视角驱动的集成测试：压测场景注册 `e2e<Key>Stress` / `stop<Key>Stress`，
+ * 压测编排以消费者视角驱动的集成测试：压测场景注册 `e2e<Key>Stress` / `stop<Key>Stress`，
  * 非法压测配置期中文报错（不联网 / 不起进程，真实跑通属实机维度）。
  */
 class StressFunctionalTest {

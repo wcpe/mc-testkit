@@ -77,22 +77,22 @@ private val FRAMEWORK_JVM_ARGS =
 private const val PORT_READINESS_TIMEOUT_SECONDS = 300L
 
 /**
- * 任务编排装配入口（FR-04 整合器）。
+ * 任务编排装配入口（任务自动编排 整合器）。
  *
  * 在 [McTestkitPlugin][top.wcpe.mc.testkit.McTestkitPlugin] 的 `apply()` 末尾、`afterEvaluate` 里调用：
- * 先经 [TopologyResolver.resolve] 复用 FR-03 配置期校验（无环 / 命名 / 路由 / 端口 / 场景引用，
+ * 先经 [TopologyResolver.resolve] 复用 拓扑 DSL 配置期校验（无环 / 命名 / 路由 / 端口 / 场景引用，
  * 失败抛**中文** `GradleException`），再按 `mcTestkit { }` 声明**数据驱动**注册任务（命名严格按
  * [McTestkitTaskNames]）。任务体的副作用（下载 / 起进程 / 判定）全放 `doLast`，**配置期只注册不执行**
- * （TestKit 不联网 / 不起进程仍可过任务注册与 `help`；真实跑通属 FR-08 实机维度）。
+ * （TestKit 不联网 / 不起进程仍可过任务注册与 `help`；真实跑通属 首个消费者验证 实机维度）。
  */
 object McTestkitTasks {
 
     /** 装配全部 e2e 任务。 */
     fun register(project: Project, extension: McTestkitExtension) {
-        // ① 复用 FR-03 解析 + 配置期校验（失败即抛中文 GradleException，阻断后续注册）
+        // ① 复用 拓扑 DSL 解析 + 配置期校验（失败即抛中文 GradleException，阻断后续注册）
         val topology = TopologyResolver.resolve(extension)
 
-        // ①' 多 bot 展开后 key/username 唯一性校验（FR-16）：TopologyResolver 只查 role 唯一，
+        // ①' 多 bot 展开后 key/username 唯一性校验（单场景多 bot）：TopologyResolver 只查 role 唯一，
         // 但 role 不同的两 bot 展开后仍可能撞 key（如 bot("w"){count=2} 与 bot("w-1")），故在此用
         // BotProcessPlanner 展开真源查重，杜绝 pid 互相覆盖致收尾漏杀残留。
         extension.declaredScenarios.forEach { scenario ->
@@ -103,7 +103,7 @@ object McTestkitTasks {
                 )
             }
         }
-        // serve 的可选 bot（FR-19）同样查展开后 key/username 唯一，杜绝 pid 互相覆盖致收尾漏杀残留
+        // serve 的可选 bot（serve 人机混场）同样查展开后 key/username 唯一，杜绝 pid 互相覆盖致收尾漏杀残留
         extension.declaredServes.forEach { serve ->
             BotProcessPlanner.firstConflict(serve.name, serve.botSpecs)?.let { conflict ->
                 throw GradleException(
@@ -121,7 +121,7 @@ object McTestkitTasks {
             registerScenarioTasks(project, extension, topology, scenario)
         }
 
-        // ④ 持久手测：每个 serve 注册 serve<Key> + stop<Key>Serve（FR-17，ADR-0011）
+        // ④ 持久手测：每个 serve 注册 serve<Key> + stop<Key>Serve（持久手测 serve，ADR-0011）
         extension.declaredServes.forEach { serve ->
             registerServeTasks(project, extension, topology, serve)
         }
@@ -175,7 +175,7 @@ object McTestkitTasks {
         topology: Topology,
         scenario: ScenarioSpec,
     ) {
-        // 压测场景（声明 stress）走 N 服 × M bot 钉服编排（FR-11，ADR-0008）：不生成单后端 / 集群任务
+        // 压测场景（声明 stress）走 N 服 × M bot 钉服编排（压测编排，ADR-0008）：不生成单后端 / 集群任务
         scenario.stressSpec?.let { stress ->
             val stressBackends = scenario.backendRefs.map { name ->
                 topology.backends.first { it.name == name } // 已由 TopologyResolver 校验存在
@@ -192,7 +192,7 @@ object McTestkitTasks {
             return
         }
 
-        // 集群场景（声明 backends、无 stress）走多后端切换编排（FR-10，ADR-0008）：不生成单后端任务
+        // 集群场景（声明 backends、无 stress）走多后端切换编排（集群编排，ADR-0008）：不生成单后端任务
         if (scenario.backendRefs.isNotEmpty()) {
             val clusterBackends = scenario.backendRefs.map { name ->
                 topology.backends.first { it.name == name } // 已由 TopologyResolver 校验存在
@@ -341,7 +341,7 @@ object McTestkitTasks {
                         runtime.proxies.getValue(proxy.name),
                         scenario.name,
                     )
-                    // ③ 起全部 bot：经代理端口进服，协议版本固定为后端版本（环境契约 FR-05；多 bot 各唯一名）
+                    // ③ 起全部 bot：经代理端口进服，协议版本固定为后端版本（环境契约；多 bot 各唯一名）
                     launchScenarioBots(
                         project,
                         scenario,
@@ -363,7 +363,7 @@ object McTestkitTasks {
     }
 
     /**
-     * 注册集群任务（FR-10，ADR-0008）：N 后端**全部后台**起 + 代理（单 listener + N server）+ 切换 bot →
+     * 注册集群任务（集群编排，ADR-0008）：N 后端**全部后台**起 + 代理（单 listener + N server）+ 切换 bot →
      * 以结果文件为权威完成信号轮询 → 判定；正常/失败/中断三路径都 finalizedBy + try/finally 双保险收尾
      * 全部后端 + 代理，端口干净（高风险区）。
      */
@@ -449,7 +449,7 @@ object McTestkitTasks {
                     clusterBackends.forEach { awaitPortOpen(project, it.port, "集群后端 ${it.name}") }
                     awaitPortOpen(project, proxy.port, "集群代理 ${proxy.name}")
                     // ③ 起全部 bot：经代理端口，CLUSTER_BACKENDS 下发 /server 切换目标（每个 bot 都能切），
-                    //    协议版本固定为后端版本；多 bot 各唯一 username、同质复制下发 BOT_INDEX（FR-16）
+                    //    协议版本固定为后端版本；多 bot 各唯一 username、同质复制下发 BOT_INDEX（单场景多 bot）
                     botProcesses += launchScenarioBots(
                         project,
                         scenario,
@@ -612,7 +612,7 @@ object McTestkitTasks {
     }
 
     /**
-     * 注册压测任务（FR-11，ADR-0008）：N 后端**全部后台** + 代理（N-listener 钉服）或直连 + 每服 M 个
+     * 注册压测任务（压测编排，ADR-0008）：N 后端**全部后台** + 代理（N-listener 钉服）或直连 + 每服 M 个
      * bot 进程钉本服持续随机施压 → 等**全部 per-server 结果文件** → 聚合判定（任一缺失 / FAIL 即失败并
      * 报哪服）；正常 / 失败 / 中断三路径都 finalizedBy + try/finally 双保险收尾全部后端 + 代理 + bot，
      * 端口干净（高风险区）。业务不变量（不超卖等）由消费方桩查共享 DB 自行判，框架只收集 + 聚合。
@@ -890,7 +890,7 @@ object McTestkitTasks {
     }
 
     /**
-     * 注册持久手测（serve）任务（FR-17，ADR-0011）：`serve<Key>` 前台起后端（声明 via 则先后台起代理）、
+     * 注册持久手测（serve）任务（持久手测 serve，ADR-0011）：`serve<Key>` 前台起后端（声明 via 则先后台起代理）、
      * 注入插件、下发哨兵场景使桩空闲，**挂住**到用户手动停（Ctrl+C → JVM shutdown hook 收尾；或单独跑
      * `stop<Key>Serve` 按 pid 兜底）。serve 不判 PASS/FAIL（不绕过结果文件自判，架构不变量 §3）。
      */
@@ -900,7 +900,7 @@ object McTestkitTasks {
         topology: Topology,
         serve: ServeSpec,
     ) {
-        // 声明 backends(...) 即集群 serve（FR-18）；否则单后端 serve（FR-17）
+        // 声明 backends(...) 即集群 serve；否则单后端 serve（持久手测 serve）
         if (serve.backendRefs.isNotEmpty()) {
             registerClusterServeTasks(project, extension, topology, serve)
         } else {
@@ -908,7 +908,7 @@ object McTestkitTasks {
         }
     }
 
-    /** 单后端 serve（FR-17）：起单后端（+ 可选经代理）挂住，`stop<Key>Serve` 按 pid 收尾后端（+ 代理）。 */
+    /** 单后端 serve（持久手测 serve）：起单后端（+ 可选经代理）挂住，`stop<Key>Serve` 按 pid 收尾后端（+ 代理）。 */
     private fun registerSingleServeTasks(
         project: Project,
         extension: McTestkitExtension,
@@ -918,7 +918,7 @@ object McTestkitTasks {
         val backend = resolveServeBackend(topology, serve)
         val proxy = serve.via?.let { via -> topology.proxies.first { it.name == via } } // 已由 TopologyResolver 校验存在 + 路由
         val stopName = McTestkitTaskNames.stopServe(serve.name)
-        // 可选 bot（FR-19）的 pid key（停任务据此按 pid 收尾，防 straggler 残留）
+        // 可选 bot（serve 人机混场）的 pid key（停任务据此按 pid 收尾，防 straggler 残留）
         val botKeys = BotProcessPlanner.expand(serve.name, serve.botSpecs).map { it.key }
 
         // 停 serve 任务：按 pid 收尾后端（+ 代理 + 全部 bot）的兜底（另一终端停 / Ctrl+C 没清干净时用）
@@ -939,7 +939,7 @@ object McTestkitTasks {
             task.description =
                 "持久起 serve「${serve.name}」：后端 ${backend.name}${proxy?.let { " 经代理 ${it.name}" } ?: " 直连"}" +
                 (if (serve.botSpecs.isNotEmpty()) " + ${botKeys.size} bot" else "") + "，挂住供真人客户端手测（Ctrl+C 停）"
-            // 起 bot 需先装好 mineflayer 依赖（FR-19）
+            // 起 bot 需先装好 mineflayer 依赖（serve 人机混场）
             if (serve.botSpecs.isNotEmpty()) {
                 task.dependsOn(McTestkitTaskNames.NPM_INSTALL_BOT)
             }
@@ -965,7 +965,7 @@ object McTestkitTasks {
     }
 
     /**
-     * serve 任务体（FR-17）：prepare →（via 则起代理）→ 前台起后端（下发哨兵场景使桩空闲）→ 等就绪打印连接信息
+     * serve 任务体（持久手测 serve）：prepare →（via 则起代理）→ 前台起后端（下发哨兵场景使桩空闲）→ 等就绪打印连接信息
      * → **阻塞挂住**到后端退出 / 手动停 → 双保险收尾。注册 JVM shutdown hook 应对 Ctrl+C / 中断时收尾子进程
      * （高风险区：进程全灭 / 端口不漏 / 跨平台 pid 收尾，配套 `stop<Key>Serve` 兜底）。
      */
@@ -1014,8 +1014,8 @@ object McTestkitTasks {
                     (proxy?.let { "（经代理 ${it.name}）" } ?: "（直连后端 ${backend.name}）") +
                     "。停止：本终端 Ctrl+C，或另跑 ./gradlew ${McTestkitTaskNames.stopServe(serveName)}",
             )
-            // ⑤ 可选起 bot（FR-19）：把环境驱到某状态（造数据 / 模拟其他玩家），但**不**据结果文件收尾——挂住人机混场。
-            //    经代理则协议版本固定为后端版本（环境契约 FR-05），连端口同真人（connectPort）。
+            // ⑤ 可选起 bot（serve 人机混场）：把环境驱到某状态（造数据 / 模拟其他玩家），但**不**据结果文件收尾——挂住人机混场。
+            //    经代理则协议版本固定为后端版本（环境契约），连端口同真人（connectPort）。
             if (botSpecs.isNotEmpty()) {
                 val protocolVersion = proxy?.let { ProxyProtocolVersion.forBackend(backend.version) }
                 botProcesses += launchBots(
@@ -1114,8 +1114,8 @@ object McTestkitTasks {
     }
 
     /**
-     * 集群 serve（FR-18）：N 后端 + 代理整套挂起，真人经代理 `/server` 切服手测。复用 FR-10 集群编排
-     * （`startClusterProxyBackground` / `awaitPortOpen`）+ FR-17 serve 挂起 / 三重收尾；各后端桩经哨兵空闲。
+     * 集群 serve：N 后端 + 代理整套挂起，真人经代理 `/server` 切服手测。复用 集群编排
+     * （`startClusterProxyBackground` / `awaitPortOpen`）+ 持久手测 serve serve 挂起 / 三重收尾；各后端桩经哨兵空闲。
      */
     private fun registerClusterServeTasks(
         project: Project,
@@ -1126,7 +1126,7 @@ object McTestkitTasks {
         val clusterBackends = serve.backendRefs.map { name -> topology.backends.first { it.name == name } } // 已校验存在
         val proxy = topology.proxies.first { it.name == serve.via } // 集群 serve 必有 via 且已校验路由覆盖
         val stopName = McTestkitTaskNames.stopServe(serve.name)
-        // 可选 bot（FR-19）的 pid key（停任务据此按 pid 收尾，防 straggler 残留）
+        // 可选 bot（serve 人机混场）的 pid key（停任务据此按 pid 收尾，防 straggler 残留）
         val botKeys = BotProcessPlanner.expand(serve.name, serve.botSpecs).map { it.key }
 
         registerTask(project, stopName) { task ->
@@ -1158,7 +1158,7 @@ object McTestkitTasks {
     }
 
     /**
-     * 集群 serve 任务体（FR-18）：每后端独立运行目录 prepare + 代理模式 + 后台起（哨兵桩空闲）→ 后台起集群代理
+     * 集群 serve 任务体（集群 serve）：每后端独立运行目录 prepare + 代理模式 + 后台起（哨兵桩空闲）→ 后台起集群代理
      * → 等全部端口就绪打印连接信息 → **阻塞挂住**（等代理进程，某后端宕仍挂便于看 fallback）到手动停 → 三重收尾。
      */
     private fun serveClusterForeground(
@@ -1209,7 +1209,7 @@ object McTestkitTasks {
                     "（经代理 ${proxy.name}），可 /server 切换：${clusterBackends.joinToString(", ") { it.name }}。" +
                     "停止：本终端 Ctrl+C，或另跑 ./gradlew ${McTestkitTaskNames.stopServe(serveName)}",
             )
-            // ⑤ 可选起 bot（FR-19）：经代理端口、CLUSTER_BACKENDS 下发 /server 切换目标（每个 bot 都能切），
+            // ⑤ 可选起 bot（serve 人机混场）：经代理端口、CLUSTER_BACKENDS 下发 /server 切换目标（每个 bot 都能切），
             //    协议版本固定为后端版本；把环境驱到某状态但**不**据结果文件收尾——挂住人机混场。
             if (botSpecs.isNotEmpty()) {
                 botProcesses += launchBots(
@@ -1397,13 +1397,13 @@ object McTestkitTasks {
     }
 
     /**
-     * 起场景声明的全部 bot 进程（FR-16）：按 [BotProcessPlanner.expand] 逐 plan 起进程。
+     * 起场景声明的全部 bot 进程（单场景多 bot）：按 [BotProcessPlanner.expand] 逐 plan 起进程。
      *
      * 进程数 >1 时**强制**下发唯一 `BOT_USERNAME`（末位合入，盖过消费方单值 override 以保证唯一）；
      * 同质复制（`count>1`）下发 `BOT_INDEX`（1..N）；并合入 [sharedExtraEnv]（如集群的 `CLUSTER_BACKENDS`，
      * 使每个 bot 都能经代理 `/server` 切换）。单 bot 时不强制 username（保留消费方 override，向后兼容）。
      *
-     * **版本范围校验（FR-21）**：[backendVersion] < 1.8（即 1.7.10）时跳过 bot 启动 + 日志告警，
+     * **版本范围校验（多版本服务端拉起）**：[backendVersion] < 1.8（即 1.7.10）时跳过 bot 启动 + 日志告警，
      * 场景仍继续（不因无 bot 判 FAIL）。
      *
      * @return 全部已起进程（供调用方按需收尾；亦各自写了 `bot-<key>.pid` 供按 pid 收尾）。
@@ -1419,12 +1419,12 @@ object McTestkitTasks {
         launchBots(project, scenario.name, scenario.botSpecs, backendVersion, backendPort, protocolVersion, sharedExtraEnv)
 
     /**
-     * 起一组 bot 进程（FR-16 多 bot 展开 + 每进程 env 装配；**场景与 serve 共用**，FR-19）。
+     * 起一组 bot 进程（单场景多 bot 多 bot 展开 + 每进程 env 装配；**场景与 serve 共用**，serve 人机混场）。
      *
      * 按 [BotProcessPlanner.expand] 逐 plan 起进程；进程数 >1 强制唯一 `BOT_USERNAME`、同质复制下发 `BOT_INDEX`、
      * 合入 [sharedExtraEnv]（如集群 `CLUSTER_BACKENDS`，使每个 bot 都能经代理 `/server` 切换）。
      *
-     * **版本范围校验（FR-21）**：[backendVersion] < 1.8（即 1.7.10）时跳过 bot 启动 + 日志告警，
+     * **版本范围校验（多版本服务端拉起）**：[backendVersion] < 1.8（即 1.7.10）时跳过 bot 启动 + 日志告警，
      * 场景仍继续（不因无 bot 判 FAIL）。
      */
     private fun launchBots(
@@ -1460,7 +1460,7 @@ object McTestkitTasks {
     private fun stopScenarioBots(project: Project, scenario: ScenarioSpec) =
         stopBots(project, scenario.name, scenario.botSpecs)
 
-    /** 按 plan key 收尾一组 bot 的 pid 文件（**场景与 serve 共用**，FR-19；单 bot / 已自停为安全 no-op）。 */
+    /** 按 plan key 收尾一组 bot 的 pid 文件（**场景与 serve 共用**，serve 人机混场；单 bot / 已自停为安全 no-op）。 */
     private fun stopBots(project: Project, name: String, botSpecs: List<BotSpec>) {
         val layout = layoutOf(project)
         BotProcessPlanner.expand(name, botSpecs).forEach { plan ->
@@ -1604,7 +1604,7 @@ object McTestkitTasks {
     }
 
     /**
-     * 按 MC 版本解析后端应用的 `java` 可执行路径（FR-21）。
+     * 按 MC 版本解析后端应用的 `java` 可执行路径（多版本服务端拉起）。
      *
      * 优先级：`MC_TESTKIT_JAVA_HOME_<版本段>` > `JAVA_HOME` > 当前 JVM。
      * 仅用于后端启动（代理用当前 JVM，代理 Java 版本由代理软件自身决定）。
@@ -1737,7 +1737,7 @@ object McTestkitTasks {
      * 写 Velocity 代理运行目录的两个文件：`velocity.toml`（按后端版本选择 forwarding + N server + try）+
      * `forwarding.secret`（modern 模式与后端共享；legacy 保留该文件但不使用）。
      *
-     * @param servers 有序 (server 名, 地址) 列表，首个为默认落地服、全部入 try 作 fallback（FR-15）。
+     * @param servers 有序 (server 名, 地址) 列表，首个为默认落地服、全部入 try 作 fallback（崩溃接管）。
      */
     private fun writeVelocityProxyFiles(
         project: Project,

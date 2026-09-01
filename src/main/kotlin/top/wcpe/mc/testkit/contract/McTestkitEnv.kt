@@ -41,7 +41,7 @@ object McTestkitEnv {
      * 本后端的声明名（编排起每个后端时下发，与下发给 bot 的 [CLUSTER_BACKENDS] 同源、有序对应）。
      * 集群/压测下各后端各不相同（如 `s1` / `s2`）；消费方（被测插件或桩）据此 per-backend 派生身份——
      * 典型用法是做 `server-id` 后缀，使同组各服 server-id 不同（跨服归属/转服交接所需）。
-     * 编排只负责「告诉每个后端它是谁」，不关心消费方怎么用（FR-12）。
+     * 编排只负责「告诉每个后端它是谁」，不关心消费方怎么用（每后端身份注入）。
      */
     const val BACKEND_NAME = PREFIX + "BACKEND_NAME"
 
@@ -76,16 +76,16 @@ object McTestkitEnv {
     /** 机器人生命周期回执文件；只用于 E2E 排障，不包含玩家、IP 或协议载荷。 */
     const val BOT_RECEIPT_FILE = PREFIX + "BOT_RECEIPT_FILE"
 
-    // ── 集群（FR-10）/ 压测（FR-11）──
-    /** 集群场景的有序后端名（逗号分隔；编排→机器人下发，bot 据此 `/server <name>` 切换目标，FR-10）。 */
+    // ── 集群（集群编排）/ 压测（压测编排）──
+    /** 集群场景的有序后端名（逗号分隔；编排→机器人下发，bot 据此 `/server <name>` 切换目标，集群编排）。 */
     const val CLUSTER_BACKENDS = PREFIX + "CLUSTER_BACKENDS"
 
-    /** 压测持续秒数（编排→机器人，bot 据此跑循环；桩另按其自身计时收尾，FR-11）。 */
+    /** 压测持续秒数（编排→机器人，bot 据此跑循环；桩另按其自身计时收尾，压测编排）。 */
     const val STRESS_DURATION_SECONDS = PREFIX + "STRESS_DURATION_SECONDS"
 
-    /** 压测每个 bot 进程的序号（编排→bot，bot 用 seed ^ botIndex 播种 RNG 使各 bot 可复现且互异，FR-11）。 */
+    /** 压测每个 bot 进程的序号（编排→bot，bot 用 seed ^ botIndex 播种 RNG 使各 bot 可复现且互异，压测编排）。 */
     const val BOT_INDEX = PREFIX + "BOT_INDEX"
 
-    /** 压测共享随机种子（编排→bot，与 [BOT_INDEX] 异或后播种 RNG，FR-11）。 */
+    /** 压测共享随机种子（编排→bot，与 [BOT_INDEX] 异或后播种 RNG，压测编排）。 */
     const val STRESS_RANDOM_SEED = PREFIX + "STRESS_RANDOM_SEED"
 }

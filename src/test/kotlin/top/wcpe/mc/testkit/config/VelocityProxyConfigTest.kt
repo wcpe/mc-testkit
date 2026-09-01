@@ -7,7 +7,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * Velocity 代理配置（`velocity.toml`）生成单元测试（FR-02/03，ADR-0010）。
+ * Velocity 代理配置（`velocity.toml`）生成单元测试（内置下载与运行/拓扑 DSL，ADR-0010）。
  *
  * 验证 modern forwarding + 单端口 bind + N 具名 server + try 落地/fallback 顺序，覆盖单后端与集群。
  */
@@ -46,7 +46,7 @@ class VelocityProxyConfigTest {
         )
         assertTrue(toml.contains("\"s1\" = \"127.0.0.1:25565\""), "应有 server s1")
         assertTrue(toml.contains("\"s2\" = \"127.0.0.1:25566\""), "应有 server s2")
-        // try 为有序全后端（首个默认服 s1，其余 fallback s2）：支撑 FR-15 崩溃接管回退
+        // try 为有序全后端（首个默认服 s1，其余 fallback s2）：支撑 崩溃接管回退
         val tryBlock = Regex("(?ms)try = \\[.*?]").find(toml)?.value ?: ""
         assertTrue(tryBlock.contains("\"s1\""), "try 应含默认服 s1：\n$toml")
         assertTrue(tryBlock.contains("\"s2\""), "try 应含 fallback 后端 s2：\n$toml")

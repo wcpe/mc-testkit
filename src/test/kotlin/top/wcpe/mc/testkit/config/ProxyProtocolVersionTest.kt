@@ -5,7 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * 经代理机器人协议版本固定规则单元测试（FR-05，环境契约高风险区）。
+ * 经代理机器人协议版本固定规则单元测试（环境契约，环境契约高风险区）。
  *
  * 验证纯函数决策：经代理时机器人 mineflayer 协议版本 = 后端 MC 版本
  * （避免代理 ping 不回后端版本导致机器人挑过新协议被踢「Outdated server」）。

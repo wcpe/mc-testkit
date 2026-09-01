@@ -7,7 +7,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 /**
- * [PaperConfigAdapter] 按版本生成 Paper 配置单元测试（FR-21）。
+ * [PaperConfigAdapter] 按版本生成 Paper 配置单元测试（多版本服务端拉起）。
  *
  * 穷举 8 个代表版本 + 边界版本，验证返回的配置文件名 + 嵌套路径 + 值正确。
  */

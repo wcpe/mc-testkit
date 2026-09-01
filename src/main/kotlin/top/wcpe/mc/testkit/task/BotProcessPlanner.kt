@@ -4,7 +4,7 @@ import top.wcpe.mc.testkit.contract.McTestkitEnv
 import top.wcpe.mc.testkit.dsl.BotSpec
 
 /**
- * 一个 bot 进程的派生身份（FR-16）：场景的 [BotSpec] 列表展开后、每个待起进程一项。
+ * 一个 bot 进程的派生身份（单场景多 bot）：场景的 [BotSpec] 列表展开后、每个待起进程一项。
  *
  * @property action 该进程的 `BOT_ACTION`（机器人内核据此分发场景驱动）。
  * @property username 该进程的唯一用户名（多进程时强制下发，覆盖消费方单值 override）。
@@ -21,7 +21,7 @@ data class BotProcessPlan(
 )
 
 /**
- * 把场景声明的 bot 列表展开为「每进程一项」的计划（FR-16，纯函数，可穷举单测）。
+ * 把场景声明的 bot 列表展开为「每进程一项」的计划（单场景多 bot，纯函数，可穷举单测）。
  *
  * 只依赖入参（场景名 + [BotSpec] 列表），不读环境 / 文件 / 全局状态。单 bot（匿名、`count=1`）展开后与
  * 历史行为一致（key = action、无 `BOT_INDEX`），保证向后兼容；`count>1` 复制 N 份，多个 `bot("role")`
@@ -35,7 +35,7 @@ object BotProcessPlanner {
         bots.flatMap { bot -> expandOne(scenarioName, bot) }
 
     /**
-     * 把展开后的 [plans] 折成每进程的「追加 env」（FR-16 契约，纯函数，可穷举单测）：
+     * 把展开后的 [plans] 折成每进程的「追加 env」（单场景多 bot 契约，纯函数，可穷举单测）：
      * - 进程数 **>1** 时强制下发**唯一** `BOT_USERNAME`（盖过消费方单值 override 以保证唯一）；单进程不强制
      *   （保留消费方 override，向后兼容）。
      * - 同质复制（`botIndex != null`）下发 `BOT_INDEX`。
@@ -60,7 +60,7 @@ object BotProcessPlanner {
     }
 
     /**
-     * 校验展开后每进程的 **key**（日志/pid 文件名）与 **username**（Minecraft 离线名）全局唯一（FR-16）。
+     * 校验展开后每进程的 **key**（日志/pid 文件名）与 **username**（Minecraft 离线名）全局唯一（单场景多 bot）。
      *
      * 配置期校验只查 `role` 唯一不够：`role` 不同的两个 bot 展开后仍可能撞 key——如 `bot("w"){count=2}`
      * 得 `w-1`/`w-2`，`bot("w-1"){}` 得 `w-1`，二者撞车会让 `bot-w-1.pid` 互相覆盖、收尾漏杀一个进程

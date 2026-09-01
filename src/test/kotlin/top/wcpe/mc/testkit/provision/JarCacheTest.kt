@@ -8,7 +8,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * [JarCache] 缓存路径推导单元测试（FR-02，纯函数）。
+ * [JarCache] 缓存路径推导单元测试（内置下载与运行，纯函数）。
  *
  * 校验 `<cacheRoot>/<platform>/<version>/<build>.jar` 布局、BungeeCord 占位段、相对缓存根
  * （不写死本机绝对路径——缓存根由调用方注入，这里用相对临时根）。

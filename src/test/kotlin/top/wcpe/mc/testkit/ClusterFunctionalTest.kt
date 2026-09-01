@@ -10,7 +10,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * 集群编排（FR-10）以消费者视角驱动的集成测试：集群场景注册 `e2e<Key>Cluster` / `stop<Key>Cluster`，
+ * 集群编排以消费者视角驱动的集成测试：集群场景注册 `e2e<Key>Cluster` / `stop<Key>Cluster`，
  * 非法集群配置期中文报错（不联网 / 不起进程，真实跑通属实机维度）。
  */
 class ClusterFunctionalTest {

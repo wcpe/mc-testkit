@@ -11,7 +11,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * 单场景多 bot 展开（FR-16，ADR-0009）的纯函数穷举单测：[BotProcessPlanner.expand]。
+ * 单场景多 bot 展开（单场景多 bot，ADR-0009）的纯函数穷举单测：[BotProcessPlanner.expand]。
  *
  * 覆盖向后兼容（单匿名 bot：key=action、无 BOT_INDEX）、同质复制（count=N：各唯一 username/key、index 1..N）、
  * 异质双角色（各自 action/username/key）与业务 env 透传。
@@ -158,7 +158,7 @@ class BotProcessPlannerTest {
         assertEquals(listOf(1, 2, 3, null), plans.map { it.botIndex })
     }
 
-    // ── extraEnvironments：每进程「追加 env」契约（FR-16 核心：唯一名 / 序号 / 共享 env）──
+    // ── extraEnvironments：每进程「追加 env」契约（单场景多 bot 核心：唯一名 / 序号 / 共享 env）──
 
     @Test
     @DisplayName("单个 Bot 生成附加环境时不应强制下发 BOT_USERNAME 和 BOT_INDEX")

@@ -26,7 +26,7 @@ internal object BotConnectionDefaults {
 }
 
 /**
- * 一次机器人驱动的连接参数（FR-06）。
+ * 一次机器人驱动的连接参数（机器人驱动与结果判定）。
  *
  * 只承载「这次怎么连」，[toEnvironment] 把它折成传给机器人进程的环境变量（键全部取自
  * [McTestkitEnv]、前缀 `MC_TESTKIT_E2E_`）。纯函数 + 注入式覆盖取值器，便于穷举单测，

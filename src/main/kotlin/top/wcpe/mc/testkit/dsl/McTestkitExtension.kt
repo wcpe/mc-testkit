@@ -3,8 +3,8 @@ package top.wcpe.mc.testkit.dsl
 /**
  * `mcTestkit { }` 扩展：声明测试拓扑（后端 / 代理 / 路由）、场景与依赖注入。
  *
- * 这是对外 DSL 契约（FR-01 冻结形态，见 docs/API.md）。它只「忠实记录声明」并暴露只读访问器；
- * 拓扑解析与端口推导（FR-03）、任务编排（FR-04）等读取这些声明，**不在此实现**——
+ * 这是对外 DSL 契约（插件骨架 冻结形态，见 docs/API.md）。它只「忠实记录声明」并暴露只读访问器；
+ * 拓扑解析与端口推导（拓扑 DSL）、任务编排（任务自动编排）等读取这些声明，**不在此实现**——
  * 以此让 Wave 1 各 FR 各占一包、互不撞这个入口扩展文件。
  *
  * `open`：供 Gradle ObjectFactory 装饰为 ExtensionAware 实例。
@@ -26,7 +26,7 @@ open class McTestkitExtension {
     /** 已声明的场景（只读快照）。 */
     val declaredScenarios: List<ScenarioSpec> get() = mutableScenarios.toList()
 
-    /** 已声明的持久手测目标（只读快照，FR-17）。 */
+    /** 已声明的持久手测目标（只读快照，持久手测 serve）。 */
     val declaredServes: List<ServeSpec> get() = mutableServes.toList()
 
     /** 依赖注入声明。 */
@@ -44,7 +44,7 @@ open class McTestkitExtension {
     fun scenario(name: String, configure: ScenarioSpec.() -> Unit = {}): ScenarioSpec =
         ScenarioSpec(name).apply(configure).also { mutableScenarios += it }
 
-    /** 声明一个持久手测目标（起服挂住供真人客户端连入，FR-17）。 */
+    /** 声明一个持久手测目标（起服挂住供真人客户端连入，持久手测 serve）。 */
     fun serve(name: String, configure: ServeSpec.() -> Unit = {}): ServeSpec =
         ServeSpec(name).apply(configure).also { mutableServes += it }
 

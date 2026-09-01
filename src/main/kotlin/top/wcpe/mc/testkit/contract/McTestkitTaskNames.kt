@@ -4,7 +4,7 @@ package top.wcpe.mc.testkit.contract
  * 对外契约②：自动生成任务的命名约定。
  *
  * 任务名一经发布即视为契约、保持稳定。场景名（kebab / camel 皆可）统一折成 PascalCase 中缀，
- * 代理名同理。具体任务由 FR-04 按消费方 `mcTestkit { }` 声明数据驱动地注册，此处只定名字怎么拼。
+ * 代理名同理。具体任务由 任务自动编排 按消费方 `mcTestkit { }` 声明数据驱动地注册，此处只定名字怎么拼。
  */
 object McTestkitTaskNames {
     /** 安装机器人 mineflayer 依赖。 */
@@ -32,19 +32,19 @@ object McTestkitTaskNames {
     /** 一键「启动机器人 + 验证」任务：`e2e<Key>WithBot`。 */
     fun withBot(scenario: String): String = verify(scenario) + "WithBot"
 
-    /** 集群验证任务（多后端 + 代理 + 切换机器人）：`e2e<Key>Cluster`（FR-10，ADR-0008）。 */
+    /** 集群验证任务（多后端 + 代理 + 切换机器人）：`e2e<Key>Cluster`（集群编排，ADR-0008）。 */
     fun cluster(scenario: String): String = verify(scenario) + "Cluster"
 
     /** 集群收尾任务（按 pid 停全部集群后端 + 代理）：`stop<Key>Cluster`。 */
     fun stopCluster(scenario: String): String = "stop" + scenario.toTaskKey() + "Cluster"
 
-    /** 压测验证任务（N 服 × M bot 钉服持续施压 + 聚合判定）：`e2e<Key>Stress`（FR-11，ADR-0008）。 */
+    /** 压测验证任务（N 服 × M bot 钉服持续施压 + 聚合判定）：`e2e<Key>Stress`（压测编排，ADR-0008）。 */
     fun stress(scenario: String): String = verify(scenario) + "Stress"
 
     /** 压测收尾任务（按 pid 停全部压测后端 + 代理）：`stop<Key>Stress`。 */
     fun stopStress(scenario: String): String = "stop" + scenario.toTaskKey() + "Stress"
 
-    /** 持久手测起服任务（前台起后端 + 可选代理并挂住，FR-17，ADR-0011）：`serve<Key>`。 */
+    /** 持久手测起服任务（前台起后端 + 可选代理并挂住，持久手测 serve，ADR-0011）：`serve<Key>`。 */
     fun serve(serveName: String): String = "serve" + serveName.toTaskKey()
 
     /** 持久手测收尾任务（按 pid 停 serve 后端 + 代理）：`stop<Key>Serve`。 */

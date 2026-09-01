@@ -17,7 +17,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * 持久手测（serve，FR-17，ADR-0011）契约与解析单元测试：DSL 记录 serve 声明、任务命名约定、
+ * 持久手测（serve，持久手测 serve，ADR-0011）契约与解析单元测试：DSL 记录 serve 声明、任务命名约定、
  * 保留哨兵场景 id，及 TopologyResolver 对 serve 引用的配置期校验（纯函数，不联网 / 不起进程）。
  */
 class ServeContractTest {
@@ -184,7 +184,7 @@ class ServeContractTest {
         assertTrue(ex.message!!.contains("无可用后端"), "应报无可用后端：${ex.message}")
     }
 
-    // ── 集群 serve（FR-18）──
+    // ── 集群 serve──
 
     @Test
     @DisplayName("集群 serve DSL 应记录多个后端与代理引用")
@@ -298,7 +298,7 @@ class ServeContractTest {
         assertTrue(ex.message!!.contains("不可同时"), "集群 serve 与 backend 并用应中文报错：${ex.message}")
     }
 
-    // ── serve 人机混场 bot（FR-19）──
+    // ── serve 人机混场 bot（serve 人机混场）──
 
     @Test
     @DisplayName("serve DSL 应记录机器人声明")

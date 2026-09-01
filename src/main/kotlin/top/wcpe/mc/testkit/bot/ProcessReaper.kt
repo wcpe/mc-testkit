@@ -7,7 +7,7 @@ import java.util.concurrent.TimeUnit
 private const val GRACEFUL_EXIT_TIMEOUT_SECONDS = 15L
 
 /**
- * 按 pid 文件结束进程（FR-06 高风险区：进程生命周期 / 收尾 / 跨平台；模型见 ADR-0004）。
+ * 按 pid 文件结束进程（机器人驱动与结果判定 高风险区：进程生命周期 / 收尾 / 跨平台；模型见 ADR-0004）。
  *
  * 先温和 [ProcessHandle.destroy]，限时未退则 [ProcessHandle.destroyForcibly] 强杀，最后删除 pid 文件。
  * **安全 no-op**：pid 文件缺失 / 内容非法 / 进程已退出都不报错（用于 finalizer/`finally` 收尾，

@@ -11,7 +11,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * 拓扑解析器（FR-03）单元测试：穷举端口推导与配置期校验。
+ * 拓扑解析器（拓扑 DSL）单元测试：穷举端口推导与配置期校验。
  *
  * 直接构造冻结 spec（无需 Project），验证纯函数 [TopologyResolver.resolve] 的输入→输出
  * 与各类校验失败的中文错误。

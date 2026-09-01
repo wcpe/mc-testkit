@@ -7,7 +7,7 @@ import java.util.Properties
 import java.util.jar.JarFile
 
 /**
- * 按 平台 + 版本 解析并缓存 jar（FR-02 下载核心）。
+ * 按 平台 + 版本 解析并缓存 jar（内置下载与运行 下载核心）。
  *
  * 流程：
  * 1. 定构建号——PaperMC 平台取版本的最新构建；BungeeCord 取最新成功 Jenkins 构建；Spigot 固定版本走 GetBukkit。

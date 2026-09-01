@@ -10,7 +10,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * 持久手测（serve，FR-17，ADR-0011）以消费者视角驱动的集成测试：serve 声明注册 `serve<Key>` /
+ * 持久手测（serve，持久手测 serve，ADR-0011）以消费者视角驱动的集成测试：serve 声明注册 `serve<Key>` /
  * `stop<Key>Serve`，非法 serve 配置期中文报错（不联网 / 不起进程，真实起服挂住属实机维度）。
  */
 class ServeFunctionalTest {

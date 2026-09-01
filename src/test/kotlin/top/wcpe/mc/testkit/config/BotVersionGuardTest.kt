@@ -6,7 +6,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * bot 版本范围校验单元测试（FR-21）。
+ * bot 版本范围校验单元测试（多版本服务端拉起）。
  *
  * 验证 [MinecraftVersionGroup.isBotSupported] 的决策：
  * - 1.7.10（< 1.8）不支持 bot E2E → 跳过 bot 启动 + 告警，scenario 仍继续。

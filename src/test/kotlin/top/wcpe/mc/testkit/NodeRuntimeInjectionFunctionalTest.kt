@@ -21,7 +21,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** FR-20 从消费者 Gradle 任务入口验证全部后端与代理启动路径接线。 */
+/** 节点运行时注入 从消费者 Gradle 任务入口验证全部后端与代理启动路径接线。 */
 class NodeRuntimeInjectionFunctionalTest {
 
     @TempDir
@@ -512,7 +512,7 @@ class NodeRuntimeInjectionFunctionalTest {
         private const val RESERVED_PORT_RANGE_END = 26000
 
         /**
-         * 探针存活时长：集群/集群 serve 会先起全部节点（含 FR-22 的同版本串行等待）再统一等端口，
+         * 探针存活时长：集群/集群 serve 会先起全部节点（含 多版本代理与诊断编排 的同版本串行等待）再统一等端口，
          * 先起的节点必须活到最后一个节点启动完成；真实服务端不会几秒自行退出，这里给足窗口，
          * 避免探针先于端口检查退出而表现为「端口在 300s 内未就绪」。
          */

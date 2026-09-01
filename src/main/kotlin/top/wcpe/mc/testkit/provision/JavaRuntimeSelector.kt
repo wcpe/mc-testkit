@@ -4,7 +4,7 @@ import top.wcpe.mc.testkit.config.MinecraftVersionGroup
 import java.io.File
 
 /**
- * 按 Minecraft 版本选择 Java 运行时（FR-21）。
+ * 按 Minecraft 版本选择 Java 运行时（多版本服务端拉起）。
  *
  * 不同 Minecraft 版本要求不同 Java 版本（1.7.10–1.16.5 需 Java 8、1.17 需 Java 17、1.18+ 需 Java 17/21）。
  * 本对象经环境变量解析对应 Java home，回退到 `JAVA_HOME`，最终回退到当前 JVM：

@@ -8,7 +8,7 @@ internal data class PaperDownload(
 )
 
 /**
- * PaperMC 新下载服务 Fill v3 客户端（FR-02）。
+ * PaperMC 新下载服务 Fill v3 客户端（内置下载与运行）。
  *
  * 覆盖 Paper/Folia/Velocity/Waterfall——它们同走 `fill.papermc.io/v3`，只是 project 名不同。
  * "取远端文本"经注入的 [fetchText] 完成（默认走 [Downloader.fetchText]），解析逻辑（[parseLatestBuild] /

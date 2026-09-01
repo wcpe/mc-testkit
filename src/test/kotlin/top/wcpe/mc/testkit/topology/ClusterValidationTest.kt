@@ -11,7 +11,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * 集群场景（FR-10）的配置期校验（ADR-0008）：后端存在、必须 via、代理路由覆盖、与单后端互斥。
+ * 集群场景（集群编排）的配置期校验（ADR-0008）：后端存在、必须 via、代理路由覆盖、与单后端互斥。
  * 纯函数穷举，复用 [TopologyResolver]。
  */
 class ClusterValidationTest {

@@ -7,7 +7,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * [BungeeCordJenkinsApi] 解析与 URL 拼接单元测试（FR-02）。
+ * [BungeeCordJenkinsApi] 解析与 URL 拼接单元测试（内置下载与运行）。
  *
  * 喂固定的 SpigotMC Jenkins 响应样本文本，校验最新成功构建号解析与下载 URL；零网络。
  */

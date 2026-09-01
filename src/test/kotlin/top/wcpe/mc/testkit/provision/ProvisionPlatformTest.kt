@@ -5,7 +5,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * [ProvisionPlatform.downloadVersion] 版本粒度归一单元测试（FR-02，FR-08 实机暴露的版本推导缝）。
+ * [ProvisionPlatform.downloadVersion] 版本粒度归一单元测试（内置下载与运行，首个消费者验证 实机暴露的版本推导缝）。
  *
  * 锁定：Waterfall 在 PaperMC 仅按 major.minor 发布，完整 MC 版本（1.20.1）须截到 1.20 再请求，
  * 否则 `.../projects/waterfall/versions/1.20.1` 返回 404；Paper/Folia/Velocity 原样不截。

@@ -9,7 +9,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * [RunLayout] 路径推导与 [cleanRunDirPreservingRuntimeCaches] 的纯函数单测（FR-04）。
+ * [RunLayout] 路径推导与 [cleanRunDirPreservingRuntimeCaches] 的纯函数单测（任务自动编排）。
  *
  * 用临时目录穷举：路径关系不写死本机绝对路径（NFR 可移植）、清理运行目录保留运行库缓存（NFR 幂等）。
  */

@@ -237,10 +237,10 @@ private fun writeBackendAuthority(runDirectory: File, backend: ResolvedBackend) 
     if (!ServerProperties.load(runDirectory).containsKey(ServerProperties.DIFFICULTY)) {
         rawOverrides[ServerProperties.DIFFICULTY] = "peaceful"
     }
-    // 按版本过滤不支持的键 + 转换 level-type（FR-21）
+    // 按版本过滤不支持的键 + 转换 level-type（多版本服务端拉起）
     val overrides = ServerProperties.versionAwareOverrides(backend.version, rawOverrides)
     ServerProperties.edit(runDirectory, overrides)
-    // 按版本写 Paper 配置（1.7–1.12 跳过、1.13–1.18 paper.yml、1.19+ paper-global.yml，FR-21）
+    // 按版本写 Paper 配置（1.7–1.12 跳过、1.13–1.18 paper.yml、1.19+ paper-global.yml，多版本服务端拉起）
     PaperConfigAdapter.forVersion(backend.version)?.let { config ->
         editYaml(File(runDirectory, config.fileName)) { root ->
             setNested(root, config.path, config.value)

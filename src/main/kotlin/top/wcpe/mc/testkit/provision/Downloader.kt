@@ -20,7 +20,7 @@ private const val READ_TIMEOUT_MS = 60_000
 private const val MAX_TEXT_RESPONSE_BYTES = 16 * 1024 * 1024
 
 /**
- * 极简 HTTP 下载器（FR-02）。
+ * 极简 HTTP 下载器（内置下载与运行）。
  *
  * 把远端 URL 流式写入目标文件；跟随重定向；遵守 User-Agent。不带进度条 / 不耦合 Gradle
  * （上游用的 Gradle `ProgressLogger` 是内部 API，本项目精简掉，符合"下载模块保持精简"）。

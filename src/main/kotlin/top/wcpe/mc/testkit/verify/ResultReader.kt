@@ -19,7 +19,7 @@ data class ScenarioResult(
 }
 
 /**
- * 结果文件读取与判定（FR-06）。
+ * 结果文件读取与判定（机器人驱动与结果判定）。
  *
  * **只认结果文件**：编排 / 任务不绕过结果文件自行判 PASS（架构不变量真源、NFR 正确性优先）。
  * 读 `<scenario>.properties`（[McTestkitResultFile]）：文件缺失或 `status≠PASS` 抛**中文**错误，

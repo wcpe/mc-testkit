@@ -1,7 +1,7 @@
 package top.wcpe.mc.testkit.config
 
 /**
- * Velocity 代理配置（`velocity.toml`）生成（纯函数，FR-02/03，见 ADR-0010）。
+ * Velocity 代理配置（`velocity.toml`）生成（纯函数，内置下载与运行/拓扑 DSL，见 ADR-0010）。
  *
  * Velocity 是**单端口**代理（bind 一个端口），靠内置 `/server` 切服、`try` 列表做落地 / fallback 顺序；
  * 没有 BungeeCord 的「N-listener 一端口对一后端」概念——故 Velocity **不支持压测钉服模型**（钉服靠
@@ -21,7 +21,7 @@ enum class VelocityForwardingMode(val value: String) {
     LEGACY("legacy"),
 }
 
-/** FR13 的 1.17–1.18 后端走 legacy；1.19+ 保持 modern。 */
+/** 1.17–1.18 后端走 legacy（兼容 Velocity 3.1.1）；1.19+ 保持 modern。 */
 fun velocityForwardingModeForBackend(version: String): VelocityForwardingMode =
     if (version.split('.').take(2).joinToString(".") in setOf("1.17", "1.18")) {
         VelocityForwardingMode.LEGACY
@@ -34,7 +34,7 @@ fun velocityForwardingModeForBackend(version: String): VelocityForwardingMode =
  *
  * @param listenPort 代理监听端口（bot 连此端口进服）。
  * @param servers 有序 (server 名, 地址) 列表；首个为默认落地服，全部入 `try` 作 fallback 顺序
- *   （默认服宕机时落下一个存活服，支撑 FR-15 崩溃接管）。地址形如 `127.0.0.1:25565`。
+ *   （默认服宕机时落下一个存活服，支撑 崩溃接管）。地址形如 `127.0.0.1:25565`。
  */
 fun velocityProxyConfigToml(
     listenPort: Int,

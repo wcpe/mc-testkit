@@ -12,7 +12,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * [JarProvisionService] 下载完整性校验与缓存移入单元测试（FR-02；review J2 / sha256 守卫）。
+ * [JarProvisionService] 下载完整性校验与缓存移入单元测试（内置下载与运行；review J2 / sha256 守卫）。
  *
  * 用注入的 paperApi（固定 JSON）+ download（写已知内容）替身，不打网络：验证 sha256 不匹配抛中文错误且
  * 不留缓存文件；下载成功则原子移入缓存且内容完整（每用例独立缓存根，避免串扰）。

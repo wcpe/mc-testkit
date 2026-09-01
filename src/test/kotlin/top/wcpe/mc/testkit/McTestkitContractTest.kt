@@ -11,7 +11,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * 对外契约冻结测试（FR-01）。
+ * 对外契约冻结测试（插件骨架）。
  *
  * 这些常量是 Wave 1 各 FR 共同依赖的接缝，一经发布即契约；本测试守住它们不被无意改动。
  */

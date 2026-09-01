@@ -10,11 +10,11 @@ import top.wcpe.mc.testkit.dsl.ScenarioSpec
 import top.wcpe.mc.testkit.dsl.ServeSpec
 
 /**
- * 拓扑解析器（FR-03）：把 `mcTestkit { }` 的冻结声明解析为内存 [Topology]。
+ * 拓扑解析器（拓扑 DSL）：把 `mcTestkit { }` 的冻结声明解析为内存 [Topology]。
  *
  * 全程**纯函数**——只依赖入参（specs），不读环境变量 / 文件系统 / 全局状态，相同输入恒得相同
- * 输出，便于穷举测试。职责仅「校验 + 端口推导 + 装配模型」：不注册任务（FR-04）、不调用
- * 下载/运行（FR-02）、不固化环境契约（FR-05）。
+ * 输出，便于穷举测试。职责仅「校验 + 端口推导 + 装配模型」：不注册任务（任务自动编排）、不调用
+ * 下载/运行（内置下载与运行）、不固化环境契约。
  *
  * 任何配置期不一致一律抛 [GradleException]，消息为**中文**、指出「缺什么 / 撞哪个 / 怎么补」
  * （对齐 docs/API.md §2 错误约定）。平台 P1 范围由冻结枚举类型在编译期保证，运行期不再写不可达
@@ -22,7 +22,7 @@ import top.wcpe.mc.testkit.dsl.ServeSpec
  */
 object TopologyResolver {
 
-    /** 从 `mcTestkit { }` 扩展解析拓扑（FR-04 编排走的真实入口）。 */
+    /** 从 `mcTestkit { }` 扩展解析拓扑（任务自动编排 编排走的真实入口）。 */
     fun resolve(extension: McTestkitExtension): Topology =
         resolve(
             extension.declaredBackends,
@@ -168,9 +168,9 @@ object TopologyResolver {
 
     /**
      * 校验：场景引用的后端（backend / backends）与代理（via）均存在。多后端场景按类型分两支
-     * （FR-10/11，ADR-0008）：① 集群（声明 backends、无 stress）须有 via 且代理路由覆盖全部后端；
+     * （集群编排/压测编排，ADR-0008）：① 集群（声明 backends、无 stress）须有 via 且代理路由覆盖全部后端；
      * ② 压测（声明 stress）须有 ≥1 backends、botsPerServer / durationSeconds 为正，via 可选（设了则
-     * 须路由覆盖）。单后端 backend 与多后端 backends 互斥。多 bot 声明（FR-16）由 [validateScenarioBots] 校验。
+     * 须路由覆盖）。单后端 backend 与多后端 backends 互斥。多 bot 声明（单场景多 bot）由 [validateScenarioBots] 校验。
      */
     private fun validateScenarioRefs(
         backends: List<BackendSpec>,
@@ -184,7 +184,7 @@ object TopologyResolver {
             val isStress = scenario.stressSpec != null
             val isCluster = hasBackends && !isStress
 
-            // 多 bot / 复制份数声明合法性（FR-16，ADR-0009）
+            // 多 bot / 复制份数声明合法性（单场景多 bot，ADR-0009）
             validateScenarioBots(scenario, isStress)
 
             // 单后端 backend 与多后端 backends 互斥（集群 / 压测都用 backends）
@@ -268,7 +268,7 @@ object TopologyResolver {
     }
 
     /**
-     * 校验单场景的 bot 声明（FR-16，ADR-0009）：① 每个 bot 的 `count >= 1`；② 同场景声明 ≥2 个 bot 时
+     * 校验单场景的 bot 声明（单场景多 bot，ADR-0009）：① 每个 bot 的 `count >= 1`；② 同场景声明 ≥2 个 bot 时
      * 每个须有**唯一** `role`（匿名 `bot { }` 只能一个，否则多进程无法区分）；③ 压测场景禁 `count>1` /
      * 多 bot（规模用 `stress { botsPerServer }` 表达，避免与「同质钉服」语义混淆）。一律中文报错。
      */
@@ -310,7 +310,7 @@ object TopologyResolver {
     }
 
     /**
-     * 校验持久手测（serve）声明（FR-17，ADR-0011）：① serve 名非空；② serve 名唯一、且折成任务名
+     * 校验持久手测（serve）声明（持久手测 serve，ADR-0011）：① serve 名非空；② serve 名唯一、且折成任务名
      * `serve<Key>` 后不相撞；③ 显式 `backend` 引用存在，无显式 backend 时拓扑须至少有一个后端可默认；
      * ④ `via` 代理存在，且设了 via 则该代理须路由到 serve 的目标后端。一律中文报错。
      */
@@ -340,7 +340,7 @@ object TopologyResolver {
         }
 
         serves.forEach { serve ->
-            // serve 可选 bot 的多 bot 声明合法性（FR-19，规则同场景 FR-16）
+            // serve 可选 bot 的多 bot 声明合法性（serve 人机混场，规则同场景 单场景多 bot）
             validateServeBots(serve)
             val hasBackends = serve.backendRefs.isNotEmpty()
             // 单后端 backend 与多后端 backends 互斥（集群 serve 只用 backends）
@@ -357,7 +357,7 @@ object TopologyResolver {
         }
     }
 
-    /** 校验 serve 的可选 bot 声明（FR-19）：每个 `count >= 1`；多 bot 须各有唯一 `role`（匿名只能一个）。 */
+    /** 校验 serve 的可选 bot 声明（serve 人机混场）：每个 `count >= 1`；多 bot 须各有唯一 `role`（匿名只能一个）。 */
     private fun validateServeBots(serve: ServeSpec) {
         val bots = serve.botSpecs
         bots.forEach { bot ->
@@ -382,7 +382,7 @@ object TopologyResolver {
         }
     }
 
-    /** 集群 serve（FR-18）：各后端存在、须有 via、via 路由覆盖全部后端。 */
+    /** 集群 serve：各后端存在、须有 via、via 路由覆盖全部后端。 */
     private fun validateClusterServe(
         serve: ServeSpec,
         backendNames: Set<String>,
@@ -414,7 +414,7 @@ object TopologyResolver {
         }
     }
 
-    /** 单后端 serve（FR-17）：backend 引用存在（或有可默认后端）、via 存在且路由到目标后端。 */
+    /** 单后端 serve（持久手测 serve）：backend 引用存在（或有可默认后端）、via 存在且路由到目标后端。 */
     private fun validateSingleServe(
         serve: ServeSpec,
         backendNames: Set<String>,

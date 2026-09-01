@@ -18,7 +18,7 @@ data class ResolvedPluginJar(
 )
 
 /**
- * 把 `mcTestkit { dependencies { } }` 声明解析为待注入 jar（FR-04 整合器，纯函数）。
+ * 把 `mcTestkit { dependencies { } }` 声明解析为待注入 jar（任务自动编排 整合器，纯函数）。
  *
  * 每个声明值（[DependenciesSpec.pluginUnderTest] / [DependenciesSpec.plugins] 项）是**环境变量名或路径**
  * （API.md §3.1：运行期解析以求可移植，不写死本机绝对路径）。解析规则：

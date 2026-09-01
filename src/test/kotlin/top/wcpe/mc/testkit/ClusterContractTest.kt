@@ -9,7 +9,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * 集群编排（FR-10）的 DSL 形态与命名/契约扩展测试（ADR-0008）。
+ * 集群编排的 DSL 形态与命名/契约扩展测试（ADR-0008）。
  */
 class ClusterContractTest {
 

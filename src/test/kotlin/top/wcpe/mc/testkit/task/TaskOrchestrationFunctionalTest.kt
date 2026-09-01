@@ -10,11 +10,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * 任务自动编排（FR-04）的 TestKit 集成测试：以真实消费者视角驱动插件。
+ * 任务自动编排的 TestKit 集成测试：以真实消费者视角驱动插件。
  *
  * 只验证**配置期**契约——任务按命名约定注册（[top.wcpe.mc.testkit.contract.McTestkitTaskNames]）、
  * `tasks`/`help` 成功、任务依赖关系存在、非法拓扑配置期中文报错。**不真跑**任何任务体
- * （不下载、不起服、不连服）——真实起服/起代理/起 bot 判定属 FR-08 实机维度。
+ * （不下载、不起服、不连服）——真实起服/起代理/起 bot 判定属 首个消费者验证 实机维度。
  */
 class TaskOrchestrationFunctionalTest {
 

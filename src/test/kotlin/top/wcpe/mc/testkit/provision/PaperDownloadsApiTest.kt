@@ -7,7 +7,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * [PaperDownloadsApi] 解析与 URL 读取单元测试（FR-02）。
+ * [PaperDownloadsApi] 解析与 URL 读取单元测试（内置下载与运行）。
  *
  * 喂固定的 PaperMC Fill v3 响应样本文本，校验最新构建号 / 下载产物 / 下载 URL 解析；
  * 取文本用注入替身（零网络）。样本字段对齐 PaperMC `projects/<p>/versions/<v>/builds/latest` 与

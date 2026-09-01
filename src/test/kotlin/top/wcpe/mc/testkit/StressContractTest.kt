@@ -11,7 +11,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * 压测编排（FR-11）的 DSL 形态与命名/契约扩展测试（ADR-0008）。
+ * 压测编排的 DSL 形态与命名/契约扩展测试（ADR-0008）。
  */
 class StressContractTest {
 

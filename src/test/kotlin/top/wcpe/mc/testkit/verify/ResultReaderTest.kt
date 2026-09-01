@@ -11,7 +11,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * 结果判定单元测试（FR-06）。
+ * 结果判定单元测试（机器人驱动与结果判定）。
  *
  * 验证「只认结果文件」：PASS 返回结论、FAIL 与文件缺失抛中文错误。
  * 用临时目录写 `<scenario>.properties`，不连任何外部依赖。

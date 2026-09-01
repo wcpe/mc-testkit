@@ -11,7 +11,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * 压测场景（FR-11）的配置期校验（ADR-0008）：须 backends、规模/时长为正、via 可选（设了须路由覆盖）。
+ * 压测场景（压测编排）的配置期校验（ADR-0008）：须 backends、规模/时长为正、via 可选（设了须路由覆盖）。
  * 纯函数穷举，复用 [TopologyResolver]。
  */
 class StressValidationTest {

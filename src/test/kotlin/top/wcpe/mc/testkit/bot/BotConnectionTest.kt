@@ -9,7 +9,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * 机器人环境变量构建单元测试（FR-06）。
+ * 机器人环境变量构建单元测试（机器人驱动与结果判定）。
  *
  * 穷举校验：键全部取自 [McTestkitEnv]（前缀 `MC_TESTKIT_E2E_`）、无任何业务特定 `SAMPLEBIZ_`、
  * 值正确（含端口显式覆盖、缺省回退、消费方同名环境变量覆盖）。是纯函数，不连进程 / Gradle。

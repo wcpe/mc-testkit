@@ -3,7 +3,7 @@ package top.wcpe.mc.testkit.config
 import org.gradle.api.GradleException
 
 /**
- * 依赖注入缺失校验（FR-05）。
+ * 依赖注入缺失校验（环境契约）。
  *
  * 被测插件常依赖数据源 / Redis 等服务正确注入才启动；缺失若静默继续，会到运行期才炸得莫名其妙。
  * 本对象提供**通用机制**：给定「必需注入项（名 → 是否已提供）」，缺失即在配置期抛**中文**

@@ -11,7 +11,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * `server.properties` 编辑单元测试（FR-05）。
+ * `server.properties` 编辑单元测试（环境契约）。
  *
  * 验证纯函数式编辑：改对涉及键、保留未涉及键；用临时目录读写，不连任何外部依赖。
  */
@@ -99,7 +99,7 @@ class ServerPropertiesTest {
         assertEquals(ServerProperties.DEFAULT_PORT, ServerProperties.port(noFile))
     }
 
-    // ── versionAwareOverrides（FR-21）──
+    // ── versionAwareOverrides（多版本服务端拉起）──
 
     @Test
     @DisplayName("1.7.10 应移除 simulation-distance 和 enforce-secure-profile，level-type 转为 FLAT")

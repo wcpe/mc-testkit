@@ -8,7 +8,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 
 /**
- * 单场景多 bot（FR-16，ADR-0009）的 DSL 形态契约测试：bot 列表、具名角色、count，
+ * 单场景多 bot（单场景多 bot，ADR-0009）的 DSL 形态契约测试：bot 列表、具名角色、count，
  * 以及 `botSpec` 向后兼容（= 首个）。
  */
 class MultiBotContractTest {

@@ -63,7 +63,7 @@ private fun proxyRoot(listeners: List<Map<String, Any?>>, servers: Map<String, A
 )
 
 /**
- * 单后端经代理（FR-04）：单 listener 绑一个端口、强制转发到单个后端。
+ * 单后端经代理（任务自动编排）：单 listener 绑一个端口、强制转发到单个后端。
  *
  * @param listenPort 代理监听端口（机器人连此端口进服）。
  * @param backendAddress 后端地址，形如 `127.0.0.1:25565`。
@@ -81,7 +81,7 @@ fun bungeeProxyConfigYml(
 )
 
 /**
- * 集群经代理（FR-10）：单 listener + N 个具名 server（server 名 = 后端名）。bot 连此 listener 落到首个
+ * 集群经代理（集群编排）：单 listener + N 个具名 server（server 名 = 后端名）。bot 连此 listener 落到首个
  * 后端（`force_default_server` + `priorities` 首个），再经 `/server <后端名>` 在同一 TCP 连接 fast-transfer 切服。
  *
  * `priorities` 为**全部后端有序列表**（首个为默认服，其余作 fallback）：默认服宕机时 bot 重连回退到下一个，
@@ -108,7 +108,7 @@ fun bungeeClusterProxyConfigYml(
 }
 
 /**
- * 压测经代理（FR-11）：N 个 listener **一端口对一后端**——listener[i] 的 `priorities` 钉到对应后端、
+ * 压测经代理（压测编排）：N 个 listener **一端口对一后端**——listener[i] 的 `priorities` 钉到对应后端、
  * `force_default_server` 钉服，故连某 listener 端口的 bot **钉死在该后端**（不 `/server` 切换）。
  * `servers` 段含全部后端供路由。
  *

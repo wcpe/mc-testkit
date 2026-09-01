@@ -1,7 +1,7 @@
 package top.wcpe.mc.testkit.config
 
 /**
- * 按 Minecraft 版本决定写哪种 Paper 配置（FR-21）。
+ * 按 Minecraft 版本决定写哪种 Paper 配置（多版本服务端拉起）。
  *
  * Paper 的代理在线模式配置文件随版本变迁：
  * - **1.7.10–1.12**：无 Paper 专属代理配置（BungeeCord 模式经 `spigot.yml` 即可），跳过。

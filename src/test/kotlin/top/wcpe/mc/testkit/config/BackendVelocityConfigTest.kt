@@ -11,7 +11,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * Velocity 后端 modern forwarding 两件套单元测试（FR-05，ADR-0010，环境契约高风险区）。
+ * Velocity 后端 modern forwarding 两件套单元测试（环境契约，ADR-0010，环境契约高风险区）。
  *
  * 验证：`server.properties` online-mode/enforce-secure-profile=false；
  * `config/paper-global.yml` proxies.velocity.{enabled=true, online-mode=false, secret=共享}；
@@ -90,7 +90,7 @@ class BackendVelocityConfigTest {
         assertTrue(paper.contains("custom-secret-123"), "应写入自定 secret，实际：\n$paper")
     }
 
-    // ── 版本感知（FR-21）──
+    // ── 版本感知（多版本服务端拉起）──
 
     @Test
     @DisplayName("1.18.1 应切换 BungeeCord 后端模式并关闭 Velocity modern forwarding")
@@ -124,7 +124,7 @@ class BackendVelocityConfigTest {
         assertEquals("false", props.getProperty(ServerProperties.ONLINE_MODE))
         assertEquals(null, props.getProperty(ServerProperties.ENFORCE_SECURE_PROFILE), "1.16.5 不应有 enforce-secure-profile")
 
-        // FR13 仅为 1.17/1.18 补 paper.yml；更早版本不应写任一 Velocity 配置。
+        // 仅为 1.17/1.18 补 paper.yml（兼容 Velocity 3.1.1）；更早版本不应写任一 Velocity 配置。
         assertFalse(File(runDir, "config/paper-global.yml").exists(), "1.16.5 不应写 paper-global.yml")
         assertFalse(File(runDir, "paper.yml").exists(), "1.16.5 不应写 paper.yml")
     }

@@ -11,7 +11,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * [resolveDependencyJars] 纯函数单测（FR-04）：声明值「环境变量名或路径」解析、缺失中文报错。
+ * [resolveDependencyJars] 纯函数单测（任务自动编排）：声明值「环境变量名或路径」解析、缺失中文报错。
  *
  * 用临时文件 + 替身取值器穷举，零 Gradle Project / 零网络。
  */

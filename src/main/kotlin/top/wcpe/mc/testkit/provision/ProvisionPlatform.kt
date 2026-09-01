@@ -3,13 +3,13 @@ package top.wcpe.mc.testkit.provision
 import top.wcpe.mc.testkit.contract.McTestkitEnv
 
 /**
- * P1 五平台 → 下载源 + 环境变量覆盖名 的映射（内部用，FR-02）。
+ * 六个平台 → 下载源 + 环境变量覆盖名 的映射（内部用，内置下载与运行）。
  *
  * 后端 Paper/Folia 与代理 Velocity/Waterfall 走 PaperMC 下载 API；BungeeCord 走 SpigotMC Jenkins；
  * Spigot 依次使用经授权的 GetBukkit 与 GitHub 构件镜像。本枚举不对外暴露：DSL 侧已有
  * `dsl/Platforms` 的对外平台枚举，本枚举只供下载模块内部解析下载源。
  *
- * @property id 平台标识（与 DSL 平台便捷量字面量一致，便于 FR-04 接线时按名映射）。
+ * @property id 平台标识（与 DSL 平台便捷量字面量一致，便于 任务自动编排 接线时按名映射）。
  * @property paperProject PaperMC 下载 API 的 project 名；BungeeCord 经 Jenkins 故为 null。
  * @property jarEnv 直接提供 jar 路径的环境变量名（存在即优先、不下载）。
  * @property versionEnv 覆盖版本的环境变量名（BungeeCord 无版本概念故为 null）。

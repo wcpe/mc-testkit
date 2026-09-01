@@ -41,7 +41,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 | FR-06 | 机器人驱动 + 结果判定：启动机器人进程、机器人↔桩控制协议、读结果文件判 PASS/FAIL | P1 | 已交付@v0.1.0 |
 | FR-07 | `template/` 脚手架：桩插件骨架 + mineflayer 机器人内核 + 一个示例场景 + 复制说明 | P1 | 已交付@v0.1.0 |
 | FR-08 | 以首个接入的真实插件项目作消费者验证：迁移其编排到本插件，跑通 smoke 与「经 Waterfall 代理购买」 | P1 | 已交付@v0.1.0 |
-| FR-09 | 抽出可发布的共享桩基类库 / 机器人包：`harness-core`（Maven，桩协议胶水：契约 env / 结果原子写出 / serve 空闲 / 桩基类）+ `@wcpe/mc-testkit-bot`（npm，机器人内核：端口探测 / 重连 / action 分发 / 收尾），`template/` 改为依赖构件（第 2 个消费者验证后，见 ADR-0014 取代 ADR-0002）| P2 | 开发中 |
+| FR-09 | 抽出可发布的共享桩基类库 / 机器人包：`harness-core`（Maven，桩协议胶水：契约 env / 结果原子写出 / serve 空闲 / 桩基类）+ `@wcpe/mc-testkit-bot`（npm，机器人内核：端口探测 / 重连 / action 分发 / 收尾），`template/` 改为依赖构件（第 2 个消费者验证后，见 ADR-0014 取代 ADR-0002）| P2 | 已交付@v0.8.0 |
 | FR-10 | 多后端集群编排：声明「N 后端（同 data-group）+ 代理」拓扑，机器人经代理在后端间 `/server` 切换，桩跨服判定一致性（扩展 scenario 块 `backends(...)`，见 ADR-0008）| P3 | 已交付@v0.1.0 |
 | FR-11 | 压测编排：N 服 × M bot 钉服持续随机动作（N-listener 代理或直连），每服桩收集各 bot `E2E_STRESS_RESULT` 聚合判定；业务不变量（不超卖）由消费方桩查共享 DB 断言（扩展 scenario 块 `stress{}` + 规模 env，见 ADR-0008）| P3 | 已交付@v0.1.0 |
 | FR-12 | 每后端身份注入：编排起每个后端时下发本后端声明名 env `MC_TESTKIT_E2E_BACKEND_NAME`（与下发给 bot 的 `CLUSTER_BACKENDS` 同源、有序对应），消费方据此 per-backend 派生身份（如各服不同 `server-id`）；编排只负责告诉每个后端「它是谁」，不规定怎么用（见 docs/specs/fr-12-per-backend-identity.md）| P1 | 已交付@v0.2.0 |

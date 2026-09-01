@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/wcpe/mc-testkit/actions/workflows/ci.yml/badge.svg)](https://github.com/wcpe/mc-testkit/actions/workflows/ci.yml)
 [![E2E](https://github.com/wcpe/mc-testkit/actions/workflows/e2e.yml/badge.svg)](https://github.com/wcpe/mc-testkit/actions/workflows/e2e.yml)
-[![version](https://img.shields.io/badge/version-v0.7.0-blue)](VERSION)
+[![version](https://img.shields.io/badge/version-v0.8.0-blue)](VERSION)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 > 面向 Minecraft 插件的**全平台端到端测试编排** Gradle 插件 + 配套脚手架模板：把真实服务端/代理拉起、互联成测试拓扑，用机器人驱动端到端场景、判定结果并收尾，统一各插件五花八门的 E2E 做法。
@@ -22,7 +22,7 @@
 - **持久手测 serve（v0.4.0，FR-17/18/19）**：复用同一拓扑声明把「（代理 +）后端 + 插件」挂起供真人客户端连入手测——单后端 / 集群 `/server` 切服 / 可选并起 bot 人机混场；Ctrl+C / `stop<Key>Serve` 三重收尾、端口不漏。
 - **固化环境契约**：`server.properties` 真实读改写回、BungeeCord/Velocity 配置 YAML 对象化深合并、经代理固定 bot 协议版本、依赖（数据源/Redis）注入校验，一处固化消费方默认生效。
 - **脚手架模板**：`template/` 提供桩插件骨架（Paper/Folia 双兼容）+ mineflayer bot 内核 + 示例场景，照抄即用。
-- **共享协议胶水构件（FR-09，ADR-0014）**：桩侧 `harness-core`（Maven，纯 Java 零 Kotlin 依赖：契约 env / 结果原子写出 / 桩基类）+ 机器人侧 `@wcpe/mc-testkit-bot`（npm：端口探测 / 重连 / action 分发内核）——`template/` 是它们的示例消费者，消费方依赖构件而非手写胶水。
+- **共享协议胶水构件（FR-09，ADR-0014）**：桩侧 `harness-core`（Maven，纯 Java 零 Kotlin 依赖：契约 env / 结果原子写出 / 桩基类）+ 机器人侧 `@wcpe/mc-testkit-bot`（npm：端口探测 / 重连 / action 分发内核）——`template/` 是它们的示例消费者，消费方依赖构件而非手写胶水；接入坐标与接线见 [`docs/API.md`](docs/API.md) §4。
 - **自举实机 E2E**：CI 实机跑通全矩阵——单服(±bot) / 经代理（Waterfall·BungeeCord·Velocity）/ 集群 / 压测 / 单场景多 bot / 崩溃接管 / Folia 后端。
 
 ## 支持的平台
@@ -51,7 +51,7 @@ pluginManagement {
 
 ```kotlin
 plugins {
-    id("top.wcpe.mc-testkit") version "0.7.0"
+    id("top.wcpe.mc-testkit") version "0.8.0"
 }
 
 mcTestkit {
@@ -128,7 +128,7 @@ mc-testkit/
 
 ## 版本与变更
 
-当前 **v0.7.0**（发布到 [maven.wcpe.top](https://maven.wcpe.top)）。完整变更见 [`CHANGELOG.md`](CHANGELOG.md)；能力与进度以 [`docs/PRD.md`](docs/PRD.md) §4 FR 表状态列为准。
+当前 **v0.8.0**（发布到 [maven.wcpe.top](https://maven.wcpe.top)）。完整变更见 [`CHANGELOG.md`](CHANGELOG.md)；能力与进度以 [`docs/PRD.md`](docs/PRD.md) §4 FR 表状态列为准。
 
 ## 贡献
 

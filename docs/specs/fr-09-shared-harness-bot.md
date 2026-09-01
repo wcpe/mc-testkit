@@ -1,6 +1,6 @@
 # 功能规格：共享桩协议胶水库与机器人内核包（harness-core / bot-core）
 
-> 状态：已实现（待发版标交付）　·　关联 PRD：FR-09　·　决策：[ADR-0014](../adr/0014-shared-harness-bot.md)（取代 ADR-0002 的「暂不发布」条款）
+> 状态：已交付@v0.8.0　·　关联 PRD：FR-09　·　决策：[ADR-0014](../adr/0014-shared-harness-bot.md)（取代 ADR-0002 的「暂不发布」条款）
 
 ## 1. 背景与目标
 

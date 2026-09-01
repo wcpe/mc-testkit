@@ -1,13 +1,13 @@
 'use strict'
 
-const { waitForMessage } = require('../lib/messages')
+const { waitForMessage } = require('@wcpe/mc-testkit-bot/lib/messages')
 
-// 崩溃接管 fallback 示例驱动（照抄物，刻意最薄，FR-15）。
+// 崩溃接管 fallback 示例驱动（照抄物，刻意最薄，崩溃接管）。
 //
 // 只验**框架层** fallback 路由（默认后端宕机 → bot 经代理回退到存活后端），不含业务「租约 TTL 接管」：
 //   ① 经代理落默认后端（集群代理 priorities 首个）→ 等桩就绪 E2E_READY
 //   ② 发 E2E_TRIGGER_CRASH（template 约定）触发**当前所在**后端 halt 模拟宕机
-//   ③ 默认后端宕机 → 连接断开 → 经代理重连，代理 fallback 到下一个存活后端（FR-15 priorities=全后端）
+//   ③ 默认后端宕机 → 连接断开 → 经代理重连，代理 fallback 到下一个存活后端（崩溃接管 priorities=全后端）
 //   ④ 在存活后端再次 spawn → 等其就绪 → 发 E2E_CLUSTER_ARRIVED，存活桩判 PASS
 // 真实「崩溃接管」业务（存活服在归属租约 TTL 过期后接管上线）由消费方在存活桩里查共享 DB 改判。
 const TRIGGER_CRASH_MARKER = 'E2E_TRIGGER_CRASH'

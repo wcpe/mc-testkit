@@ -1,8 +1,8 @@
 'use strict'
 
-const { waitForMessage } = require('../lib/messages')
+const { waitForMessage } = require('@wcpe/mc-testkit-bot/lib/messages')
 
-// 跨服集群示例驱动（照抄物，刻意最薄，FR-10）。
+// 跨服集群示例驱动（照抄物，刻意最薄，集群编排）。
 //
 // 流程：spawn 落在首个后端 → 等桩就绪信号 → 按 MC_TESTKIT_E2E_CLUSTER_BACKENDS 顺序经代理
 //       `/server <name>` 切到后续每个后端（切服后 mineflayer 会再次 spawn）→ 在最后一个服发

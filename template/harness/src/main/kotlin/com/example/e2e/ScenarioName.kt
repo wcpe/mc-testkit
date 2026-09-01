@@ -15,20 +15,20 @@ enum class ScenarioName(val id: String) {
     /** 机器人驱动示例场景：桩发就绪信号，机器人入服驱动一步最小动作。 */
     EXAMPLE_BOT("example-bot"),
 
-    /** 跨服集群示例场景（FR-10）：桩对称——入服发就绪信号、收到机器人切换确认标记即 PASS。 */
+    /** 跨服集群示例场景（集群编排）：桩对称——入服发就绪信号、收到机器人切换确认标记即 PASS。 */
     CROSS_SERVER("cross-server"),
 
-    /** 持续压测示例场景（FR-11）：每 bot 入服发就绪信号、收集各 bot 上报，到时聚合写 PASS（薄示例不做业务断言）。 */
+    /** 持续压测示例场景（压测编排）：每 bot 入服发就绪信号、收集各 bot 上报，到时聚合写 PASS（薄示例不做业务断言）。 */
     CONTINUOUS_STRESS("continuous-stress"),
 
-    /** 单场景多 bot 示例场景（FR-16）：多个各唯一 username 的 bot 直连入服，桩收齐 + settle 窗口后聚合写 PASS（薄示例）。 */
+    /** 单场景多 bot 示例场景（单场景多 bot）：多个各唯一 username 的 bot 直连入服，桩收齐 + settle 窗口后聚合写 PASS（薄示例）。 */
     MULTI_BOT("multi-bot"),
 
-    /** 崩溃接管 fallback 示例场景（FR-15）：默认后端收崩溃触发即模拟宕机；bot 经代理回退到存活后端、确认到达即 PASS（薄示例）。 */
+    /** 崩溃接管 fallback 示例场景（崩溃接管）：默认后端收崩溃触发即模拟宕机；bot 经代理回退到存活后端、确认到达即 PASS（薄示例）。 */
     CRASH_TAKEOVER("crash-takeover"),
 
     /**
-     * 持久手测（serve）空闲场景（FR-17，ADR-0011）：mc-testkit serve 模式经 `MC_TESTKIT_E2E_SCENARIO`
+     * 持久手测（serve）空闲场景（持久手测 serve，ADR-0011）：mc-testkit serve 模式经 `MC_TESTKIT_E2E_SCENARIO`
      * 下发此**保留 id**（字面量对齐 `McTestkitContract.SERVE_SCENARIO_ID`，不 import 插件包）。
      * 桩据此**空闲**：不驱动任何场景、不挂超时、不写结果、不关服——把服务端留给真人客户端手测。
      */

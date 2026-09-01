@@ -1,8 +1,8 @@
 'use strict'
 
-const { waitForMessage } = require('../lib/messages')
+const { waitForMessage } = require('@wcpe/mc-testkit-bot/lib/messages')
 
-// 单场景多 bot 示例驱动（照抄物，刻意最薄，FR-16）。
+// 单场景多 bot 示例驱动（照抄物，刻意最薄，单场景多 bot）。
 //
 // 多个 bot 进程（各唯一 username、经 BOT_INDEX 区分）直连同一后端入服；每个进程等桩就绪信号后
 // 报一条到（便于日志 / 观测）即保持在线，由桩在 settle 窗口末聚合各 bot username 判定并关服。

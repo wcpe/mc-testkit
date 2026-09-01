@@ -1,6 +1,6 @@
 'use strict'
 
-const { waitForMessage } = require('../lib/messages')
+const { waitForMessage } = require('@wcpe/mc-testkit-bot/lib/messages')
 
 // 机器人驱动示例场景（照抄物，刻意最薄）。
 //

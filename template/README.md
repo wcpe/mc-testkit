@@ -2,7 +2,9 @@
 
 这是 [mc-testkit](../README.md) 提供的**照抄脚手架**：把它整个拷进你的插件仓库，改几处场景代码，就有了一套「服务端桩插件 + mineflayer 机器人」的 E2E 骨架，配合 mc-testkit 的 `mcTestkit { }` 编排即可在真实「代理 + 后端」上跑端到端测试。
 
-> **它是拷贝物，不是依赖。** 模板不会被 mc-testkit 插件在运行期依赖、不进插件构建产物、也不会被加进 mc-testkit 的 `settings.gradle.kts`（架构不变量）。你把它拷走后，它就完全归你的项目所有，按需自由分叉。本期不提供可发布的共享桩基类库 / npm 包（见 mc-testkit 的 ADR-0002），改进靠「更新模板 + 手动同步」。
+> **它是拷贝物，不是依赖。** 模板不会被 mc-testkit 插件在运行期依赖、不进插件构建产物、也不会被加进 mc-testkit 的 `settings.gradle.kts`（架构不变量）。你把它拷走后，它就完全归你的项目所有，按需自由分叉。
+>
+> **协议胶水来自共享构件（共享胶水构件，ADR-0014 取代 ADR-0002）**：桩侧依赖 `harness-core`（`top.wcpe.mc:harness-core:0.1.0`，Maven / maven.wcpe.top——`build.gradle.kts` 已配好该仓库），机器人侧依赖 `@wcpe/mc-testkit-bot`（npm，maven.wcpe.top/npm/npm-release/；本机 npmrc 已配 `@wcpe:registry`）。你只需写业务场景，协议层随构件升级。
 
 ---
 
@@ -122,4 +124,4 @@ npm run connect-and-wait
 - 桩的 `config.yml` 由编排在 prepare 阶段覆盖写入（场景名、结果文件路径）；仓库里这份只是默认占位与字段说明。
 - 模板刻意做到最薄：示例机器人不点 GUI、不断言背包，避免把任何业务玩法固化进骨架。窗口点击 / 背包断言等辅助按你的真实场景自行补。
 - 桩骨架已**兼容 Folia**：`plugin.yml` 声明 `folia-supported: true`（否则 Folia 拒绝加载插件），运行期探测到 Folia 时改用 `GlobalRegionScheduler` 调度（否则用 Bukkit 调度器），同一份桩可直接用于 Paper 或 Folia 后端、无需改代码（用反射调用，不引入对 Folia 专有 API 的编译依赖）。仅在 Paper 上跑可删 `folia-supported`（Paper 忽略它）。
-- **持久手测 serve 空闲场景**（`ScenarioName.SERVE`，FR-17）：mc-testkit 的 `serve<Key>` 任务（起拓扑挂住供真人客户端手测）经保留场景 id `__mc_testkit_serve__` 下发，桩据此**空闲**——不驱动任何场景、不挂超时、不写结果、不关服。这是 serve 模式的对接点，**不要删**（删了 serve 起服后桩会默认跑 `smoke` 把服务端关掉）；它不是业务场景，无需为它写 bot。
+- **持久手测 serve 空闲场景**（`ScenarioName.SERVE`，持久手测 serve）：mc-testkit 的 `serve<Key>` 任务（起拓扑挂住供真人客户端手测）经保留场景 id `__mc_testkit_serve__` 下发，桩据此**空闲**——不驱动任何场景、不挂超时、不写结果、不关服。这是 serve 模式的对接点，**不要删**（删了 serve 起服后桩会默认跑 `smoke` 把服务端关掉）；它不是业务场景，无需为它写 bot。

@@ -2,11 +2,11 @@
 
 const assert = require('node:assert/strict')
 const test = require('node:test')
-const { sendFr11PluginMessages } = require('../src/scenarios/fr11NetworkForensics')
+const { sendNetworkForensicsPluginMessages } = require('../src/scenarios/networkForensics')
 
-test('FR11 机器人发送合法 Plugin Message 突发及截断载荷', () => {
+test('机器人发送合法 Plugin Message 突发及截断载荷（网络取证）', () => {
   const writes = []
-  sendFr11PluginMessages({
+  sendNetworkForensicsPluginMessages({
     write: (packetType, payload) => writes.push({ packetType, payload })
   })
 

@@ -13,6 +13,8 @@ group = "com.example.e2e"
 version = "1.0.0-SNAPSHOT"
 
 repositories {
+    mavenLocal() // 本地验证期优先 mavenLocal（harness-core 未发远端时）；消费方可视需要保留或删除
+    maven("https://maven.wcpe.top/repository/maven-releases/") // mc-testkit 系构件（harness-core，共享胶水构件）
     mavenCentral()
     // PaperMC 官方仓库：提供 paper-api（桩编译期所需的 Bukkit/Paper API）
     maven("https://repo.papermc.io/repository/maven-public/")
@@ -21,6 +23,9 @@ repositories {
 dependencies {
     // 仅编译期依赖：运行期由真实 Paper 服务端提供，打入插件 jar 会冲突
     compileOnly("io.papermc.paper:paper-api:1.20.1-R0.1-SNAPSHOT")
+    // 共享协议胶水库（共享胶水构件）：契约 env 读取 / 结果文件原子写出 / 桩基类（serve 空闲、收尾、Folia 调度）。
+    // 会打进插件 jar（harness-core 的 paper-api 是 compileOnly、不在 runtimeClasspath，不会带进去）。
+    implementation("top.wcpe.mc:harness-core:0.1.0")
     implementation(kotlin("stdlib"))
 }
 
@@ -28,7 +33,7 @@ kotlin {
     // 跟随 Paper 1.20.1 的 Java 基线（17）；换 MC 版本时同步调整
     jvmToolchain(17)
     // 跳过 Kotlin 元数据版本校验：让桩能 compileOnly 用「更新版 Kotlin 编译」的被测插件 API
-    // （如其元数据版本 2.1.x 高于本工程编译器可读上限；仅编译期跳过，运行期 JVM 字节码仍兼容）。见 FR-14。
+    // （如其元数据版本 2.1.x 高于本工程编译器可读上限；仅编译期跳过，运行期 JVM 字节码仍兼容）。见 桩 Kotlin 兼容。
     compilerOptions {
         freeCompilerArgs.add("-Xskip-metadata-version-check")
     }
@@ -36,7 +41,7 @@ kotlin {
 
 tasks.jar {
     archiveBaseName.set("mc-testkit-e2e-harness")
-    // 把运行期依赖（kotlin-stdlib）打进插件 jar：桩是 Kotlin 写的，真实 Paper 服务端不提供
+    // 把运行期依赖（kotlin-stdlib / harness-core）打进插件 jar：桩是 Kotlin 写的，真实 Paper 服务端不提供
     // kotlin-stdlib，不打进来会在 onEnable 抛 NoClassDefFoundError: kotlin/jvm/internal/Intrinsics。
     // paper-api 是 compileOnly、不在 runtimeClasspath，故不会被打入（运行期由服务端提供）。
     duplicatesStrategy = org.gradle.api.file.DuplicatesStrategy.EXCLUDE

@@ -1,15 +1,15 @@
 'use strict'
 
-const { waitForMessage } = require('../lib/messages')
-const { mulberry32, jitter, sleep } = require('../lib/random')
+const { waitForMessage } = require('@wcpe/mc-testkit-bot/lib/messages')
+const { mulberry32, jitter, sleep } = require('@wcpe/mc-testkit-bot/lib/random')
 
-// 持续压测示例驱动（照抄物，刻意最薄，FR-11）。
+// 持续压测示例驱动（照抄物，刻意最薄，压测编排）。
 //
 // 流程：spawn 进服（经代理 N-listener 钉死在本服，不切服）→ 等桩就绪信号 → 按 seed ^ botIndex
 //       播种 RNG → 在 durationMs 内循环一个「假动作」（随机判成功 / 业务拒绝，演示 ok/err 分桶，
 //       不连真实业务）→ 到时发累计摘要 E2E_STRESS_RESULT:ok=,err=,buckets= 给桩聚合。
 // 真实压测把「假动作」替换为：经 UI/GUI 通道随机购买等业务操作，按返回码分桶；
-// 不变量（不超卖）由桩查共享 DB 判，框架只收集 + 聚合（见 docs/specs/fr-31）。
+// 不变量（不超卖）由桩查共享 DB 判，框架只收集 + 聚合。
 
 // 假动作节奏（薄示例本地常量；真实场景按业务自定或经业务 env 透传）
 const BUY_INTERVAL_MS = 50

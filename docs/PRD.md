@@ -14,7 +14,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 - 本期不发布共享 Kotlin 桩基类库、不发布共享 npm 机器人包（避免从单一用例过早抽象，留待第 2 个真实消费者验证后再抽，见 ADR-0002）。
 - 不取代单元测试框架（JUnit / MockBukkit 等仍是单元/集成测试的职责）。
 - 不驱动真实游戏客户端（Fabric/Forge mod 客户端）；客户端行为由 mineflayer 机器人模拟。
-- 不支持 Spigot/Bukkit/Sponge 后端（不列入计划，见 ADR-0003）。
+- 不支持 Bukkit/Sponge 后端（不列入计划，见 ADR-0003；Spigot 已纳入，见 ADR-0013）。
 
 ## 2. 角色
 
@@ -34,7 +34,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 | 编号 | 需求 | 优先级 | 状态 |
 |---|---|---|---|
 | FR-01 | Gradle 插件骨架：`top.wcpe.mc-testkit`（java-gradle-plugin + kotlin-dsl）、`mcTestkit { }` DSL 扩展、发布到 maven.wcpe.top | P1 | 已交付@v0.1.0 |
-| FR-02 | 内置下载与运行：插件自实现下载并运行 Paper/Folia 后端与 Velocity/Waterfall/BungeeCord 代理（内置自实现，不外挂第三方下载库，见 ADR-0001）| P1 | 已交付@v0.1.0 |
+| FR-02 | 内置下载与运行：插件自实现下载并运行 Paper/Folia/Spigot 后端与 Velocity/Waterfall/BungeeCord 代理（Spigot 走受控公共构件源 + 多源回退 + 溯源，见 ADR-0013）；启动按构件形态选路（自包含 jar / paperclip 引导件走 `java -jar`，运行目录带 `libraries/` 的 thin jar 经启动器 jar 传 classpath）（内置自实现，不外挂第三方下载库，见 ADR-0001）| P1 | 已交付@v0.1.0 |
 | FR-03 | 声明式拓扑 DSL：声明「单后端」或「代理 + N 后端」节点、端口与路由 | P1 | 已交付@v0.1.0 |
 | FR-04 | 任务自动编排：prepare / 启动机器人 / runServer / proxy / cluster / verify / 缓存回写 | P1 | 已交付@v0.1.0 |
 | FR-05 | 固化环境契约：经代理固定机器人协议版本、paper-global 代理在线模式、BungeeCord 后端配置、依赖数据源/Redis 注入校验 | P1 | 已交付@v0.1.0 |

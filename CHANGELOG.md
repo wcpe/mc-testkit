@@ -14,6 +14,7 @@
 ### 新增
 - **Minecraft 26.x 新版号支持**（`provision/`）：`backendServerArgs` / Waterfall 版本归一识别 `26.2` 等无 `1.` 前缀的版本；Fill v3 路径与单测覆盖 26.2。
 - **FR-22 多版本代理与诊断型 JVM 编排**：`proxy` 可声明独立 `version`、`javaVersion`、`jvmArg(...)` 与 `javaAgent(...)`；`backend` 可声明 `jvmArg(...)` 与 `javaAgent(...)`。普通/代理/集群/压测/serve 全部节点启动路径统一传入参数，显式 Java 主版本经 `MC_TESTKIT_JAVA_HOME_<主版本>` 严格选择。
+- **Spigot 后端供应**（`provision/`，ADR-0013 取代 ADR-0003 的平台范围条款）：后端平台新增 `spigot`——经受控公共构件源按版本下载（首源 `download.getbukkit.org`，不可达回退 GitHub 镜像），下载后校验结构合法 jar 并把实际来源 / 版本 / 本地 SHA-256 写入缓存目录 `source.properties`，命中缓存时复核；全部源不可达抛中文错误。仍支持 `MC_TESTKIT_E2E_SPIGOT_JAR` 覆盖。Bukkit / Sponge 依旧不列入计划。
 
 ### 变更
 - **Velocity 默认版本**：缺省版本更新为官方当前可下载的受控最新 3.x `3.5.1`；兼容矩阵以可下载的 `3.1.1` 覆盖 3.0 代际、`3.5.1` 覆盖最新 3.x、`4.1.0` 覆盖 Java 25 代际。

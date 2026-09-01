@@ -4,7 +4,7 @@
 
 ## 1. 第一期（MVP）只做
 - FR-01 Gradle 插件骨架（`top.wcpe.mc-testkit` / `mcTestkit { }` DSL / 发布 maven.wcpe.top）
-- FR-02 内置下载与运行：自实现下载并运行 Paper/Folia 后端与 Velocity/Waterfall/BungeeCord 代理
+- FR-02 内置下载与运行：自实现下载并运行 Paper/Folia/Spigot 后端与 Velocity/Waterfall/BungeeCord 代理（Spigot 见 ADR-0013）
 - FR-03 声明式拓扑 DSL（单后端 / 代理 + N 后端）
 - FR-04 任务自动编排（prepare / 启动机器人 / runServer / proxy / cluster / verify / 缓存回写）
 - FR-05 固化环境契约（机器人协议版本固定 / paper-global 代理在线模式 / BungeeCord 后端配置 / 依赖数据源·Redis 注入校验）
@@ -15,7 +15,7 @@
 > 此清单是"该做什么"的权威边界，凡不在其中的能力都属越界。
 
 ## 2. MVP 严禁出现（属后续阶段）
-- Spigot / Bukkit / Sponge 后端支持（不列入计划）——含任何 `platform = spigot/bukkit/sponge` 的实现或占位分支。
+- Bukkit / Sponge 后端支持（不列入计划，见 ADR-0013）——含任何 `platform = bukkit/sponge` 的实现或占位分支。**Spigot 已纳入范围**（ADR-0013 取代 ADR-0003 的平台范围条款），不再是越界能力。
 - 可发布的共享 Kotlin 桩基类库 / npm 机器人包（FR-09）。
 - 真实游戏客户端（Fabric/Forge mod 客户端）驱动。
 
@@ -23,7 +23,7 @@
 
 ## 3. 不为未来预留空壳
 - 不写"以后可能用"的抽象、配置项、接口、字段。需要时再加。
-- 后续平台能力到时再加：`platform` 维度可保持可扩展，但**当前只实现 Paper/Folia + 三代理**，不预置其他平台空壳。FR-22 只增强既有 Velocity 版本、Java 与 JVM 参数编排，不新增平台。
+- 后续平台能力到时再加：`platform` 维度可保持可扩展，但**当前只实现 Paper/Folia/Spigot + 三代理**，不预置其他平台空壳。新增 / 移除平台须走 ADR（Spigot 的先例见 ADR-0013）。
 
 ## 4. 越界先问
 - 若某任务看起来需要某个后续阶段能力才能完成 → **停止并向用户确认**，不自行扩大范围。

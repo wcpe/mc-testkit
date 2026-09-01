@@ -1,7 +1,7 @@
 # ADR-0003：平台范围——Paper/Folia 后端 + Velocity/Waterfall/BungeeCord 代理
 
 ## 状态
-已接受
+已被 [ADR-0013](0013-spigot-backend-support.md) 取代（平台范围改为后端 Paper/Folia/Spigot + 三代理；Bukkit/Sponge 仍不列入计划）
 
 ## 背景
 MC 服务端 / 代理种类繁多：后端有 Paper/Folia/Spigot/Bukkit/Sponge，代理有 Velocity/Waterfall/BungeeCord。各自「下载即跑」难度差别很大：Paper/Folia 与 Velocity/Waterfall/BungeeCord 都有官方可直接下载的产物；Spigot/Bukkit 没有官方可直接下载的产物（需 BuildTools 本地构建），Sponge 有独立的下载 / 运行方式。需要先界定本工具覆盖哪些平台。

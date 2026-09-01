@@ -10,7 +10,7 @@
 - 编排在**内置下载/运行模块之上装配**——拓扑、任务、机器人驱动、判定、收尾、环境契约，越过这条边界即漂移。
 
 ## 2. 简单优先（禁用重型件）
-- 内置下载/运行模块**保持精简**：只覆盖五平台（Paper/Folia + Velocity/Waterfall/BungeeCord）的 jar 解析 + 缓存 + 启动；**不**搬运插件市场下载（Modrinth/Hangar/GitHub/Url）等非必需能力（镀金）。
+- 内置下载/运行模块**保持精简**：只覆盖六个平台（后端 Paper/Folia/Spigot + 代理 Velocity/Waterfall/BungeeCord，Spigot 见 ADR-0013）的 jar 解析 + 缓存 + 启动；**不**搬运插件市场下载（Modrinth/Hangar/GitHub/Url）等非必需能力（镀金）。
 - 禁止为编排引入容器编排 / 分布式调度 / 消息中间件等重型件。
 - 本期禁止发布共享 Kotlin 桩基类库 / npm 机器人包（ADR-0002，留 P2）。
 - 不为未来平台 / 能力预留空壳抽象、配置项、字段（需要时再加）。

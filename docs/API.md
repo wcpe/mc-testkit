@@ -21,13 +21,13 @@
 
 ### 3.1 DSL：`mcTestkit { }`（形态已冻结）
 
-声明测试拓扑、场景与依赖注入。FR-01 冻结四个顶层块的形态；行为（拓扑解析、端口推导、校验、任务编排）由 FR-03/04 实现。平台便捷量（`paper`/`folia`/`velocity`/`waterfall`/`bungeecord`）让消费方无需 import 枚举。
+声明测试拓扑、场景与依赖注入。FR-01 冻结四个顶层块的形态；行为（拓扑解析、端口推导、校验、任务编排）由 FR-03/04 实现。平台便捷量（`paper`/`folia`/`spigot`/`velocity`/`waterfall`/`bungeecord`）让消费方无需 import 枚举。
 
 ```kotlin
 mcTestkit {
     // 后端节点：platform 默认 paper；version 默认 1.20.1（也支持 26.2 等新版号）；port 省略则由拓扑解析按端口基数推导
     backend("s1") {
-        platform = paper          // paper | folia（P1 仅此二者，ADR-0003）
+        platform = paper          // paper | folia | spigot（ADR-0003/0013）
         version = "1.20.1"        // 或 "26.2"（MC 新版号方案，无 1. 前缀）
         port = 25565              // Int?，可省
         env("MYPLUGIN_NODE", "s1")
@@ -107,7 +107,7 @@ mcTestkit {
 
 节点 `env(...)` 的名称不能为空、不得含等号或空字符，也不得以 `MC_TESTKIT_E2E_` 开头（大小写不敏感）；该保留前缀限制不影响把同前缀字符串用于 `plugin(...)` / `templateDirectory(...)` 的资源定位。子进程环境优先级固定为**宿主环境 < 节点环境 < 框架权威环境**；后端节点环境只进入对应后端，代理节点环境只进入对应代理，`ServerLauncher` 启动日志不输出环境值。
 
-> 平台枚举只含后端 Paper/Folia、代理 Velocity/Waterfall/BungeeCord，不含 Spigot/Bukkit/Sponge（不列入计划，scope-discipline）。DSL 字段细节可能随 FR-03/04 在 `dsl/` 包内微调，但四个顶层块形态已冻结。集群（FR-10）经 scenario 块**加法新增** `backends(...)` 声明、压测（FR-11）加 `stress {}` 维度，均为加法扩展，不新增顶层块、不改既有字段语义（ADR-0008）。单场景多 bot（FR-16）经 **bot 声明加法扩展**：一个场景可声明多个 bot——具名 `bot("角色") { }`（异质，各自 `username`/`action`/`env`）与 `bot { count = N }`（同质复制 N 份），复用既有 env / 任务名、不新增顶层块；同场景声明 ≥2 个 bot 时每个须有唯一角色名，`count` 须 >0，压测场景禁用 `count`/多 bot（规模用 `botsPerServer`），违反配置期中文报错（ADR-0009）。
+> 平台枚举只含后端 Paper/Folia/Spigot、代理 Velocity/Waterfall/BungeeCord，不含 Bukkit/Sponge（不列入计划，见 ADR-0013）。DSL 字段细节可能随 FR-03/04 在 `dsl/` 包内微调，但四个顶层块形态已冻结。集群（FR-10）经 scenario 块**加法新增** `backends(...)` 声明、压测（FR-11）加 `stress {}` 维度，均为加法扩展，不新增顶层块、不改既有字段语义（ADR-0008）。单场景多 bot（FR-16）经 **bot 声明加法扩展**：一个场景可声明多个 bot——具名 `bot("角色") { }`（异质，各自 `username`/`action`/`env`）与 `bot { count = N }`（同质复制 N 份），复用既有 env / 任务名、不新增顶层块；同场景声明 ≥2 个 bot 时每个须有唯一角色名，`count` 须 >0，压测场景禁用 `count`/多 bot（规模用 `botsPerServer`），违反配置期中文报错（ADR-0009）。
 
 > **持久手测 serve（FR-17，ADR-0011）经新增第 5 个顶层块** `serve("name") { backend = …; via = … }` 引入：声明「把后端（+ 可选经代理）拉起并**挂住**供真人客户端手测」。这是 DSL 由「四块」演进为「五块」的**加法、非破坏**变更（既有声明不受影响，按 SemVer minor；不改既有四块语义）。与 `scenario` 区别：serve **不跑 bot、不判 PASS/FAIL**，只起服并阻塞到手动停。`backend` 省略=默认/单后端，`via` 省略=直连（设了 `via` 则该代理须 `routesTo` 目标后端，配置期校验）。声明 `backends(...)`（与 `backend` 互斥、须配 `via`）即**集群 serve**（FR-18）：N 后端 + 代理整套挂起，真人经代理 `/server` 切服手测（复用 FR-10 集群编排）。可选 `bot { }` / `bot("角色") { }`（FR-19，多 bot 规则同 FR-16）：serve 起声明的 bot 把环境驱到某状态、**不判定**，挂住「人机混场」让真人同时连入——bot 应是**自驱** action（serve 桩空闲、不发 `E2E_READY`，勿复用等桩 ready 的场景 action）。
 

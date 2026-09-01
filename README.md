@@ -28,10 +28,10 @@
 
 | 角色 | 平台 | 说明 |
 |---|---|---|
-| 后端 | Paper / Folia | 1.7.10–1.21.1 代表版本（v0.6.0 起，FR-21）；按版本适配配置与 Java 运行时 |
+| 后端 | Paper / Folia / Spigot | Paper/Folia 覆盖 1.7.10–1.21.1 代表版本（v0.6.0 起，FR-21）并适配配置与 Java 运行时；Spigot 经受控公共构件源供应（v0.7.0 起，ADR-0013） |
 | 代理 | Velocity / Waterfall / BungeeCord | 含 Velocity modern forwarding；v0.7.0 起 Velocity 可指定版本（3.1.1 / 最新 3.x，4.1.0 需 Java 25）；`stress + via=velocity` 因单端口不支持（配置期中文报错） |
 | 机器人 | mineflayer（Node.js） | 随 `template/` 提供内核；1.7.10 不支持（跳过 + 日志告警） |
-| 范围外 | Spigot / Bukkit / Sponge | 平台范围见 ADR-0003 |
+| 范围外 | Bukkit / Sponge | 平台范围见 ADR-0003（已被 ADR-0013 取代）与 ADR-0013 |
 
 ## 快速开始
 

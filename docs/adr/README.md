@@ -6,13 +6,14 @@
 |---|---|---|
 | [0001](0001-gradle-plugin-and-self-provisioning.md) | 以 Gradle 插件形态构建，自实现服务端/代理的下载与运行 | 已接受 |
 | [0002](0002-plugin-and-template-only.md) | 本期只做编排插件 + 脚手架模板，不发布共享桩/机器人库 | 已接受 |
-| [0003](0003-p1-platform-scope.md) | 平台范围：Paper/Folia 后端 + Velocity/Waterfall/BungeeCord 代理（不含 Spigot/Bukkit/Sponge）| 已接受 |
+| [0003](0003-p1-platform-scope.md) | 平台范围：Paper/Folia 后端 + Velocity/Waterfall/BungeeCord 代理（不含 Spigot/Bukkit/Sponge）| 已被 0013 取代 |
 | [0004](0004-orchestration-model.md) | 前台被测后端 + 后台代理/集群 + pid 收尾 + 环境契约固化 | 已接受 |
 | [0005](0005-kotlin-language-version.md) | Kotlin 语言/API 版本锁 1.9，兼容 K1 与 K2 | 已接受 |
 | [0006](0006-public-contract-conventions.md) | 对外契约命名约定（env 前缀 / 任务命名 / 控制协议 / 结果文件） | 已接受 |
 | [0008](0008-cluster-and-stress-dsl.md) | 集群/压测以「扩展 scenario 块」表达，编排走「后台多后端 + 轮询结果文件」（补充 0006/0004） | 已接受 |
 | [0009](0009-multi-bot-per-scenario.md) | 单场景多 bot：扩 scenario 的 bot 声明加 `count` + `bot("角色")`，复用既有 env/任务名（补充 0008） | 已接受 |
 | [0010](0010-velocity-modern-forwarding.md) | Velocity modern forwarding（共享 secret + 单端口 → 不支持压测钉服，补充 0004/0008） | 已接受 |
+| [0013](0013-spigot-backend-support.md) | 把 Spigot 后端纳入平台范围（受控公共构件源 + 多源回退 + 溯源，取代 0003） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

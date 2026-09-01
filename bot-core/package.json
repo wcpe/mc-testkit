@@ -1,0 +1,33 @@
+{
+  "name": "@wcpe/mc-testkit-bot",
+  "version": "0.1.0",
+  "description": "mc-testkit E2E 机器人公共内核（mineflayer）：端口探测 / 重连 / action 分发 / 优雅收尾（共享胶水构件 共享机器人包）",
+  "main": "src/kernel.js",
+  "exports": {
+    ".": "./src/kernel.js",
+    "./lib/*": "./src/lib/*.js"
+  },
+  "files": [
+    "src/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "lint": "eslint src test",
+    "test": "node --test"
+  },
+  "keywords": [
+    "minecraft",
+    "mineflayer",
+    "e2e",
+    "mc-testkit"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "mineflayer": "^4.23.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0"
+  }
+}

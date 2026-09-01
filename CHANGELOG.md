@@ -4,6 +4,11 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布版本]
+
+### 新增
+- **非自包含（thin jar）服务端拉起**（`provision/`）：`ServerLauncher` 识别运行目录下的 `libraries/`，对这类构件改用「只含清单的启动器 jar」传完整 classpath（同时规避 Windows 命令行长度限制）；`Class-Path` 条目按 UTF-8 百分号编码，路径含空格 / 中文时不再被 JVM 截断。自包含 jar 与 paperclip 引导件仍走 `java -jar`，启动前清理上一轮残留的启动器 jar。
+
 ## [0.7.0] - 2026-08-29
 
 ### 新增

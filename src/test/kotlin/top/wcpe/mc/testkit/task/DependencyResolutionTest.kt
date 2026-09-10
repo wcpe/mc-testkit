@@ -3,7 +3,6 @@ package top.wcpe.mc.testkit.task
 import org.gradle.api.GradleException
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
-import top.wcpe.mc.testkit.dsl.DependenciesSpec
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -23,13 +22,16 @@ class DependencyResolutionTest {
     private fun jar(name: String): File =
         File(tmp, name).apply { writeText("fake-jar") }
 
+    private fun declarations(
+        pluginUnderTest: String? = null,
+        vararg plugins: String,
+    ): DependencyDeclarations = DependencyDeclarations(pluginUnderTest, plugins.toList())
+
     @Test
     @DisplayName("依赖声明为环境变量名时应解析到对应 jar 路径")
     fun resolveDependencyFromEnvironmentVariable() {
         val underTest = jar("plugin.jar")
-        val deps = DependenciesSpec().apply {
-            pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR"
-        }
+        val deps = declarations(pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR")
         val env = mapOf("MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR" to underTest.absolutePath)
 
         val resolved = resolveDependencyJars(deps) { env[it] }
@@ -43,9 +45,7 @@ class DependencyResolutionTest {
     @DisplayName("依赖声明本身为路径时应直接采用该 jar")
     fun resolveDependencyFromLiteralPath() {
         val sampleLib = jar("SampleLib.jar")
-        val deps = DependenciesSpec().apply {
-            plugin(sampleLib.absolutePath)
-        }
+        val deps = declarations(plugins = arrayOf(sampleLib.absolutePath))
 
         // 取值器对该路径返回 null（不是环境变量名），应回退到把声明值当路径
         val resolved = resolveDependencyJars(deps) { null }
@@ -61,11 +61,11 @@ class DependencyResolutionTest {
         val underTest = jar("under-test.jar")
         val depA = jar("A.jar")
         val depB = jar("B.jar")
-        val deps = DependenciesSpec().apply {
-            pluginUnderTest = underTest.absolutePath
-            plugin(depA.absolutePath)
-            plugin(depB.absolutePath)
-        }
+        val deps = declarations(
+            pluginUnderTest = underTest.absolutePath,
+            depA.absolutePath,
+            depB.absolutePath,
+        )
 
         val resolved = resolveDependencyJars(deps) { null }
 
@@ -79,9 +79,7 @@ class DependencyResolutionTest {
     @Test
     @DisplayName("缺少依赖 jar 时应抛出包含缺项名和环境变量提示的中文错误")
     fun resolveMissingDependencyThrowsChineseGuidance() {
-        val deps = DependenciesSpec().apply {
-            pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR"
-        }
+        val deps = declarations(pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR")
         // 取值器对该环境变量名返回 null（未提供），路径也指向不存在文件
         val ex = assertFailsWith<GradleException> {
             resolveDependencyJars(deps) { null }
@@ -95,9 +93,7 @@ class DependencyResolutionTest {
     @Test
     @DisplayName("环境变量指向不存在文件时应将依赖判定为缺失")
     fun resolveMissingEnvironmentTargetAsAbsent() {
-        val deps = DependenciesSpec().apply {
-            pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR"
-        }
+        val deps = declarations(pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR")
         val env = mapOf("MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR" to File(tmp, "nope.jar").absolutePath)
 
         assertFailsWith<GradleException> {
@@ -108,7 +104,7 @@ class DependencyResolutionTest {
     @Test
     @DisplayName("没有任何依赖声明时应返回空列表且不报错")
     fun resolveNoDependencyDeclarationsReturnsEmptyList() {
-        val resolved = resolveDependencyJars(DependenciesSpec()) { null }
+        val resolved = resolveDependencyJars(declarations()) { null }
         assertTrue(resolved.isEmpty())
     }
 }

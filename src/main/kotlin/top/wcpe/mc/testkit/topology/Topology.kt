@@ -8,6 +8,9 @@ import top.wcpe.mc.testkit.dsl.ProxyPlatform
  *
  * 由 [TopologyResolver] 从冻结的 `BackendSpec` 解析而来；与 spec 不同，[port] 已是确定的端口
  * （显式声明或按端口基数推导），解析后不再为 null。
+ *
+ * 实现 [java.io.Serializable]：注册期解析后可被任务动作闭包安全捕获（配置缓存要求动作捕获图
+ * 可序列化，不得含 `Project`）。
  */
 data class ResolvedBackend(
     /** 后端名（拓扑内唯一，且不与代理名相撞）。 */
@@ -26,12 +29,15 @@ data class ResolvedBackend(
     val environment: Map<String, String> = emptyMap(),
     /** 后端模板目录的原始声明（环境变量名或路径）；null 表示回退旧全局模板。 */
     val templateDirectory: String? = null,
-)
+) : java.io.Serializable
 
 /**
  * 已解析的代理节点（拓扑 DSL）。
  *
  * [routes] 为该代理转发到的后端名（均已校验存在于同一拓扑的后端集合中）。
+ *
+ * 实现 [java.io.Serializable]：注册期解析后可被任务动作闭包安全捕获（配置缓存要求动作捕获图
+ * 可序列化，不得含 `Project`）。
  */
 data class ResolvedProxy(
     /** 代理名（拓扑内唯一，且不与后端名相撞）。 */
@@ -56,7 +62,7 @@ data class ResolvedProxy(
     val environment: Map<String, String> = emptyMap(),
     /** 代理模板目录的原始声明（环境变量名或路径）。 */
     val templateDirectory: String? = null,
-)
+) : java.io.Serializable
 
 /**
  * 一次测试的内存拓扑模型（拓扑 DSL）：后端集合 + 代理集合（含代理→后端路由）。

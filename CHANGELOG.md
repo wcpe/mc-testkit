@@ -4,6 +4,15 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.8.1] - 2026-09-10
+
+### 修复
+- **任务动作兼容 Gradle 配置缓存**：此前各任务（prepare / e2e / 经代理 / 集群 / 压测 / serve / stop 及缓存回写等）的 `doLast` 动作闭包捕获了 `Project`（典型如 serve 任务的 `McTestkitTasks$registerSingleServeTasks$2$2` 与 stop 任务的匿名 lambda），Gradle 9.x 配置缓存**存储阶段**报 `cannot serialize DefaultProject`、构建退出码非零（任务执行本身正常）。现注册期一次性把动作执行所需值（日志器 / 运行目录布局 / 工程目录 / 机器人目录 / 依赖声明）提取为可序列化的执行上下文快照，动作闭包只捕获快照与拓扑数据（相关数据类补 `Serializable`）；执行期环境变量读取改为 `System.getenv`（与原 `providers.environmentVariable` 取值等价），捕获图不再含任何 Gradle 工程对象。
+- **prepare 与经代理任务不再共享预检结果**：原实现经跨任务可变变量把 prepare 的资源预检结果传给 `e2e<Key>Via<Proxy>`，该共享可变状态不兼容配置缓存；现经代理任务自足预检（代理资源缺失仍在该任务执行期得到同样的中文报错）。单独跑 `prepare<Key>` 时不再预检代理资源（代理资源校验随经代理任务执行）。
+
+### 变更
+- 消费方在 Gradle 8.x / 9.x 下均可正常启用 `--configuration-cache` 运行 serve / stop 等任务（新增全注册点拓扑的配置缓存存储 + 重用集成测试与动作捕获图反射锚单测）。
+
 ## [0.8.0] - 2026-09-02
 
 ### 新增

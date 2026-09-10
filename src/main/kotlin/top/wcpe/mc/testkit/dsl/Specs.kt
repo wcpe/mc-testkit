@@ -141,11 +141,14 @@ class ProxySpec(val name: String) {
 /**
  * 机器人驱动声明（场景内可选；一个场景可声明多个，单场景多 bot）。
  *
+ * 实现 [java.io.Serializable]：注册期声明定形后可被任务动作闭包安全捕获（配置缓存要求动作捕获图
+ * 可序列化，不得含 `Project`）。
+ *
  * @property role 角色标签（`bot("admin") { }` 的名字；匿名 `bot { }` 为 null）。同场景声明多个 bot 时
  *   须各有唯一 role 以区分（异质角色 / 多进程的日志·pid·username 基名），见 ADR-0009。
  */
 @McTestkitDsl
-class BotSpec(val role: String? = null) {
+class BotSpec(val role: String? = null) : java.io.Serializable {
     /** 机器人用户名。 */
     var username: String? = null
 
@@ -185,7 +188,7 @@ class BotSpec(val role: String? = null) {
  * （不 `/server` 切换，区别于集群跨服场景）。规模与时长在配置期校验须为正。
  */
 @McTestkitDsl
-class StressSpec {
+class StressSpec : java.io.Serializable {
     /** 每个后端起多少个 bot 进程（钉本服持续施压）；必填 >0（配置期校验）。 */
     var botsPerServer: Int = 0
 
@@ -198,9 +201,12 @@ class StressSpec {
 
 /**
  * 端到端场景声明。
+ *
+ * 实现 [java.io.Serializable]：注册期声明定形后可被任务动作闭包安全捕获（配置缓存要求动作捕获图
+ * 可序列化，不得含 `Project`）。
  */
 @McTestkitDsl
-class ScenarioSpec(val name: String) {
+class ScenarioSpec(val name: String) : java.io.Serializable {
     /** 运行于哪个后端（按名称引用；null 表示默认 / 单后端）。与 [backends] 互斥。 */
     var backend: String? = null
 
@@ -265,7 +271,7 @@ class ScenarioSpec(val name: String) {
  * @property name serve 名（拓扑内唯一，折成任务名 `serve<Key>` 的中缀）。
  */
 @McTestkitDsl
-class ServeSpec(val name: String) {
+class ServeSpec(val name: String) : java.io.Serializable {
     /** 起哪个后端（按 [BackendSpec.name] 引用；null = 默认取首个声明的后端）。与 [backends] 互斥。 */
     var backend: String? = null
 

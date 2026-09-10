@@ -9,6 +9,9 @@ import java.io.File
  * （可移植 / 幂等可重跑，NFR）。任务侧用 `project.layout` / `gradle.gradleUserHomeDir` /
  * `rootProject` 解析出这三个根目录后构造本对象，其余子目录由此派生，便于单测穷举路径关系。
  *
+ * 实现 [java.io.Serializable]：注册期构造后可被任务动作闭包安全捕获（Gradle 9.x 配置缓存要求
+ * 动作捕获图可序列化，不得含 `Project`）。
+ *
  * @property buildDir 当前工程 build 目录（如 `<project>/build`）。
  * @property gradleUserHome Gradle 用户主目录（jar 下载缓存挂这下面，多工程共享、跨 clean 存活）。
  * @property rootDir 根工程目录（持久运行库缓存与默认 bot 目录相对它解析）。
@@ -17,7 +20,7 @@ class RunLayout(
     private val buildDir: File,
     private val gradleUserHome: File,
     private val rootDir: File,
-) {
+) : java.io.Serializable {
     /** E2E 工作根：`build/mc-testkit`（clean 即清，含运行目录 / 结果 / 代理运行目录）。 */
     val workRoot: File get() = File(buildDir, WORK_DIR_NAME)
 

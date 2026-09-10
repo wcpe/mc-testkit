@@ -6,7 +6,6 @@ import top.wcpe.mc.testkit.config.ServerProperties
 import top.wcpe.mc.testkit.config.editYaml
 import top.wcpe.mc.testkit.config.setNested
 import top.wcpe.mc.testkit.contract.McTestkitEnv
-import top.wcpe.mc.testkit.dsl.DependenciesSpec
 import top.wcpe.mc.testkit.topology.ResolvedBackend
 import top.wcpe.mc.testkit.topology.ResolvedProxy
 import java.io.File
@@ -30,15 +29,20 @@ internal data class NodeRuntimePreflight(
     val proxies: Map<String, ProxyRuntimeResources>,
 )
 
-/** 预检一次任务涉及的全部后端与代理资源，任一失败时不产生目录副作用。 */
+/**
+ * 预检一次任务涉及的全部后端与代理资源，任一失败时不产生目录副作用。
+ *
+ * 旧全局模板环境变量（[McTestkitEnv.SERVER_TEMPLATE_DIR]）在**执行期**经 [readEnv] 读取（保持原
+ * `providers.environmentVariable` 的执行期求值语义，配置缓存重用时环境变量变更仍生效）。
+ */
 internal fun preflightNodeRuntime(
     projectDirectory: File,
-    dependencies: DependenciesSpec,
+    dependencies: DependencyDeclarations,
     backends: List<ResolvedBackend>,
     proxies: List<ResolvedProxy>,
-    legacyTemplatePath: String?,
     readEnv: (String) -> String?,
 ): NodeRuntimePreflight {
+    val legacyTemplatePath = readEnv(McTestkitEnv.SERVER_TEMPLATE_DIR)
     val dependencyJars = if (backends.isEmpty()) emptyList() else resolveDependencyJars(dependencies, readEnv)
     val backendResources = backends.associate { backend ->
         backend.name to resolveBackendRuntimeResources(projectDirectory, backend, legacyTemplatePath, readEnv, dependencyJars)

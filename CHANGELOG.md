@@ -4,6 +4,13 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.9.0] - 2026-09-12
+
+### 新增
+- **自测模式（self-jar）默认接线**：消费方 `mcTestkit { }` **未声明 `pluginUnderTest`** 且本工程有 `jar` 任务时，框架按契约 §3.1「默认取工作区构建产物」自动注入本模块 `jar` 任务产物（`build/libs/<name>-<version>.jar`），并把 `prepareE2e<Key>` / `e2e<Key>` **自动依赖**到 `jar` 任务上——消费方无需再手写 `pluginUnderTest = env ?: 路径` 双轨样板与 `dependsOn` 接线（此前该样板是首用 CI 失败的头号来源：只挂 `taboolibMainTask` 不会带上 `jar`，全新检出下 prepare 前置校验必挂）。运行期仍可用 `MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR` 覆盖（CI / GradleRunner 注入优先于 jar 产物路径）。显式声明过 `pluginUnderTest` 则完全尊重声明，0.8.x 消费方行为不变；本工程没有 `jar` 任务（未应用 java 插件，如纯代理拓扑）时告警并跳过，不抛错。
+- **`scenario(name)` 无配置重载**：Groovy 消费方可直接写 `scenario('smoke')`，不再被迫写显式空闭包 `scenario('smoke') { }`（Kotlin 默认参数对 Groovy 不可见）。
+- **自测模式缺 jar 的指路型中文报错**：提示先执行 `gradlew jar` 或显式声明 `pluginUnderTest`，替代此前泛化的「缺少必需的依赖注入」。
+
 ## [0.8.1] - 2026-09-10
 
 ### 修复

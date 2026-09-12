@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/wcpe/mc-testkit/actions/workflows/ci.yml/badge.svg)](https://github.com/wcpe/mc-testkit/actions/workflows/ci.yml)
 [![E2E](https://github.com/wcpe/mc-testkit/actions/workflows/e2e.yml/badge.svg)](https://github.com/wcpe/mc-testkit/actions/workflows/e2e.yml)
-[![version](https://img.shields.io/badge/version-v0.8.1-blue)](VERSION)
+[![version](https://img.shields.io/badge/version-v0.9.0-blue)](VERSION)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 > 面向 Minecraft 插件的**全平台端到端测试编排** Gradle 插件 + 配套脚手架模板：把真实服务端/代理拉起、互联成测试拓扑，用机器人驱动端到端场景、判定结果并收尾，统一各插件五花八门的 E2E 做法。
@@ -51,7 +51,7 @@ pluginManagement {
 
 ```kotlin
 plugins {
-    id("top.wcpe.mc-testkit") version "0.8.1"
+    id("top.wcpe.mc-testkit") version "0.9.0"
 }
 
 mcTestkit {
@@ -64,6 +64,10 @@ mcTestkit {
     dependencies {
         pluginUnderTest = "MY_PLUGIN_JAR"  // 环境变量名或 jar 路径
         plugin("SampleLib")                  // 依赖插件（同上）
+        // 自测模式（v0.9.0+）：被测插件就是本模块时，**可不声明 pluginUnderTest** ——
+        // 框架自动取本模块 jar 产物（build/libs/<name>-<version>.jar），并把
+        // prepareE2e<Key> / e2e<Key> 自动接到 jar 任务，无需手写 dependsOn 样板；
+        // 运行期仍可用 MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR 覆盖（CI / GradleRunner 注入）。
     }
 }
 ```
@@ -128,7 +132,7 @@ mc-testkit/
 
 ## 版本与变更
 
-当前 **v0.8.1**（发布到 [maven.wcpe.top](https://maven.wcpe.top)）。完整变更见 [`CHANGELOG.md`](CHANGELOG.md)；能力与进度以 [`docs/PRD.md`](docs/PRD.md) §4 FR 表状态列为准。
+当前 **v0.9.0**（发布到 [maven.wcpe.top](https://maven.wcpe.top)）。完整变更见 [`CHANGELOG.md`](CHANGELOG.md)；能力与进度以 [`docs/PRD.md`](docs/PRD.md) §4 FR 表状态列为准。
 
 ## 贡献
 

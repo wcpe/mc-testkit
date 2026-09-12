@@ -994,7 +994,7 @@ object McTestkitTasks {
             }
         }
 
-        registerTask(project, McTestkitTaskNames.serve(serve.name)) { task ->
+        val serveTask = registerTask(project, McTestkitTaskNames.serve(serve.name)) { task ->
             task.group = SERVE_TASK_GROUP
             task.description =
                 "持久起 serve「${serve.name}」：后端 ${backend.name}${proxy?.let { " 经代理 ${it.name}" } ?: " 直连"}" +
@@ -1007,6 +1007,12 @@ object McTestkitTasks {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 serveForeground(ctx, backend, proxy, serve.name, serve.botSpecs)
             }
+        }
+
+        // 自测模式：serve 自行预检并注入插件，同样须等本模块 jar 产出后再预检
+        // （与 prepare / e2e 的自动接线同源，覆盖 MCE 式「serve 挂住手测」消费形态）
+        if (ctx.dependencies.pluginUnderTestSelfJar) {
+            serveTask.get().dependsOn(project.tasks.named("jar"))
         }
     }
 

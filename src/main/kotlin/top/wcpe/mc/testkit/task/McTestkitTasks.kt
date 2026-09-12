@@ -180,6 +180,7 @@ object McTestkitTasks {
             dependencies = DependencyDeclarations(
                 pluginUnderTest = extension.declaredDependencies.pluginUnderTest,
                 plugins = extension.declaredDependencies.plugins.toList(),
+                pluginUnderTestSelfJar = extension.declaredDependencies.selfJar,
             ),
         )
     }
@@ -323,6 +324,17 @@ object McTestkitTasks {
                     if (hasBots) stopScenarioBots(ctx, scenario)
                 }
             }
+        }
+
+        // 自测模式（pluginUnderTest 未声明，默认注入本模块 jar 产物）：prepare / e2e 自动依赖 `jar`
+        // 任务，保证测之前插件已打包。**不能依赖 taboolibMainTask**——它只是 `jar` 的 finalizer，
+        // 单独调度不会带上 `jar`（CI 全新检出时 prepare 前置校验即失败）。
+        // 经代理任务 dependsOn(prepareName) 传递获得同一依赖，无需重复接线。
+        if (ctx.dependencies.pluginUnderTestSelfJar) {
+            val jarTask = project.tasks.named("jar")
+            // TaskProvider 无 dependsOn 方法；此处任务刚注册、仍在 afterEvaluate 内，get() 实现安全
+            prepare.get().dependsOn(jarTask)
+            verify.get().dependsOn(jarTask)
         }
 
         // 有 bot 的场景：一键「启动机器人 + 验证」

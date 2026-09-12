@@ -1,6 +1,8 @@
 package top.wcpe.mc.testkit.task
 
+import org.gradle.api.GradleException
 import top.wcpe.mc.testkit.config.DependencyInjections
+import top.wcpe.mc.testkit.contract.McTestkitEnv
 import java.io.File
 
 /**
@@ -12,10 +14,14 @@ import java.io.File
  *
  * @property pluginUnderTest 待测插件 jar 声明：环境变量名或路径；null 表示未声明。
  * @property plugins 依赖插件 jar 声明列表：环境变量名或路径，按声明顺序。
+ * @property pluginUnderTestSelfJar 是否为自测模式（[pluginUnderTest] 未显式声明，由框架回退为本模块
+ *   `jar` 产物）。此时解析期 `MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR` 优先于 jar 产物路径，且任务自动编排
+ *   会把 prepare / e2e 任务自动接到 `jar` 任务上。
  */
 data class DependencyDeclarations(
     val pluginUnderTest: String?,
     val plugins: List<String>,
+    val pluginUnderTestSelfJar: Boolean = false,
 ) : java.io.Serializable
 
 /**
@@ -54,10 +60,18 @@ fun resolveDependencyJars(
     readEnv: (String) -> String?,
 ): List<ResolvedPluginJar> {
     // 收集全部声明：被测插件（若声明）在前，其余依赖按声明顺序在后
-    data class Declaration(val value: String, val underTest: Boolean)
+    data class Declaration(val value: String, val underTest: Boolean, val selfJar: Boolean = false)
 
     val declarationList = buildList {
-        declarations.pluginUnderTest?.takeIf { it.isNotBlank() }?.let { add(Declaration(it, underTest = true)) }
+        declarations.pluginUnderTest?.takeIf { it.isNotBlank() }?.let {
+            add(
+                Declaration(
+                    it,
+                    underTest = true,
+                    selfJar = declarations.pluginUnderTestSelfJar,
+                ),
+            )
+        }
         declarations.plugins.forEach { add(Declaration(it, underTest = false)) }
     }
 
@@ -68,8 +82,13 @@ fun resolveDependencyJars(
     val hints = LinkedHashMap<String, String>()
 
     declarationList.forEach { declaration ->
-        val byEnv = readEnv(declaration.value)?.takeIf { it.isNotBlank() }
-        val path = byEnv ?: declaration.value
+        val path =
+            if (declaration.selfJar) {
+                // 自测模式：显式覆盖环境变量优先（CI / GradleRunner 注入），否则用本模块 jar 产物
+                readEnv(McTestkitEnv.PLUGIN_UNDER_TEST_JAR)?.takeIf { it.isNotBlank() } ?: declaration.value
+            } else {
+                readEnv(declaration.value)?.takeIf { it.isNotBlank() } ?: declaration.value
+            }
         val jar = File(path)
         val present = jar.isFile
         presence[declaration.value] = present
@@ -79,6 +98,20 @@ fun resolveDependencyJars(
         }
         if (present) {
             resolved += ResolvedPluginJar(declaration.value, jar, declaration.underTest)
+        }
+    }
+
+    // 自测模式缺 jar 单独报错（指路更准：e2e 任务已自动依赖 jar，手动单跑 prepare 才会走到这）
+    if (declarations.pluginUnderTestSelfJar) {
+        val declared = declarations.pluginUnderTest.orEmpty()
+        if (presence[declared] == false) {
+            val jarPath =
+                File(readEnv(McTestkitEnv.PLUGIN_UNDER_TEST_JAR)?.takeIf { it.isNotBlank() } ?: declared)
+            throw GradleException(
+                "mc-testkit 自测模式：未找到本模块插件 jar：${jarPath.absolutePath}\n" +
+                    "  e2e 任务已自动依赖 jar 任务（先打包再测试）；若手动只跑了 prepare，请先执行「gradlew jar」。\n" +
+                    "  若被测插件不在本模块，请显式声明 mcTestkit { dependencies { pluginUnderTest = <路径或环境变量名> } }。",
+            )
         }
     }
 

@@ -318,8 +318,24 @@ class ServeSpec(val name: String) : java.io.Serializable {
  */
 @McTestkitDsl
 class DependenciesSpec {
-    /** 待测插件 jar：环境变量名或路径（默认取工作区构建产物，可经此覆盖）。 */
+    /**
+     * 待测插件 jar：环境变量名或路径。
+     *
+     * **未声明（null）时进入自测模式**（[selfJar]）：框架按契约默认注入**本模块 `jar` 任务的产物**
+     * （`build/libs/<name>-<version>.jar`，契约 §3.1「默认取工作区构建产物」），并自动把
+     * `prepareE2e<Key>` / `e2e<Key>` 接到该 `jar` 任务上——消费方无需再手写 `dependsOn` 样板。
+     * 运行期仍可经 `MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR` 覆盖（CI / GradleRunner 注入用）。
+     */
     var pluginUnderTest: String? = null
+
+    /**
+     * 是否处于自测模式（[pluginUnderTest] 未显式声明，由框架回退为本模块 jar 产物）。
+     *
+     * 插件 apply 期（afterEvaluate）填充；任务自动编排据此把 prepare / e2e 任务自动接到 `jar` 任务，
+     * 并在解析期让 `MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR` 优先于 jar 产物路径。
+     */
+    var selfJar: Boolean = false
+        internal set
 
     private val mutablePlugins = mutableListOf<String>()
 

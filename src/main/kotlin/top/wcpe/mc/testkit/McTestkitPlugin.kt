@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit
 import org.gradle.api.Plugin
 import org.gradle.api.Project
+import org.gradle.api.tasks.bundling.Jar
 import top.wcpe.mc.testkit.contract.McTestkitContract
 import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import top.wcpe.mc.testkit.task.McTestkitTasks
@@ -22,7 +23,36 @@ class McTestkitPlugin : Plugin<Project> {
             project.extensions.create(McTestkitContract.EXTENSION_NAME, McTestkitExtension::class.java)
         // 等 mcTestkit { } 声明就绪后，按拓扑数据驱动注册任务（含配置期校验，任务自动编排）
         project.afterEvaluate {
+            applySelfJarDefault(project, extension)
             McTestkitTasks.register(project, extension)
         }
+    }
+
+    /**
+     * 自测模式默认值（契约 §3.1「待测插件 jar 默认取工作区构建产物」的落地）。
+     *
+     * 消费方**未显式声明** `pluginUnderTest` 且本工程有 `jar` 任务时，回退到该任务产物
+     * （`build/libs/<name>-<version>.jar`），并标记自测模式——任务自动编排据此把
+     * prepare / e2e 任务自动接到 `jar` 上，消费方无需手写任何 `dependsOn` 样板。
+     *
+     * 两种情况**不启用**自测（保持 0.8.x 行为，不抛错以免破坏无插件拓扑 / 框架自测）：
+     * - 显式声明过 `pluginUnderTest`（外部被测插件场景，完全尊重声明）；
+     * - 本工程没有 `jar` 任务（未应用 java 插件，如代理拓扑编排工程）——此时告警并跳过，
+     *   若确需注入请显式声明 `pluginUnderTest`。
+     */
+    private fun applySelfJarDefault(project: Project, extension: McTestkitExtension) {
+        if (!extension.declaredDependencies.pluginUnderTest.isNullOrBlank()) return
+        val jarTask =
+            runCatching { project.tasks.named("jar", Jar::class.java) }.getOrNull()
+                ?: run {
+                    project.logger.warn(
+                        "mc-testkit：未声明 pluginUnderTest 且本工程没有 jar 任务（未应用 java 插件），" +
+                            "跳过自测注入（不向服务端注入任何插件）。\n" +
+                            "  若需注入，请显式声明 mcTestkit { dependencies { pluginUnderTest = <路径或环境变量名> } }。",
+                    )
+                    return
+                }
+        extension.declaredDependencies.pluginUnderTest = jarTask.get().archiveFile.get().asFile.absolutePath
+        extension.declaredDependencies.selfJar = true
     }
 }

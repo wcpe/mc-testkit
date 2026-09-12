@@ -107,4 +107,48 @@ class DependencyResolutionTest {
         val resolved = resolveDependencyJars(declarations()) { null }
         assertTrue(resolved.isEmpty())
     }
+
+    // ── 自测模式（pluginUnderTestSelfJar）──
+
+    private fun selfDeclarations(jarPath: String): DependencyDeclarations =
+        DependencyDeclarations(pluginUnderTest = jarPath, plugins = emptyList(), pluginUnderTestSelfJar = true)
+
+    @Test
+    @DisplayName("自测模式应默认采用声明值（本模块 jar 产物路径）")
+    fun resolveSelfJarDefaultsToDeclaredJarPath() {
+        val underTest = jar("self-module-1.0.0.jar")
+        // 无任何环境变量 → 回退声明值本身（jar 产物路径）
+        val resolved = resolveDependencyJars(selfDeclarations(underTest.absolutePath)) { null }
+
+        assertEquals(1, resolved.size)
+        assertEquals(underTest.absolutePath, resolved.single().jar.absolutePath)
+        assertTrue(resolved.single().underTest)
+    }
+
+    @Test
+    @DisplayName("自测模式下覆盖环境变量应优先于 jar 产物路径")
+    fun resolveSelfJarPrefersOverrideEnvironmentVariable() {
+        val builtJar = jar("self-module-1.0.0.jar")
+        val injectedJar = jar("ci-injected.jar")
+        val deps = selfDeclarations(builtJar.absolutePath)
+        val env = mapOf("MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR" to injectedJar.absolutePath)
+
+        val resolved = resolveDependencyJars(deps) { env[it] }
+
+        assertEquals(1, resolved.size)
+        assertEquals(injectedJar.absolutePath, resolved.single().jar.absolutePath)
+    }
+
+    @Test
+    @DisplayName("自测模式缺 jar 时应报指路明确的中文错误而非通用缺失错误")
+    fun resolveSelfJarMissingGivesGuidedError() {
+        val deps = selfDeclarations(File(tmp, "not-built-yet.jar").absolutePath)
+
+        val ex = assertFailsWith<GradleException> {
+            resolveDependencyJars(deps) { null }
+        }
+        assertTrue("自测模式" in ex.message!!, ex.message)
+        assertTrue("gradlew jar" in ex.message!!, ex.message)
+        assertTrue("pluginUnderTest" in ex.message!!, ex.message)
+    }
 }

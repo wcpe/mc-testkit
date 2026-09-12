@@ -44,6 +44,14 @@ open class McTestkitExtension {
     fun scenario(name: String, configure: ScenarioSpec.() -> Unit = {}): ScenarioSpec =
         ScenarioSpec(name).apply(configure).also { mutableScenarios += it }
 
+    /**
+     * 声明一个端到端场景（无附加配置重载）。
+     *
+     * Groovy 消费方必备：Kotlin 的默认参数对 Groovy 不可见，`scenario("smoke")` 在 Groovy 里
+     * 本会因找不到单参重载而失败（须写 `scenario("smoke") { }` 显式空闭包）；此重载补齐该缺口。
+     */
+    fun scenario(name: String): ScenarioSpec = scenario(name) { }
+
     /** 声明一个持久手测目标（起服挂住供真人客户端连入，持久手测 serve）。 */
     fun serve(name: String, configure: ServeSpec.() -> Unit = {}): ServeSpec =
         ServeSpec(name).apply(configure).also { mutableServes += it }

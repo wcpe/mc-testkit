@@ -4,6 +4,11 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.9.1] - 2026-09-12
+
+### 修复
+- **自测模式自动接线补齐 serve 任务**：0.9.0 的自测模式只把 `prepareE2e<Key>` / `e2e<Key>` 自动依赖到本模块 `jar` 任务，遗漏了 `serve<Key>`（持久手测）——serve 自行预检并注入插件，jar 未产出时同样会在预检期失败。现自测模式下 serve 任务同样自动依赖 `jar`（真实消费者 MCE 的 `serve("dev")` 手测形态即命中此缺口）。
+
 ## [0.9.0] - 2026-09-12
 
 ### 新增

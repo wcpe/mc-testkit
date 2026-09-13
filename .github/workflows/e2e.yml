@@ -62,7 +62,9 @@ jobs:
       - name: 捕获 JDK 21 并恢复 JAVA_HOME=17、注入版本段变量
         run: |
           set -euo pipefail
-          echo "JDK21_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          # 注意：写入 GITHUB_ENV 的变量只对**后续** step 生效；本 step 内必须用 shell 局部变量。
+          JDK21_HOME="$JAVA_HOME"
+          echo "JDK21_HOME=$JDK21_HOME" >> "$GITHUB_ENV"
           echo "JAVA_HOME=$JDK17_HOME" >> "$GITHUB_ENV"
           echo "MC_TESTKIT_JAVA_HOME_1_7=$JDK8_HOME" >> "$GITHUB_ENV"
           echo "MC_TESTKIT_JAVA_HOME_1_8=$JDK8_HOME" >> "$GITHUB_ENV"
@@ -183,7 +185,9 @@ jobs:
       - name: 导出 Velocity 专用 Java 21 并钉回默认 JAVA_HOME=17
         run: |
           set -euo pipefail
-          echo "MC_TESTKIT_JAVA_HOME_21=$JAVA_HOME" >> "$GITHUB_ENV"
+          # 本 step 内用局部变量：GITHUB_ENV 写入对当前 shell 不可见
+          JDK21_HOME="$JAVA_HOME"
+          echo "MC_TESTKIT_JAVA_HOME_21=$JDK21_HOME" >> "$GITHUB_ENV"
           echo "JAVA_HOME=$JDK17_HOME" >> "$GITHUB_ENV"
 
       - name: 安装 Node 18（mineflayer 机器人）

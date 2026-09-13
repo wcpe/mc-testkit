@@ -73,5 +73,5 @@ jobs:
         run: npx eslint .
 
       - name: 依赖漏洞扫描（npm audit，仅报告不阻断——多为 mineflayer 传递依赖）
-        run: npm audit --audit-level=high
-        continue-on-error: true
+        # `|| true`：避免 continue-on-error 在 Annotations 里留下 error 注解（job 本就不因 audit 失败）
+        run: npm audit --audit-level=high || true

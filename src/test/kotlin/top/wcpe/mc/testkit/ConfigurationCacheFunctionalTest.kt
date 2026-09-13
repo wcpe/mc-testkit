@@ -1,10 +1,12 @@
 package top.wcpe.mc.testkit
 
 import org.gradle.testkit.runner.GradleRunner
+import org.gradle.testkit.runner.TaskOutcome
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
@@ -75,6 +77,14 @@ class ConfigurationCacheFunctionalTest {
             .withPluginClasspath()
             .withArguments(arguments.toList() + "--configuration-cache")
 
+    /** 同时开启本地 Build Cache 与配置缓存的 runner（双缓存契约）。 */
+    private fun dualCacheRunner(vararg arguments: String): GradleRunner =
+        GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withPluginClasspath()
+            // 不设 withTestKitDir：守护进程锁目录会让 @TempDir 清理失败；本地缓存经 settings 隔离。
+            .withArguments(arguments.toList() + "--build-cache" + "--configuration-cache")
+
     @Test
     @DisplayName("全部注册点的任务动作闭包应兼容 Gradle 配置缓存（存储 + 重用）")
     fun storeAndReuseConfigurationCacheWithFullTopology() {
@@ -92,6 +102,81 @@ class ConfigurationCacheFunctionalTest {
         assertTrue(
             secondRun.output.contains("Reusing configuration cache"),
             "第二次运行应重用配置缓存\n---- 输出 ----\n${secondRun.output}",
+        )
+    }
+
+    @Test
+    @DisplayName("构建缓存与配置缓存同时开启时应可存储/重用配置缓存且副作用任务不被构建缓存跳过")
+    fun storeAndReuseWithBuildCacheAndConfigurationCacheTogether() {
+        write(
+            "settings.gradle.kts",
+            """
+            rootProject.name = "dual-cache-consumer"
+            buildCache {
+                local {
+                    directory = File(rootDir, ".gradle/build-cache")
+                    isEnabled = true
+                }
+            }
+            """.trimIndent(),
+        )
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                java
+                id("top.wcpe.mc-testkit")
+            }
+            mcTestkit {
+                backend("s1") { port = 25565 }
+                backend("s2") { port = 25566 }
+                proxy("wf") { platform = waterfall; port = 25577; routesTo("s1", "s2") }
+                scenario("buy") {
+                    backend = "s1"
+                    bot { username = "Buyer"; action = "buy" }
+                }
+                scenario("buyVia") {
+                    backend = "s1"; via = "wf"
+                    bot { username = "Bot2"; action = "buy" }
+                }
+                scenario("clusterCross") {
+                    backends("s1", "s2"); via = "wf"
+                    bot { username = "CrossBot"; action = "cross" }
+                }
+                scenario("loadStress") {
+                    backends("s1", "s2"); via = "wf"
+                    stress { botsPerServer = 1; durationSeconds = 1 }
+                }
+                serve("dev") {
+                    backend = "s1"; via = "wf"
+                    bot { username = "Filler"; action = "idle" }
+                }
+                serve("clusterDev") { backends("s1", "s2"); via = "wf" }
+            }
+            """.trimIndent(),
+        )
+
+        val firstRun = dualCacheRunner("stopDevServe").build()
+        assertTrue(
+            firstRun.output.contains("Configuration cache entry stored"),
+            "双缓存首次运行应成功存储配置缓存\n---- 输出 ----\n${firstRun.output}",
+        )
+        assertSideEffectTaskRan(firstRun.task(":stopDevServe")?.outcome, "首次")
+
+        val secondRun = dualCacheRunner("stopDevServe").build()
+        assertTrue(
+            secondRun.output.contains("Reusing configuration cache"),
+            "双缓存第二次运行应重用配置缓存\n---- 输出 ----\n${secondRun.output}",
+        )
+        assertSideEffectTaskRan(secondRun.task(":stopDevServe")?.outcome, "重用")
+    }
+
+    /** 副作用生命周期任务须真实执行（不得构建缓存 / up-to-date / SKIPPED 假跳过）。 */
+    private fun assertSideEffectTaskRan(outcome: TaskOutcome?, phase: String) {
+        assertEquals(
+            TaskOutcome.SUCCESS,
+            outcome,
+            "${phase}运行 stopDevServe 须真实执行（不得 FROM-CACHE / UP-TO-DATE / SKIPPED，实际 outcome=$outcome）",
         )
     }
 }

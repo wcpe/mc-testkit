@@ -1576,6 +1576,9 @@ object McTestkitTasks {
      *
      * 用「先 `register(name, type)` 再 `provider.configure(Action)`」两步式——避开 kotlin-dsl 扩展与
      * Gradle 多个 `register` 重载在插件 `src/main/kotlin` 里的解析歧义，显式可控。
+     *
+     * 统一声明 [outputsUpToDateWhenNever]：本插件任务全为副作用生命周期任务（起服 / 写运行目录 /
+     * 收尾 / 回写缓存），不得因构建缓存或输入未变而跳过。
      */
     private fun registerTask(
         project: Project,
@@ -1584,7 +1587,10 @@ object McTestkitTasks {
     ): TaskProvider<DefaultTask> {
         val provider = project.tasks.register(name, DefaultTask::class.java)
         provider.configure(object : Action<DefaultTask> {
-            override fun execute(task: DefaultTask) = configure(task)
+            override fun execute(task: DefaultTask) {
+                outputsUpToDateWhenNever(task)
+                configure(task)
+            }
         })
         return provider
     }
@@ -1597,9 +1603,22 @@ object McTestkitTasks {
     ): TaskProvider<Exec> {
         val provider = project.tasks.register(name, Exec::class.java)
         provider.configure(object : Action<Exec> {
-            override fun execute(task: Exec) = configure(task)
+            override fun execute(task: Exec) {
+                outputsUpToDateWhenNever(task)
+                configure(task)
+            }
         })
         return provider
+    }
+
+    /**
+     * 声明副作用任务永不因「输出未变」跳过（兼容消费方开启 `--build-cache`）。
+     *
+     * e2e / serve / stop / sync 等任务无稳定可缓存产物，类型亦非 `@CacheableTask`；
+     * 本声明额外钉死「不得 UP-TO-DATE」。若未来误改任务类型，构建缓存兼容集成测试会拦。
+     */
+    private fun outputsUpToDateWhenNever(task: Task) {
+        task.outputs.upToDateWhen { false }
     }
 
     // ── 小工具 ──

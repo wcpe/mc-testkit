@@ -140,6 +140,8 @@ mcTestkit {
 > 集群任务（`e2e<Key>Cluster` / `stop<Key>Cluster`）由场景声明 `backends(...)`、压测任务（`e2e<Key>Stress` / `stop<Key>Stress`）由场景声明 `stress {}` 触发（FR-10/11，ADR-0008）。任务名一旦发布即视为契约，保持稳定。
 > **单场景多 bot 不新增任务名**（FR-16，ADR-0009）：场景声明多个 bot 时，既有 `launch<Key>Bot` / `e2e<Key>` / `e2e<Key>WithBot` / `e2e<Key>Cluster` **起多个 bot 进程**（per-bot 唯一 `BOT_USERNAME` / 各自 `BOT_ACTION` / 同质复制下发 `BOT_INDEX`），并随场景结束按 pid 全部收尾（集群多 bot pid 收尾并入 `stop<Key>Cluster`）。
 > `<Key>` 缺省后端：场景未写 `backend =` 时取首个声明的后端（单后端无需显式指定）。一个声明了 `via` 的场景同时生成直连 `e2e<Key>` 与经代理 `e2e<Key>Via<Proxy>` 两个任务。
+>
+> **Gradle 双缓存兼容**：消费方可同时启用 `--configuration-cache` 与 `--build-cache`。任务动作捕获图不含 `Project`（配置缓存可存储 / 复用）；全部本插件任务为副作用生命周期任务，注册时声明永不 UP-TO-DATE，类型非 `@CacheableTask`，开启构建缓存时仍真实执行（不得 `FROM-CACHE` 假跳过）。此处「构建缓存」与 FR-02 的 jar 下载缓存（`JarCache` / 持久运行库）无关。
 
 ### 3.3 环境变量约定（前缀已冻结：`MC_TESTKIT_E2E_`）
 

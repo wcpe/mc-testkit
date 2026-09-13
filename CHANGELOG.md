@@ -4,7 +4,7 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.9.2] - 2026-09-13
 
 ### 变更
 - **Gradle 双缓存兼容契约（构建缓存 + 配置缓存）**：注册原语统一为全部本插件任务声明 `outputs.upToDateWhen { false }`，消费方开启 `--build-cache` 时 prepare / e2e / serve / stop 等副作用任务仍真实执行，不得 `FROM-CACHE` / `UP_TO_DATE` 假跳过。新增 TestKit 回归：本地 Build Cache 下 `stopDevServe` 须 `SUCCESS`；`--build-cache` 与 `--configuration-cache` 同时开启时配置缓存可存储 + 重用且副作用任务不被构建缓存跳过。任务本身仍非 `@CacheableTask`（起服副作用不可入缓存）。

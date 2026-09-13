@@ -4,7 +4,7 @@
 
 > **它是拷贝物，不是依赖。** 模板不会被 mc-testkit 插件在运行期依赖、不进插件构建产物、也不会被加进 mc-testkit 的 `settings.gradle.kts`（架构不变量）。你把它拷走后，它就完全归你的项目所有，按需自由分叉。
 >
-> **协议胶水来自共享构件（共享胶水构件，ADR-0014 取代 ADR-0002）**：桩侧依赖 `harness-core`（`top.wcpe.mc:harness-core:0.1.0`，Maven / maven.wcpe.top——`build.gradle.kts` 已配好该仓库），机器人侧依赖 `@wcpe/mc-testkit-bot`（npm，maven.wcpe.top/npm/npm-release/；本机 npmrc 已配 `@wcpe:registry`）。你只需写业务场景，协议层随构件升级。
+> **协议胶水来自共享构件（共享胶水构件，ADR-0014 取代 ADR-0002）**：桩侧依赖 `harness-core`（`top.wcpe.mc:harness-core:0.1.1`，Maven / maven.wcpe.top——`build.gradle.kts` 已配好该仓库；**Java 8 字节码 + `api-version: 1.8`**，兼容 Paper 1.7.10–1.21），机器人侧依赖 `@wcpe/mc-testkit-bot`（npm，maven.wcpe.top/npm/npm-release/；本机 npmrc 已配 `@wcpe:registry`）。你只需写业务场景，协议层随构件升级。
 
 ---
 

@@ -4,11 +4,12 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.9.3] - 2026-09-13
 
 ### 变更
 - **harness-core 0.1.1 / template harness 降至 Java 8，plugin.yml 不写 api-version**：同一桩 jar 可在 Paper 1.7.10–1.21 代表版本加载（FR-21 多版本烟雾）。此前 `api-version: 1.20` + Java 17 字节码导致旧服务端拒载；改成 `1.8` 又被 Paper 1.20+ 拒绝。现不声明 api-version（1.13+ 按 legacy 加载），E2E 先 `publishToMavenLocal` harness-core 再编模板桩。
 - **GitHub Actions 升至 v5**：`checkout` / `setup-java` / `setup-node` / `cache` / `upload-artifact` / `setup-gradle` 从 v4 升到 v5，消除 Node.js 20 与 setup-java v4 弃用告警。
+- **实机 E2E 仅手动触发 + 并行矩阵 + jar 缓存**：`e2e.yml` 去掉 `v*` tag 自动触发，仅 `workflow_dispatch`；拆为矩阵并行——Paper 8 代表版本各跑 `e2eSmoke`，另有 Waterfall 全场景 / BungeeCord 集群 / Velocity 代理 / Folia 烟雾；各 job 用 `actions/cache` 复用 `~/.gradle/caches/mc-testkit-jars`。
 
 ## [0.9.2] - 2026-09-13
 

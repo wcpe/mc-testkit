@@ -7,13 +7,15 @@
 // - paper-api 仅 compileOnly：Bukkit 基类（McTestkitHarnessPlugin）运行期由真实服务端提供，
 //   库本身与纯 JDK 部分（McTestkitEnv / McTestkitResultWriter）不依赖任何 Bukkit 类。
 // - 发布到 maven.wcpe.top，凭据走 Gradle 属性 / 环境变量（与根工程同款约定，不入库）。
+import org.gradle.api.attributes.java.TargetJvmVersion
+
 plugins {
     `java-library`
     `maven-publish`
 }
 
 group = "top.wcpe.mc"
-version = "0.1.0"
+version = "0.1.1"
 
 repositories {
     mavenCentral()
@@ -21,7 +23,7 @@ repositories {
 }
 
 java {
-    // 跟随 Paper 1.20.1 服务端 Java 基线（17）；换更高 MC 版本时同步调整
+    // 字节码锁 Java 8（见下方 JavaCompile release），以覆盖 FR-21 旧版服务端
     withSourcesJar()
 }
 
@@ -33,11 +35,18 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
-// 由当前 JVM 编译、产出 Java 17 兼容字节码（不依赖工具链探测——本机 Gradle 工具链探测对所有
-// JDK 均返回退出码 1，环境级问题，见 MCE e2e-harness 同款注释）。
+// 产出 Java 8 兼容字节码：同一 harness 可在 Paper 1.7.10（Java 8）～ 1.21（Java 21）加载。
+// 旧版本烟雾（FR-21 8 代表版本）依赖此基线；升到 17 会让 1.7–1.16 起服时 UnsupportedClassVersionError。
+// compile classpath 仍按 JVM 17 解析 paper-api（其 POM 声明 TargetJvmVersion=17），否则 release=8 会解析失败。
 tasks.withType<JavaCompile>().configureEach {
-    options.release.set(17)
+    options.release.set(8)
     options.encoding = "UTF-8"
+}
+
+configurations.named("compileClasspath") {
+    attributes {
+        attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 17)
+    }
 }
 
 tasks.withType<Test>().configureEach {

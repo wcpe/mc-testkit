@@ -5,6 +5,8 @@
 //   也不引用编排插件（架构不变量：template/ 是纯拷贝物）。
 // - 消费方把整个 template/ 目录拷进自己仓库后，按需改 group / version / 依赖即可。
 // - paper-api 仅 compileOnly：桩在真实服务端里由 PaperMC 提供运行期类，打包不含它。
+import org.gradle.api.attributes.java.TargetJvmVersion
+
 plugins {
     kotlin("jvm") version "1.9.25"
 }
@@ -25,18 +27,26 @@ dependencies {
     compileOnly("io.papermc.paper:paper-api:1.20.1-R0.1-SNAPSHOT")
     // 共享协议胶水库（共享胶水构件）：契约 env 读取 / 结果文件原子写出 / 桩基类（serve 空闲、收尾、Folia 调度）。
     // 会打进插件 jar（harness-core 的 paper-api 是 compileOnly、不在 runtimeClasspath，不会带进去）。
-    implementation("top.wcpe.mc:harness-core:0.1.0")
+    implementation("top.wcpe.mc:harness-core:0.1.1")
     implementation(kotlin("stdlib"))
 }
 
 kotlin {
-    // 跟随 Paper 1.20.1 的 Java 基线（17）；换 MC 版本时同步调整
+    // 编译可用较新 JDK，但 **字节码目标锁 JVM 1.8**：同一 harness 要能在 Paper 1.7.10（Java 8）
+    // 与 1.20/1.21（Java 17/21）上加载（FR-21 多版本烟雾）。与 harness-core 的 release=8 对齐。
     jvmToolchain(17)
-    // 跳过 Kotlin 元数据版本校验：让桩能 compileOnly 用「更新版 Kotlin 编译」的被测插件 API
-    // （如其元数据版本 2.1.x 高于本工程编译器可读上限；仅编译期跳过，运行期 JVM 字节码仍兼容）。见 桩 Kotlin 兼容。
     compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+        // 跳过 Kotlin 元数据版本校验：让桩能 compileOnly 用「更新版 Kotlin 编译」的被测插件 API
+        // （如其元数据版本 2.1.x 高于本工程编译器可读上限；仅编译期跳过，运行期 JVM 字节码仍兼容）。见 桩 Kotlin 兼容。
         freeCompilerArgs.add("-Xskip-metadata-version-check")
     }
+}
+
+// 与 Kotlin jvmTarget 对齐，避免「compileJava(17) vs compileKotlin(1.8)」校验失败。
+tasks.withType<JavaCompile>().configureEach {
+    options.release.set(8)
+    options.encoding = "UTF-8"
 }
 
 tasks.jar {
@@ -46,4 +56,12 @@ tasks.jar {
     // paper-api 是 compileOnly、不在 runtimeClasspath，故不会被打入（运行期由服务端提供）。
     duplicatesStrategy = org.gradle.api.file.DuplicatesStrategy.EXCLUDE
     from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) })
+}
+
+// jvmTarget=8 会把 compile classpath 的 TargetJvmVersion 钉成 8，与 paper-api 1.20（要求 17）冲突；
+// 编译期仍按 17 解析 paper-api，产出字节码保持 1.8。
+configurations.named("compileClasspath") {
+    attributes {
+        attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 17)
+    }
 }

@@ -7,8 +7,9 @@ name: McTestkitE2eHarness
 main: com.example.e2e.McTestkitE2eHarnessPlugin
 # 插件版本（与 build.gradle.kts 的 version 保持一致即可）
 version: 1.0.0-SNAPSHOT
-# Bukkit API 版本基线（匹配后端 Minecraft 版本，如 1.20.x 用 '1.20'）
-api-version: '1.20'
+# Bukkit API 版本基线：声明 1.8 以兼容 FR-21 旧版 Paper（1.7.10–1.12 会忽略本字段；
+# 1.13+ 按 legacy 插件加载）。勿抬到 1.20——老服务端会报 Unsupported API version 并拒载。
+api-version: '1.8'
 # 声明支持 Folia（区域化线程）：否则 Folia 拒绝加载本插件（「not marked as supporting Folia」）。
 # 桩的调度已做 Folia 兼容（运行期反射走 GlobalRegionScheduler，见 McTestkitE2eHarnessPlugin）；
 # 仅在 Paper 上跑可删此行（Paper 忽略它），但留着无害。

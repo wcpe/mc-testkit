@@ -91,6 +91,9 @@ jobs:
       - name: 发布插件到 mavenLocal
         run: ./gradlew publishToMavenLocal --no-daemon --stacktrace
 
+      - name: 发布 harness-core 到 mavenLocal（模板桩依赖，Java 8 字节码兼容旧版 Paper）
+        run: ./gradlew -p harness-core publishToMavenLocal --no-daemon --stacktrace
+
       - name: 构建模板桩 jar
         run: ./gradlew -p template/harness jar --no-daemon --stacktrace
 
@@ -208,6 +211,9 @@ jobs:
 
       - name: 发布插件到 mavenLocal
         run: ./gradlew publishToMavenLocal --no-daemon --stacktrace
+
+      - name: 发布 harness-core 到 mavenLocal（模板桩依赖，Java 8 字节码兼容旧版 Paper）
+        run: ./gradlew -p harness-core publishToMavenLocal --no-daemon --stacktrace
 
       - name: 构建模板桩 jar
         run: ./gradlew -p template/harness jar --no-daemon --stacktrace

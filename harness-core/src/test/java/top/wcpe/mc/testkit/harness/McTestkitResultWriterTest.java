@@ -21,7 +21,7 @@ class McTestkitResultWriterTest {
     @Test
     void writeProducesStatusAndMessage() throws Exception {
         File target = new File(tempDir, "smoke.properties");
-        new McTestkitResultWriter(target).write(McTestkitResultWriter.STATUS_PASS, "桩已就绪", Map.of());
+        new McTestkitResultWriter(target).write(McTestkitResultWriter.STATUS_PASS, "桩已就绪", java.util.Collections.<String, String>emptyMap());
 
         Properties props = load(target);
         assertEquals(McTestkitResultWriter.STATUS_PASS, props.getProperty("status"));

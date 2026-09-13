@@ -7,7 +7,7 @@
 ## [未发布]
 
 ### 变更
-- **实机 E2E 仅手动触发 + 并行矩阵 + jar 缓存**：`e2e.yml` 去掉 `v*` tag 自动触发，仅 `workflow_dispatch`；拆为 GitHub Actions 矩阵并行——Paper 8 代表版本各跑 `e2eSmoke`，另有 Waterfall 全场景 / BungeeCord 集群 / Velocity 代理 / Folia 烟雾四个 suite。各 job 用 `actions/cache` 复用 `~/.gradle/caches/mc-testkit-jars`。`ci.yml` 仍只做构建 + 单元/TestKit，不拉起真实服务端。
+- **harness-core 0.1.1 / template harness 降至 Java 8 + `api-version: 1.8`**：同一桩 jar 可在 Paper 1.7.10–1.21 代表版本加载（FR-21 多版本烟雾）。此前 `api-version: 1.20` + Java 17 字节码导致旧服务端 `Unsupported API version` / 类版本错误拒载。E2E 工作流先 `publishToMavenLocal` harness-core 再编模板桩。
 
 ## [0.9.2] - 2026-09-13
 

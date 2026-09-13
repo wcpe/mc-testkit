@@ -4,6 +4,11 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 变更
+- **实机 E2E 仅手动触发 + 并行矩阵 + jar 缓存**：`e2e.yml` 去掉 `v*` tag 自动触发，仅 `workflow_dispatch`；拆为 GitHub Actions 矩阵并行——Paper 8 代表版本各跑 `e2eSmoke`，另有 Waterfall 全场景 / BungeeCord 集群 / Velocity 代理 / Folia 烟雾四个 suite。各 job 用 `actions/cache` 复用 `~/.gradle/caches/mc-testkit-jars`。`ci.yml` 仍只做构建 + 单元/TestKit，不拉起真实服务端。
+
 ## [0.9.2] - 2026-09-13
 
 ### 变更

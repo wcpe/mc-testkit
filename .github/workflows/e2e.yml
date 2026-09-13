@@ -1,14 +1,12 @@
-# mc-testkit 实机 E2E：自举跑通核心矩阵——单服(±bot) / 经代理 / 集群 / 压测。
+# mc-testkit 实机 E2E：自举跑通「Paper 8 代表版本烟雾 + 代理×场景矩阵」。
 # 「自举」= 以 template/ 的桩与 bot 作消费者，真实下载并拉起后端 + 代理，按结果文件判定、收尾。
-# 同一套场景/任务名经 -P 选平台跑遍「代理 × 后端」矩阵（不为每个平台另起消费者工程）。
-# 重且需联网（下载服务端/代理），故不在每次 PR 跑——手动触发，或打版本 tag 时跑（发版前 E2E，
-# 见 .claude/rules/testing-and-quality.md「E2E 在发版前至少跑一遍」）。
+# 重且需联网，故 **仅手动触发**（workflow_dispatch）；发版前应手动跑一遍全量。
+# 各 job 经 actions/cache 复用 ~/.gradle/caches/mc-testkit-jars，减少重复下载（仍可能一次 API 解析 build）。
+# 详见 docs/specs/e2e-parallel-matrix.md。
 name: E2E
 
 on:
-  workflow_dispatch: {}        # 手动触发
-  push:
-    tags: ['v*']               # 打 vX.Y.Z tag 时（发版前实机验收）
+  workflow_dispatch: {}
 
 concurrency:
   group: e2e-${{ github.ref }}
@@ -17,49 +15,84 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # 消费者默认后端版本（场景矩阵）；版本烟雾经 -Pe2e.backendVersion 覆盖
+  DEFAULT_BACKEND_VERSION: '1.20.1'
+
 jobs:
-  e2e:
-    name: 自举实机 E2E（smoke + 集群 + 压测）
+  # ── Paper 8 代表版本 × e2eSmoke（FR-21 多版本拉起，一版本一 job 并行）──
+  version-smoke:
+    name: Paper ${{ matrix.version }} 烟雾
     runs-on: ubuntu-latest
-    timeout-minutes: 60        # 含首跑下载各后端/代理 jar + 跑完整矩阵（多场景顺序起服，慢 runner 留余量）
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['1.7.10', '1.8.8', '1.12.2', '1.16.5', '1.17.1', '1.19.4', '1.20.1', '1.21.1']
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 安装 JDK 21（Velocity 3.5.x 代理所需，FR-22 显式 Java 主版本）
+      - name: 安装 JDK 8（legacy MC 1.7–1.16 启动）
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '8'
 
-      - name: 安装 JDK 17（Paper / Waterfall 运行所需，并作为默认 JAVA_HOME）
+      - name: 捕获 JDK 8 路径
+        run: echo "JDK8_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+
+      - name: 安装 JDK 17（Gradle / Paper 1.17–1.20 启动）
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: 导出 Velocity 专用 Java 21 路径（proxy.javaVersion 经 MC_TESTKIT_JAVA_HOME_21 解析）
-        run: echo "MC_TESTKIT_JAVA_HOME_21=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
+      - name: 捕获 JDK 17 并钉为默认 JAVA_HOME
+        run: |
+          echo "JDK17_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
 
-      - name: 安装 Node 18（mineflayer 机器人）
+      - name: 安装 JDK 21（Paper 1.21 启动）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: 捕获 JDK 21 并恢复 JAVA_HOME=17、注入版本段变量
+        run: |
+          set -euo pipefail
+          echo "JDK21_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "JAVA_HOME=$JDK17_HOME" >> "$GITHUB_ENV"
+          echo "MC_TESTKIT_JAVA_HOME_1_7=$JDK8_HOME" >> "$GITHUB_ENV"
+          echo "MC_TESTKIT_JAVA_HOME_1_8=$JDK8_HOME" >> "$GITHUB_ENV"
+          echo "MC_TESTKIT_JAVA_HOME_1_12=$JDK8_HOME" >> "$GITHUB_ENV"
+          echo "MC_TESTKIT_JAVA_HOME_1_16=$JDK8_HOME" >> "$GITHUB_ENV"
+          echo "MC_TESTKIT_JAVA_HOME_1_21=$JDK21_HOME" >> "$GITHUB_ENV"
+
+      - name: 安装 Node 18（mineflayer；smoke 无 bot，仍保证工具链一致）
         uses: actions/setup-node@v4
         with:
           node-version: '18'
 
-      - name: 配置 Gradle（缓存含已下载的服务端/代理 jar，加速重复运行）
+      - name: 缓存 mc-testkit 服务端/代理 jar
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/caches/mc-testkit-jars
+          key: mc-testkit-jars-${{ runner.os }}-v${{ matrix.version }}-${{ hashFiles('.github/workflows/e2e.yml') }}
+          restore-keys: |
+            mc-testkit-jars-${{ runner.os }}-
+
+      - name: 配置 Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: 发布插件到 mavenLocal（供消费者工程引用）
+      - name: 发布插件到 mavenLocal
         run: ./gradlew publishToMavenLocal --no-daemon --stacktrace
 
       - name: 构建模板桩 jar
         run: ./gradlew -p template/harness jar --no-daemon --stacktrace
 
-      - name: 安装模板 bot 依赖
-        working-directory: template/bot
-        run: npm install --no-audit --no-fund
-
-      - name: 生成一次性消费者工程（经 mavenLocal 引用插件，平台经 -P 参数化）
+      - name: 生成消费者工程
         run: |
           set -euo pipefail
           VERSION="$(cat VERSION)"
@@ -78,10 +111,130 @@ jobs:
           cat > "$CONSUMER/build.gradle.kts" <<EOF
           plugins { id("top.wcpe.mc-testkit") version "$VERSION" }
 
-          // CI 经 -P 选平台，同一套场景/任务名跑遍「代理 × 后端」矩阵（缺省 Paper + Waterfall）。
-          val e2eProxy = (findProperty("e2e.proxy") as String?) ?: "waterfall"
-          val e2eBackend = (findProperty("e2e.backend") as String?) ?: "paper"
-          val e2eBackendVersion = (findProperty("e2e.backendVersion") as String?) ?: "1.20.1"
+          val e2eBackendVersion = (findProperty("e2e.backendVersion") as String?) ?: "${{ matrix.version }}"
+
+          mcTestkit {
+              backend("s1") {
+                  platform = paper
+                  version = e2eBackendVersion; port = 25565
+              }
+              scenario("smoke") { backend = "s1" }
+              dependencies { pluginUnderTest = "HARNESS_JAR" }
+          }
+          EOF
+          {
+            echo "CONSUMER=$CONSUMER"
+            echo "HARNESS_JAR=$GITHUB_WORKSPACE/template/harness/build/libs/mc-testkit-e2e-harness-1.0.0-SNAPSHOT.jar"
+          } >> "$GITHUB_ENV"
+
+      - name: E2E · Paper ${{ matrix.version }} 烟雾（e2eSmoke）
+        run: ./gradlew -p "$CONSUMER" e2eSmoke -Pe2e.backendVersion="${{ matrix.version }}" -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
+
+      - name: 归档运行日志与结果（失败排查）
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-version-smoke-${{ matrix.version }}
+          path: |
+            ${{ env.CONSUMER }}/build/mc-testkit/**/*.log
+            ${{ env.CONSUMER }}/build/mc-testkit/results/**
+          if-no-files-found: ignore
+
+  # ── 代理×场景矩阵（默认 Paper 1.20.1；Folia 仅烟雾）──
+  scenario:
+    name: 场景 ${{ matrix.suite }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: waterfall-full
+            proxy: waterfall
+            backend: paper
+          - suite: bungeecord-cluster
+            proxy: bungeecord
+            backend: paper
+          - suite: velocity-proxy
+            proxy: velocity
+            backend: paper
+          - suite: folia-smoke
+            proxy: waterfall
+            backend: folia
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 JDK 17（Paper / Waterfall / BungeeCord / Folia）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 捕获 JDK 17 路径
+        run: echo "JDK17_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+
+      - name: 安装 JDK 21（Velocity 3.5.x）
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: 导出 Velocity 专用 Java 21 并钉回默认 JAVA_HOME=17
+        run: |
+          set -euo pipefail
+          echo "MC_TESTKIT_JAVA_HOME_21=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "JAVA_HOME=$JDK17_HOME" >> "$GITHUB_ENV"
+
+      - name: 安装 Node 18（mineflayer 机器人）
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: 缓存 mc-testkit 服务端/代理 jar
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/caches/mc-testkit-jars
+          key: mc-testkit-jars-${{ runner.os }}-${{ matrix.suite }}-${{ hashFiles('.github/workflows/e2e.yml') }}
+          restore-keys: |
+            mc-testkit-jars-${{ runner.os }}-
+
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 发布插件到 mavenLocal
+        run: ./gradlew publishToMavenLocal --no-daemon --stacktrace
+
+      - name: 构建模板桩 jar
+        run: ./gradlew -p template/harness jar --no-daemon --stacktrace
+
+      - name: 安装模板 bot 依赖
+        if: ${{ matrix.suite != 'folia-smoke' }}
+        working-directory: template/bot
+        run: npm install --no-audit --no-fund
+
+      - name: 生成消费者工程
+        run: |
+          set -euo pipefail
+          VERSION="$(cat VERSION)"
+          CONSUMER="$RUNNER_TEMP/e2e-consumer"
+          mkdir -p "$CONSUMER"
+          cat > "$CONSUMER/settings.gradle.kts" <<'EOF'
+          pluginManagement {
+              repositories {
+                  mavenLocal()
+                  gradlePluginPortal()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "mc-testkit-e2e-ci"
+          EOF
+          cat > "$CONSUMER/build.gradle.kts" <<EOF
+          plugins { id("top.wcpe.mc-testkit") version "$VERSION" }
+
+          val e2eProxy = (findProperty("e2e.proxy") as String?) ?: "${{ matrix.proxy }}"
+          val e2eBackend = (findProperty("e2e.backend") as String?) ?: "${{ matrix.backend }}"
+          val e2eBackendVersion = (findProperty("e2e.backendVersion") as String?) ?: "$DEFAULT_BACKEND_VERSION"
 
           mcTestkit {
               backend("s1") {
@@ -95,22 +248,17 @@ jobs:
               proxy("px") {
                   platform = when (e2eProxy) { "bungeecord" -> bungeecord; "velocity" -> velocity; else -> waterfall }
                   port = 25577; routesTo("s1", "s2")
-                  // Velocity 3.5.x 要求 Java 21，显式声明主版本（经 MC_TESTKIT_JAVA_HOME_21 解析，FR-22）
                   if (e2eProxy == "velocity") { javaVersion = 21 }
               }
-              // 单后端烟雾：无 bot、无代理，最轻（Folia 自举亦跑此，-Pe2e.backend=folia）
               scenario("smoke") { backend = "s1" }
-              // 机器人驱动单后端：注册 e2eExampleBotWithBot（直连）+ e2eExampleBotViaPx（经代理，平台由 -Pe2e.proxy 定）
               scenario("example-bot") {
                   backend = "s1"; via = "px"
                   bot { username = "ProbeBot"; action = "example-bot" }
               }
-              // 集群跨服：2 后端 + 代理单 listener + bot 经代理 /server 切换
               scenario("cross-server") {
                   backends("s1", "s2"); via = "px"
                   bot { username = "Switcher"; action = "cross-server" }
               }
-              // 持续压测：2 服 + 代理 N-listener 钉服 + 每服 2 bot 短时施压（Velocity 单端口不支持钉服，跳过）
               if (e2eProxy != "velocity") {
                   scenario("continuous-stress") {
                       backends("s1", "s2"); via = "px"
@@ -118,17 +266,14 @@ jobs:
                       bot { username = "Stress"; action = "continuous-stress" }
                   }
               }
-              // 单场景多 bot（FR-16）：单后端直连 3 个各唯一 username 的 bot（P1/P2/P3，经 BOT_INDEX 区分）
               scenario("multi-bot") {
                   backend = "s1"
                   bot { username = "P"; action = "multi-bot"; count = 3 }
               }
-              // 崩溃接管 fallback（FR-15）：2 后端 + 代理，默认后端宕机 → bot 经代理回退到存活后端确认到达
               scenario("crash-takeover") {
                   backends("s1", "s2"); via = "px"
                   bot { username = "Reconnector"; action = "crash-takeover" }
               }
-              // 自举：桩骨架自身即被测对象（经 HARNESS_JAR 注入两后端）
               dependencies { pluginUnderTest = "HARNESS_JAR" }
           }
           EOF
@@ -137,16 +282,21 @@ jobs:
             echo "HARNESS_JAR=$GITHUB_WORKSPACE/template/harness/build/libs/mc-testkit-e2e-harness-1.0.0-SNAPSHOT.jar"
           } >> "$GITHUB_ENV"
 
+      # ── suite：waterfall-full（金标准代理路径 + 直连 bot / 多 bot / 集群 / 压测 / 崩溃接管）──
       - name: E2E · 单后端烟雾（e2eSmoke）
+        if: ${{ matrix.suite == 'waterfall-full' }}
         run: ./gradlew -p "$CONSUMER" e2eSmoke -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
       - name: E2E · 单服 + bot 直连（e2eExampleBotWithBot）
+        if: ${{ matrix.suite == 'waterfall-full' }}
         run: ./gradlew -p "$CONSUMER" e2eExampleBotWithBot -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
       - name: E2E · 经 Waterfall 代理单后端 + bot（e2eExampleBotViaPx）
+        if: ${{ matrix.suite == 'waterfall-full' }}
         run: ./gradlew -p "$CONSUMER" e2eExampleBotViaPx -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
       - name: E2E · 单场景多 bot（e2eMultiBotWithBot + 唯一 username 断言）
+        if: ${{ matrix.suite == 'waterfall-full' }}
         run: |
           ./gradlew -p "$CONSUMER" e2eMultiBotWithBot -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
           RESULT="$CONSUMER/build/mc-testkit/results/multi-bot.properties"
@@ -157,31 +307,41 @@ jobs:
           echo "单场景多 bot 唯一 username P1/P2/P3 均入服 ✓"
 
       - name: E2E · 集群跨服（e2eCrossServerCluster）
+        if: ${{ matrix.suite == 'waterfall-full' }}
         run: ./gradlew -p "$CONSUMER" e2eCrossServerCluster -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
       - name: E2E · 崩溃接管 fallback（e2eCrashTakeoverCluster）
+        if: ${{ matrix.suite == 'waterfall-full' }}
         run: ./gradlew -p "$CONSUMER" e2eCrashTakeoverCluster -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
       - name: E2E · 持续压测（e2eContinuousStressStress）
+        if: ${{ matrix.suite == 'waterfall-full' }}
         run: ./gradlew -p "$CONSUMER" e2eContinuousStressStress -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
-      - name: E2E · 经 BungeeCord 代理集群跨服（e2eCrossServerCluster，-Pe2e.proxy=bungeecord）
+      # ── suite：bungeecord-cluster ──
+      - name: E2E · 经 BungeeCord 代理集群跨服（e2eCrossServerCluster）
+        if: ${{ matrix.suite == 'bungeecord-cluster' }}
         run: ./gradlew -p "$CONSUMER" e2eCrossServerCluster -Pe2e.proxy=bungeecord -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
-      - name: E2E · Folia 后端烟雾（e2eSmoke，-Pe2e.backend=folia）
+      # ── suite：folia-smoke ──
+      - name: E2E · Folia 后端烟雾（e2eSmoke）
+        if: ${{ matrix.suite == 'folia-smoke' }}
         run: ./gradlew -p "$CONSUMER" e2eSmoke -Pe2e.backend=folia -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
-      - name: E2E · 经 Velocity 代理单后端 + bot（e2eExampleBotViaPx，-Pe2e.proxy=velocity）
+      # ── suite：velocity-proxy ──
+      - name: E2E · 经 Velocity 代理单后端 + bot（e2eExampleBotViaPx）
+        if: ${{ matrix.suite == 'velocity-proxy' }}
         run: ./gradlew -p "$CONSUMER" e2eExampleBotViaPx -Pe2e.proxy=velocity -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
-      - name: E2E · 经 Velocity 代理集群跨服（e2eCrossServerCluster，-Pe2e.proxy=velocity）
+      - name: E2E · 经 Velocity 代理集群跨服（e2eCrossServerCluster）
+        if: ${{ matrix.suite == 'velocity-proxy' }}
         run: ./gradlew -p "$CONSUMER" e2eCrossServerCluster -Pe2e.proxy=velocity -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
       - name: 归档运行日志与结果（失败排查）
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-artifacts
+          name: e2e-scenario-${{ matrix.suite }}
           path: |
             ${{ env.CONSUMER }}/build/mc-testkit/**/*.log
             ${{ env.CONSUMER }}/build/mc-testkit/results/**

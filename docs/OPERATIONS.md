@@ -12,6 +12,15 @@
 - **发布到 maven.wcpe.top**：`./gradlew publish`（凭据走环境变量/Gradle 属性，不入库）
 - 交付物 = 发布到 Maven 的 Gradle 插件构件（插件 jar + 插件标记），源码即真源（git）。
 
+### 1.1 CI / 实机 E2E
+
+| 工作流 | 触发 | 内容 |
+|---|---|---|
+| `ci.yml` | 每个 push / PR | 插件构建 + ktlint + 单元/TestKit；模板 bot 静态检查。**不**拉起真实服务端 |
+| `e2e.yml` | **仅手动**（Actions → E2E → Run workflow） | 并行矩阵：Paper 8 代表版本 `e2eSmoke` + Waterfall 全场景 / BungeeCord 集群 / Velocity 代理 / Folia 烟雾 |
+
+实机 E2E 会下载服务端/代理 jar；工作流用 `actions/cache` 复用 `~/.gradle/caches/mc-testkit-jars`。**发版前应手动跑一遍 E2E**（`testing-and-quality.md`）。矩阵与缓存设计见 `docs/specs/e2e-parallel-matrix.md`。
+
 ## 2. 升级
 
 - 遵循 SemVer。消费方升级只需改其 `plugins { id("top.wcpe.mc-testkit") version "X.Y.Z" }`。

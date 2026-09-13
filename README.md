@@ -23,7 +23,7 @@
 - **固化环境契约**：`server.properties` 真实读改写回、BungeeCord/Velocity 配置 YAML 对象化深合并、经代理固定 bot 协议版本、依赖（数据源/Redis）注入校验，一处固化消费方默认生效。
 - **脚手架模板**：`template/` 提供桩插件骨架（Paper/Folia 双兼容）+ mineflayer bot 内核 + 示例场景，照抄即用。
 - **共享协议胶水构件（FR-09，ADR-0014）**：桩侧 `harness-core`（Maven，纯 Java 零 Kotlin 依赖：契约 env / 结果原子写出 / 桩基类）+ 机器人侧 `@wcpe/mc-testkit-bot`（npm：端口探测 / 重连 / action 分发内核）——`template/` 是它们的示例消费者，消费方依赖构件而非手写胶水；接入坐标与接线见 [`docs/API.md`](docs/API.md) §4。
-- **自举实机 E2E**：CI 实机跑通全矩阵——单服(±bot) / 经代理（Waterfall·BungeeCord·Velocity）/ 集群 / 压测 / 单场景多 bot / 崩溃接管 / Folia 后端。
+- **自举实机 E2E**：**手动触发**并行矩阵——Paper 8 代表版本烟雾 + 单服(±bot) / 经代理（Waterfall·BungeeCord·Velocity）/ 集群 / 压测 / 单场景多 bot / 崩溃接管 / Folia 后端（见 `docs/OPERATIONS.md` §1.1）。
 
 ## 支持的平台
 

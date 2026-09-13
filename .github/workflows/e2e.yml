@@ -31,10 +31,10 @@ jobs:
         version: ['1.7.10', '1.8.8', '1.12.2', '1.16.5', '1.17.1', '1.19.4', '1.20.1', '1.21.1']
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 安装 JDK 8（legacy MC 1.7–1.16 启动）
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '8'
@@ -43,7 +43,7 @@ jobs:
         run: echo "JDK8_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
 
       - name: 安装 JDK 17（Gradle / Paper 1.17–1.20 启动）
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -54,7 +54,7 @@ jobs:
           echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
 
       - name: 安装 JDK 21（Paper 1.21 启动）
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -73,12 +73,12 @@ jobs:
           echo "MC_TESTKIT_JAVA_HOME_1_21=$JDK21_HOME" >> "$GITHUB_ENV"
 
       - name: 安装 Node 18（mineflayer；smoke 无 bot，仍保证工具链一致）
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '18'
 
       - name: 缓存 mc-testkit 服务端/代理 jar
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.gradle/caches/mc-testkit-jars
           key: mc-testkit-jars-${{ runner.os }}-v${{ matrix.version }}-${{ hashFiles('.github/workflows/e2e.yml') }}
@@ -86,7 +86,7 @@ jobs:
             mc-testkit-jars-${{ runner.os }}-
 
       - name: 配置 Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       - name: 发布插件到 mavenLocal
         run: ./gradlew publishToMavenLocal --no-daemon --stacktrace
@@ -137,7 +137,7 @@ jobs:
 
       - name: 归档运行日志与结果（失败排查）
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: e2e-version-smoke-${{ matrix.version }}
           path: |
@@ -168,10 +168,10 @@ jobs:
             backend: folia
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 安装 JDK 17（Paper / Waterfall / BungeeCord / Folia）
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -180,7 +180,7 @@ jobs:
         run: echo "JDK17_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
 
       - name: 安装 JDK 21（Velocity 3.5.x）
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -194,12 +194,12 @@ jobs:
           echo "JAVA_HOME=$JDK17_HOME" >> "$GITHUB_ENV"
 
       - name: 安装 Node 18（mineflayer 机器人）
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '18'
 
       - name: 缓存 mc-testkit 服务端/代理 jar
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.gradle/caches/mc-testkit-jars
           key: mc-testkit-jars-${{ runner.os }}-${{ matrix.suite }}-${{ hashFiles('.github/workflows/e2e.yml') }}
@@ -207,7 +207,7 @@ jobs:
             mc-testkit-jars-${{ runner.os }}-
 
       - name: 配置 Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       - name: 发布插件到 mavenLocal
         run: ./gradlew publishToMavenLocal --no-daemon --stacktrace
@@ -349,7 +349,7 @@ jobs:
 
       - name: 归档运行日志与结果（失败排查）
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: e2e-scenario-${{ matrix.suite }}
           path: |

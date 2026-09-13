@@ -22,16 +22,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 安装 JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: 配置 Gradle（带依赖 / 构建缓存）
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       - name: 构建 + 风格检查 + 测试（编译 + ktlintCheck + 单元/TestKit）
         run: ./gradlew build --no-daemon --stacktrace
@@ -41,7 +41,7 @@ jobs:
 
       - name: 归档测试报告（失败时便于排查）
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: test-reports
           path: build/reports/tests/
@@ -56,10 +56,10 @@ jobs:
         working-directory: template/bot
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 安装 Node 18
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '18'
 

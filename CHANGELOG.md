@@ -4,6 +4,11 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 变更
+- **README 改为公开仓库风格**：压缩特性列表、补充环境要求与 GitHub Releases 链接，弱化内部 FR/ADR 噪音，突出快速开始。
+
 ## [0.9.3] - 2026-09-13
 
 ### 变更

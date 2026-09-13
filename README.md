@@ -2,41 +2,79 @@
 
 [![CI](https://github.com/wcpe/mc-testkit/actions/workflows/ci.yml/badge.svg)](https://github.com/wcpe/mc-testkit/actions/workflows/ci.yml)
 [![E2E](https://github.com/wcpe/mc-testkit/actions/workflows/e2e.yml/badge.svg)](https://github.com/wcpe/mc-testkit/actions/workflows/e2e.yml)
-[![version](https://img.shields.io/badge/version-v0.9.3-blue)](VERSION)
-[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/wcpe/mc-testkit)](https://github.com/wcpe/mc-testkit/releases/latest)
+[![Maven](https://img.shields.io/badge/maven.wcpe.top-top.wcpe.mc-blue)](https://maven.wcpe.top/repository/maven-releases/)
+[![Java](https://img.shields.io/badge/Java-8%2B-orange)](https://adoptium.net/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-> 面向 Minecraft 插件的**全平台端到端测试编排** Gradle 插件 + 配套脚手架模板：把真实服务端/代理拉起、互联成测试拓扑，用机器人驱动端到端场景、判定结果并收尾，统一各插件五花八门的 E2E 做法。
+**面向 Minecraft 插件的全平台端到端测试编排 Gradle 插件。**
+
+用声明式 DSL 把真实服务端 / 代理拉起并连成测试拓扑，用 mineflayer 机器人驱动端到端场景，按结果文件判定并干净收尾——把各插件五花八门的 E2E 做法收敛成一套可复用工具。
+
+```kotlin
+mcTestkit {
+    backend("s1") { platform = paper; version = "1.20.1"; port = 25565 }
+    proxy("wf") { platform = waterfall; port = 25577; routesTo("s1") }
+    scenario("buy") {
+        backend = "s1"; via = "wf"
+        bot { username = "Buyer"; action = "buy" }
+    }
+}
+// ./gradlew e2eBuyViaWf
+```
+
+## 为什么
+
+每个 Minecraft 插件都要自己起服、配代理、写机器人、收尾杀进程。做法五花八门，环境契约（代理协议版本、`paper-global`、BungeeCord 后端配置、数据源注入）在每个项目里重复踩坑。mc-testkit 把这些固化成插件内一处编排，消费方只声明拓扑和场景。
 
 ## 特性
 
-- **声明式拓扑 DSL**：`mcTestkit { }` 一行声明「后端 + 代理」拓扑，自动注册 prepare / 启动 bot / runServer / proxy / cluster / stress / verify / 缓存回写等任务，配置期中文报错。
-- **内置下载与运行**：自实现 Paper/Folia/Spigot 后端与 Velocity/Waterfall/BungeeCord 代理的下载与运行（不外挂第三方下载库，ADR-0001；Spigot 走受控公共构件源 + 多源回退 + 溯源，ADR-0013），jar 缓存 + hash 校验复用，`MC_TESTKIT_E2E_*_JAR` 环境变量可覆盖；启动按构件形态选路——自包含 jar 与 paperclip 引导件走 `java -jar`，运行目录带 `libraries/` 的 thin jar 经启动器 jar 传完整 classpath。
-- **多版本服务端拉起（v0.6.0，FR-21）**：8 个代表版本（1.7.10 / 1.8.8 / 1.12.2 / 1.16.5 / 1.17.1 / 1.19.4 / 1.20.1 / 1.21.1）Paper 下载、拉起与版本感知配置适配——按版本过滤 `server.properties` 键、生成 `paper.yml` / `paper-global.yml`、选择 Java 运行时（`MC_TESTKIT_JAVA_HOME_<版本段>` 覆盖 > `JAVA_HOME` 回退）；1.7.10 自动跳过 bot 并告警。另支持 Minecraft 26.x 新版号识别。
-- **全平台代理**：Velocity（modern forwarding）/ Waterfall / BungeeCord，单后端经代理、集群 `/server` 切换、崩溃接管 fallback 均实机跑通（ADR-0010）。
-- **多版本代理与诊断型 JVM 编排（v0.7.0，FR-22）**：`proxy` 可声明独立 `version`、`javaVersion`、`jvmArg(...)` 与 `javaAgent(...)`，`backend` 可声明 `jvmArg(...)` 与 `javaAgent(...)`；普通/代理/集群/压测/serve 全部启动路径统一传参，显式 Java 主版本经 `MC_TESTKIT_JAVA_HOME_<主版本>` 严格选择，不回退到不匹配的运行时（ADR-0012）。
-- **多后端集群（FR-10/15）**：N 后端 + 代理「单 listener + N server」，bot 经代理跨服切换、桩跨服判定；默认后端宕机时 bot 重连回退到存活后端，支撑「崩溃接管」类 E2E。
-- **多后端持续压测（FR-11）**：N 服 × M bot 钉服施压，各服桩收集聚合结果、框架统一判定。
-- **单场景多 bot（FR-16）**：异质具名角色 + 同质批量复制（`bot { count = N }`），各唯一 username、经 `BOT_INDEX` 区分。
-- **每后端身份注入（FR-12）**：起每个后端下发其 DSL 声明名 `MC_TESTKIT_E2E_BACKEND_NAME`，消费方据此 per-backend 派生身份（如同组各服不同 `server-id`）。
-- **节点运行时注入（v0.5.0，FR-20）**：backend / proxy 可分别声明节点 env 与模板目录，proxy 可声明专属插件；`dependencies { }` 仍只注入后端。
-- **持久手测 serve（v0.4.0，FR-17/18/19）**：复用同一拓扑声明把「（代理 +）后端 + 插件」挂起供真人客户端连入手测——单后端 / 集群 `/server` 切服 / 可选并起 bot 人机混场；Ctrl+C / `stop<Key>Serve` 三重收尾、端口不漏。
-- **固化环境契约**：`server.properties` 真实读改写回、BungeeCord/Velocity 配置 YAML 对象化深合并、经代理固定 bot 协议版本、依赖（数据源/Redis）注入校验，一处固化消费方默认生效。
-- **脚手架模板**：`template/` 提供桩插件骨架（Paper/Folia 双兼容）+ mineflayer bot 内核 + 示例场景，照抄即用。
-- **共享协议胶水构件（FR-09，ADR-0014）**：桩侧 `harness-core`（Maven，纯 Java 零 Kotlin 依赖：契约 env / 结果原子写出 / 桩基类）+ 机器人侧 `@wcpe/mc-testkit-bot`（npm：端口探测 / 重连 / action 分发内核）——`template/` 是它们的示例消费者，消费方依赖构件而非手写胶水；接入坐标与接线见 [`docs/API.md`](docs/API.md) §4。
-- **自举实机 E2E**：**手动触发**并行矩阵——Paper 8 代表版本烟雾 + 单服(±bot) / 经代理（Waterfall·BungeeCord·Velocity）/ 集群 / 压测 / 单场景多 bot / 崩溃接管 / Folia 后端（见 `docs/OPERATIONS.md` §1.1）。
+**拓扑与编排**
+- 声明式 `mcTestkit { }` DSL：单后端、经代理、多后端集群、持续压测、单场景多 bot
+- 自动注册 prepare / 启动 bot / runServer / proxy / cluster / stress / verify / 缓存回写任务
+- 配置期中文报错（拓扑不合法 / 路由缺失 / 端口冲突等）
+
+**真实环境**
+- 内置下载并运行 Paper / Folia / Spigot 与 Velocity / Waterfall / BungeeCord（自实现，不外挂第三方下载库）
+- Paper 代表版本 1.7.10 – 1.21.1，含版本感知配置与 Java 运行时选择
+- Velocity modern forwarding、集群 `/server` 切换、崩溃接管 fallback
+- 持久手测 `serve`：同一拓扑挂起供真人客户端连入，Ctrl+C / `stop<Key>Serve` 三重收尾
+
+**机器人与判定**
+- mineflayer 机器人驱动场景；结果文件为唯一权威（PASS/FAIL）
+- 固化环境契约：`server.properties`、代理 YAML 深合并、经代理固定 bot 协议版本
+- 每后端身份注入（`MC_TESTKIT_E2E_BACKEND_NAME`），便于 per-backend 派生 `server-id`
+
+**工程化**
+- 桩插件骨架 + 机器人内核脚手架（`template/`，拷贝即用）
+- 共享协议胶水：`harness-core`（Maven）+ `@wcpe/mc-testkit-bot`（npm）
+- 兼容 Gradle `--configuration-cache` 与 `--build-cache`
+- 自测模式：被测插件就是本模块时可零样板接线
 
 ## 支持的平台
 
 | 角色 | 平台 | 说明 |
 |---|---|---|
-| 后端 | Paper / Folia / Spigot | Paper/Folia 覆盖 1.7.10–1.21.1 代表版本（v0.6.0 起，FR-21）并适配配置与 Java 运行时；Spigot 经受控公共构件源供应（v0.7.0 起，ADR-0013） |
-| 代理 | Velocity / Waterfall / BungeeCord | 含 Velocity modern forwarding；v0.7.0 起 Velocity 可指定版本（3.1.1 / 最新 3.x，4.1.0 需 Java 25）；`stress + via=velocity` 因单端口不支持（配置期中文报错） |
-| 机器人 | mineflayer（Node.js） | 随 `template/` 提供内核；1.7.10 不支持（跳过 + 日志告警） |
-| 范围外 | Bukkit / Sponge | 平台范围见 ADR-0003（已被 ADR-0013 取代）与 ADR-0013 |
+| 后端 | Paper / Folia / Spigot | Paper/Folia 覆盖 1.7.10–1.21.1 代表版本 |
+| 代理 | Velocity / Waterfall / BungeeCord | 含 Velocity modern forwarding；压测不支持 Velocity（单端口） |
+| 机器人 | mineflayer（Node.js ≥ 18） | 1.7.10 不支持 bot（仅验服务端拉起） |
+
+不在范围内：Bukkit / Sponge。
 
 ## 快速开始
 
-**① 声明插件仓库**（`settings.gradle.kts`）：
+### 环境要求
+
+| 组件 | 要求 |
+|---|---|
+| JDK | 8+（运行服务端需匹配对应 MC 版本；模板 harness 字节码为 Java 8） |
+| Node.js | ≥ 18（mineflayer 机器人） |
+| 网络 | 首次运行需下载服务端/代理 jar（可缓存或用 `MC_TESTKIT_E2E_*_JAR` 覆盖） |
+| Gradle | 8.x / 9.x（兼容配置缓存与构建缓存） |
+
+### 1. 声明插件仓库
+
+`settings.gradle.kts`：
 
 ```kotlin
 pluginManagement {
@@ -47,7 +85,9 @@ pluginManagement {
 }
 ```
 
-**② 应用插件、声明拓扑与场景**（`build.gradle.kts`）：
+### 2. 应用插件并声明拓扑
+
+`build.gradle.kts`：
 
 ```kotlin
 plugins {
@@ -59,85 +99,61 @@ mcTestkit {
     proxy("wf") { platform = waterfall; port = 25577; routesTo("s1") }
     scenario("buy") {
         backend = "s1"; via = "wf"
-        bot { username = "Buyer"; action = "buy" } // 业务 env 经 bot { env(name, value) } 透传
+        bot { username = "Buyer"; action = "buy" }
     }
     dependencies {
-        pluginUnderTest = "MY_PLUGIN_JAR"  // 环境变量名或 jar 路径
-        plugin("SampleLib")                  // 依赖插件（同上）
-        // 自测模式（v0.9.0+）：被测插件就是本模块时，**可不声明 pluginUnderTest** ——
-        // 框架自动取本模块 jar 产物（build/libs/<name>-<version>.jar），并把
-        // prepareE2e<Key> / e2e<Key> 自动接到 jar 任务，无需手写 dependsOn 样板；
-        // 运行期仍可用 MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR 覆盖（CI / GradleRunner 注入）。
+        // 环境变量名或 jar 路径；被测插件就是本模块时可省略（自测模式自动接线 jar）
+        pluginUnderTest = "MY_PLUGIN_JAR"
     }
 }
 ```
 
-**③ 照抄脚手架并跑场景**：把 `template/`（桩插件 + 机器人内核）拷进项目按 [`template/README.md`](template/README.md) 接线，然后：
+### 3. 接入脚手架并运行
+
+把 `template/` 拷进项目，按 [`template/README.md`](template/README.md) 接线，然后：
 
 ```bash
-./gradlew e2eBuy          # 直连后端跑场景
-./gradlew e2eBuyViaWf     # 经 Waterfall 代理跑场景
+./gradlew e2eBuy          # 直连后端
+./gradlew e2eBuyViaWf     # 经 Waterfall 代理
 ```
 
-**v0.5.0+ 节点声明示例**：
+完整任务名、环境变量（`MC_TESTKIT_E2E_*`）与 DSL 说明见 [`docs/API.md`](docs/API.md)。
 
-```kotlin
-backend("s1") {
-    env("MYPLUGIN_NODE", "s1")
-    templateDirectory("MC_TESTKIT_E2E_S1_TEMPLATE_DIR")
-}
-proxy("wf") {
-    routesTo("s1")
-    plugin("MC_TESTKIT_E2E_PROXY_PLUGIN_JAR")
-    env("MYPLUGIN_PROXY_NODE", "wf")
-    templateDirectory("MC_TESTKIT_E2E_PROXY_TEMPLATE_DIR")
-}
-```
+## 架构
 
-`envOrPath` 的非空环境变量值优先，否则按路径解析；节点 `env(...)` 不得声明大小写任意形式的 `MC_TESTKIT_E2E_` 保留前缀。`dependencies { }` 仍只注入后端，不会把待测或依赖插件复制到代理。
+三层协作，详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：
 
-服务端模板 / 依赖 jar / 规模等经 `MC_TESTKIT_E2E_*` 环境变量提供，完整任务名与环境变量约定见 [`docs/API.md`](docs/API.md)。本仓库自身的构建/发布命令见 [`docs/OPERATIONS.md`](docs/OPERATIONS.md)。
+1. **Gradle 编排插件**（本仓库）——拓扑 DSL、任务装配、下载运行、环境契约、结果判定
+2. **服务端桩插件**（随消费方项目）——装备玩家、驱动场景、写结果文件
+3. **mineflayer 机器人**（随消费方项目）——模拟真实玩家入服驱动业务
 
-## 架构一览
+`template/` 是纯拷贝脚手架，不被插件运行期依赖、不进发布产物。
 
-三层协作（详见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)）：
-
-- **Gradle 编排插件**（本仓库核心，`top.wcpe.mc-testkit`）：内置下载并运行 Paper/Folia/Spigot 后端与 Velocity/Waterfall/BungeeCord 代理（下载/运行模块自实现，不外挂第三方下载库，见 ADR-0001；Spigot 见 ADR-0013）；用 `mcTestkit { }` DSL 声明「代理 + 多后端」拓扑，自动注册 prepare / 启动 bot / runServer / proxy / cluster / stress / verify / 缓存回写等任务，并固化已知环境契约。
-- **服务端桩插件**（随项目，模板提供骨架）：装备入服玩家、按场景驱动、与 bot 收发控制消息、判定结果写结果文件。
-- **mineflayer 机器人**（随项目，模板提供内核）：模拟真实玩家入服，驱动购买/交互等端到端场景。
-
-## 项目结构
+## 仓库结构
 
 ```
 mc-testkit/
-  build.gradle.kts / settings.gradle.kts   # Gradle 插件工程（java-gradle-plugin + kotlin-dsl）
-  src/main/kotlin/top/wcpe/mc/testkit/      # 插件实现：McTestkitPlugin + mcTestkit{} DSL + 任务/编排助手
-  template/                                 # 脚手架：桩插件骨架 + mineflayer bot 内核 + 示例场景 + 复制说明
-  docs/                                     # PRD / ARCHITECTURE / API / ADR / 运维 / 贡献指南
-  .claude/rules/                            # 防漂移规则（架构不变量 / 范围 / 决策 / 文档 / 质量 / 风格）
+  src/main/kotlin/top/wcpe/mc/testkit/   # 插件实现
+  harness-core/                          # 桩侧协议胶水库（Maven）
+  template/                              # 脚手架：桩插件 + bot 内核 + 示例
+  docs/                                  # PRD / 架构 / API / ADR / 运维 / 贡献
 ```
 
-> `template/` 是纯拷贝脚手架（不被插件构建依赖、不进发布产物）；消费方照抄到自己项目按需改。
+## 文档
 
-## 文档导航
-
-- 需求：[`docs/PRD.md`](docs/PRD.md)
-- 架构：[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- 接口：[`docs/API.md`](docs/API.md)
-- 运维：[`docs/OPERATIONS.md`](docs/OPERATIONS.md)
-- 安全：[`SECURITY.md`](SECURITY.md)
-- 决策：[`docs/adr/`](docs/adr/)
-- 演进与维护：[`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)
-- 变更史：[`CHANGELOG.md`](CHANGELOG.md)
-
-## 版本与变更
-
-当前 **v0.9.3**（发布到 [maven.wcpe.top](https://maven.wcpe.top)）。完整变更见 [`CHANGELOG.md`](CHANGELOG.md)；能力与进度以 [`docs/PRD.md`](docs/PRD.md) §4 FR 表状态列为准。
+| 文档 | 内容 |
+|---|---|
+| [API](docs/API.md) | DSL、任务名、环境变量、结果文件契约 |
+| [架构](docs/ARCHITECTURE.md) | 模块划分与机制 |
+| [运维](docs/OPERATIONS.md) | 构建、发布、E2E 触发方式 |
+| [贡献](docs/CONTRIBUTING.md) | 分支模型、文档同步、协作约定 |
+| [变更日志](CHANGELOG.md) | 各版本变更 |
+| [Releases](https://github.com/wcpe/mc-testkit/releases) | GitHub Release 说明 |
 
 ## 贡献
 
-提交、分支、文档同步等协作约定见 [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) 与 [`.claude/rules/`](.claude/rules/)。
+欢迎 Issue 与 PR。提交前请过验证门（`./gradlew build`），并同步受影响文档——约定见 [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)。
 
 ## 许可
 
-[MIT](LICENSE)。
+[MIT](LICENSE)

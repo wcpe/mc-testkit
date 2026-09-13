@@ -32,7 +32,13 @@ class ConfigurationCacheFunctionalTest {
         write(
             "build.gradle.kts",
             """
-            plugins { id("top.wcpe.mc-testkit") }
+            plugins {
+                // 应用 java 插件使本工程存在 jar 任务 → 自测模式（0.9.0/0.9.1）激活：
+                // pluginUnderTest 未声明时框架自动取本模块 jar 产物，并把 prepareE2e* / e2e* /
+                // serve* 自动依赖到 jar 任务——本测试同时覆盖「自测模式接线」下的配置缓存存储。
+                java
+                id("top.wcpe.mc-testkit")
+            }
             mcTestkit {
                 backend("s1") { port = 25565 }
                 backend("s2") { port = 25566 }

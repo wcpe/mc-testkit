@@ -7,7 +7,7 @@
 ## [未发布]
 
 ### 变更
-- **harness-core 0.1.1 / template harness 降至 Java 8 + `api-version: 1.8`**：同一桩 jar 可在 Paper 1.7.10–1.21 代表版本加载（FR-21 多版本烟雾）。此前 `api-version: 1.20` + Java 17 字节码导致旧服务端 `Unsupported API version` / 类版本错误拒载。E2E 工作流先 `publishToMavenLocal` harness-core 再编模板桩。
+- **harness-core 0.1.1 / template harness 降至 Java 8，plugin.yml 不写 api-version**：同一桩 jar 可在 Paper 1.7.10–1.21 代表版本加载（FR-21 多版本烟雾）。此前 `api-version: 1.20` + Java 17 字节码导致旧服务端拒载；改成 `1.8` 又被 Paper 1.20+ 拒绝。现不声明 api-version（1.13+ 按 legacy 加载），E2E 先 `publishToMavenLocal` harness-core 再编模板桩。
 
 ## [0.9.2] - 2026-09-13
 

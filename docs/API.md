@@ -188,7 +188,7 @@ mcTestkit {
 
 桩与机器人的协议胶水以可发布构件提供，消费方依赖构件而非照抄 / 手写（见 docs/specs/fr-09-shared-harness-bot.md）：
 
-- **`harness-core`**：`top.wcpe.mc:harness-core:0.1.1`（Maven，maven.wcpe.top）。纯 Java、零 Kotlin 依赖、**Java 8 字节码**（兼容 Paper 1.7.10–1.21 多版本烟雾）、paper-api 仅 compileOnly。提供 `McTestkitEnv`（契约 env 常量 / 读取 / serve 空闲判断）、`McTestkitProtocol`（冻结控制协议常量）、`McTestkitResultWriter`（结果文件原子写出）、`McTestkitHarnessPlugin`（Bukkit 抽象基类：场景/结果文件解析、serve 空闲短路、判定收尾、E2E_READY、Paper/Folia 兼容调度）。
+- **`harness-core`**：`top.wcpe.mc:harness-core:0.1.1`（Maven，maven.wcpe.top）。纯 Java、零 Kotlin 依赖、**Java 8 字节码**（兼容 Paper 1.7.10–1.21 多版本烟雾）、paper-api 仅 compileOnly。提供 `McTestkitEnv`（契约 env 常量 / 读取 / serve 空闲判断）、`McTestkitProtocol`（冻结控制协议常量）、`McTestkitResultWriter`（结果文件原子写出）、`McTestkitHarnessPlugin`（Bukkit 抽象基类：场景/结果文件解析、serve 空闲短路、判定收尾、E2E_READY、Paper/Folia 兼容调度）。模板 `plugin.yml` **不声明 `api-version`**（声明 1.20 会拒载旧版，声明 1.8 会被 1.20+ 拒绝）。
 - **`@wcpe/mc-testkit-bot`**：`@wcpe/mc-testkit-bot@0.1.0`（npm）。mineflayer 公共内核 `runBot({ scenarios })`（端口探测 / 重试 / action 分发 / 断线重连 / 优雅收尾），子路径 `@wcpe/mc-testkit-bot/lib/{messages,random,normalize,env}`。
 
 **消费方接线**：桩插件 `implementation("top.wcpe.mc:harness-core:0.1.1")`（打进插件 jar），继承 `McTestkitHarnessPlugin` 写业务场景；机器人 `npm i @wcpe/mc-testkit-bot`，入口登记 action → 场景驱动表。`template/` 是这两个构件的示例消费者。

@@ -19,6 +19,8 @@ data class ResolvedBackend(
     val platform: BackendPlatform,
     /** Minecraft 版本。 */
     val version: String,
+    /** 后端进程需要的 Java 主版本；null 表示按 MC 版本选运行时的既有解析链。 */
+    val javaVersion: Int? = null,
     /** 监听端口（已解析）。 */
     val port: Int,
     /** 追加到该后端 JVM 的参数（按声明顺序）。 */

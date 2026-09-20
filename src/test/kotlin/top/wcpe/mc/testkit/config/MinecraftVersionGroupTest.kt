@@ -70,6 +70,20 @@ class MinecraftVersionGroupTest {
     }
 
     @Test
+    @DisplayName("26.x 纪元版本应落入 PaperConfig 段且各项分组正确")
+    fun epochVersion26ShouldFallIntoPaperConfigGroup() {
+        // Mojang 自 26.x 起改用年份纪元版本号；数字比较下 26 > 19 应自动落入 PaperConfig 段
+        assertFalse(MinecraftVersionGroup.isLegacy("26.1"), "26.1 不应为 Legacy")
+        assertFalse(MinecraftVersionGroup.isLegacy("26.2"), "26.2 不应为 Legacy")
+        assertFalse(MinecraftVersionGroup.needsPaperYml("26.2"), "26.2 不需要 paper.yml")
+        assertTrue(MinecraftVersionGroup.needsPaperGlobal("26.2"), "26.2 需要 paper-global.yml")
+        assertTrue(MinecraftVersionGroup.isBotSupported("26.2"), "26.2 应支持 bot")
+        // 版本段标识：用于 MC_TESTKIT_JAVA_HOME_<段> 环境变量名
+        assertEquals("26_2", MinecraftVersionGroup.javaVersionSegment("26.2"))
+        assertEquals("26_3", MinecraftVersionGroup.javaVersionSegment("26.3"))
+    }
+
+    @Test
     @DisplayName("isBotSupported 应正确识别 1.8+ 支持 bot、1.7.10 不支持")
     fun isBotSupportedCorrectlyIdentifiesBotRange() {
         // 1.7.10 不支持 bot E2E

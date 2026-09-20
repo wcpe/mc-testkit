@@ -15,6 +15,15 @@ class BackendSpec(val name: String) {
     /** Minecraft 版本（默认 [McTestkitDefaults.MINECRAFT_VERSION]）。 */
     var version: String = McTestkitDefaults.MINECRAFT_VERSION
 
+    /**
+     * 后端进程需要的 Java 主版本；null 表示沿用「按 MC 版本选运行时」的既有解析链
+     * （`MC_TESTKIT_JAVA_HOME_<版本段>` > `JAVA_HOME` > 当前 JVM）。
+     *
+     * 显式声明后走强制路径：必须由 `MC_TESTKIT_JAVA_HOME_<主版本>` 精确提供，不允许回退——
+     * 用于低版本服务端（如 1.16.5 的 patcher 拒绝 Java 17+）在_plugin 运行于新 JVM 时锁定旧 JRE。
+     */
+    var javaVersion: Int? = null
+
     /** 监听端口；null 表示留待拓扑解析（拓扑 DSL）按端口基数推导。 */
     var port: Int? = null
 

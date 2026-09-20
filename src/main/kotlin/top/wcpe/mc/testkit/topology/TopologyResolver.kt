@@ -45,7 +45,7 @@ object TopologyResolver {
     ): Topology {
         validateNames(backends, proxies)
         validateNodeEnvironments(backends, proxies)
-        validateNodeRuntimeDeclarations(proxies)
+        validateNodeRuntimeDeclarations(proxies, backends)
         validateRoutes(backends, proxies)
         validateScenarioRefs(backends, proxies, scenarios)
         validateServeRefs(backends, proxies, serves)
@@ -55,6 +55,7 @@ object TopologyResolver {
                 name = spec.name,
                 platform = spec.platform,
                 version = spec.version,
+                javaVersion = spec.javaVersion,
                 port = spec.port ?: (TopologyDefaults.BACKEND_BASE_PORT + index),
                 jvmArgs = spec.jvmArgs,
                 javaAgents = spec.javaAgents,
@@ -84,10 +85,15 @@ object TopologyResolver {
     }
 
     /** 显式 Java 主版本必须为正数，避免把明显错误的声明拖到启动期。 */
-    private fun validateNodeRuntimeDeclarations(proxies: List<ProxySpec>) {
+    private fun validateNodeRuntimeDeclarations(proxies: List<ProxySpec>, backends: List<BackendSpec>) {
         proxies.forEach { proxy ->
             if (proxy.javaVersion != null && proxy.javaVersion!! <= 0) {
                 throw GradleException("mcTestkit 代理「${proxy.name}」的 javaVersion 必须为正整数。")
+            }
+        }
+        backends.forEach { backend ->
+            if (backend.javaVersion != null && backend.javaVersion!! <= 0) {
+                throw GradleException("mcTestkit 后端「${backend.name}」的 javaVersion 必须为正整数。")
             }
         }
     }

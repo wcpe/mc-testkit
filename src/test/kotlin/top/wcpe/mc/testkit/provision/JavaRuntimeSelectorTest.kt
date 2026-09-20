@@ -142,4 +142,19 @@ class JavaRuntimeSelectorTest {
         assertTrue(exception.message!!.contains("MC_TESTKIT_JAVA_HOME_25"))
         assertTrue(exception.message!!.contains("Java 25"))
     }
+
+    @Test
+    @DisplayName("requiredExecutableForMajor 应支持 26.x 纪元版本的段标识")
+    fun requiredExecutableSupportsEpochSegment() {
+        val fakeHome = Files.createTempDirectory("mc-testkit-jdk25")
+        val fakeJava = fakeHome.resolve("bin").resolve(if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) "java.exe" else "java")
+        Files.createDirectories(fakeJava.parent)
+        Files.createFile(fakeJava)
+
+        // 26.2 的版本段为 26_2：显式 Java 25 走 MC_TESTKIT_JAVA_HOME_25（主版本直拼）
+        val resolved = JavaRuntimeSelector.requiredExecutableForMajor(25) { name ->
+            if (name == JavaRuntimeSelector.ENV_PREFIX + "25") fakeHome.toString() else null
+        }
+        assertEquals(fakeJava.toAbsolutePath().toString(), resolved)
+    }
 }

@@ -18,8 +18,20 @@ private val isWindows: Boolean
  *
  * paperclip 会自行下载并装载运行库（且会重定位类），编排器替它拼 classpath 反而会打断引导流程，
  * 故识别到该入口时一律保留 `java -jar` 原路径。
+ *
+ * 实测两个入口名：1.8.8–1.17.1 为 `io.papermc.paperclip.Paperclip`，1.18.2+ 为
+ * `io.papermc.paperclip.Main`——按包前缀识别，paperclip 变体也留在安全侧。
  */
-private const val PAPERCLIP_MAIN_CLASS = "io.papermc.paperclip.Main"
+private const val PAPERCLIP_MAIN_CLASS_PREFIX = "io.papermc.paperclip."
+
+/**
+ * 消费方注入运行库的目录名（thin jar 服务端把依赖拆到这里，由启动器接进 classpath）。
+ *
+ * 与 paperclip 自有的 `libraries/` **刻意分离**：`libraries/` 是 paperclip 运行期的下载目标，
+ * 且跨轮保留在运行目录里；若扫描它，上一轮下载的服务端库会被下一轮强行接进 classpath，
+ * 顶掉该版本自带库（实测 1.16.5 因 snakeyaml 2.6 报 `NoSuchMethodError` 启动即崩）。
+ */
+internal const val INJECTED_LIBRARY_DIR_NAME = "server-libraries"
 
 /**
  * 按 Minecraft 版本选择后端程序参数。
@@ -68,9 +80,9 @@ internal fun provisionClasspathFile(runDirectory: File, key: String): File =
  * 不做集群批量与收尾接线——那是 任务自动编排 整合器的事（本包只提供启动原语）。
  *
  * 自包含构件（Paper / 代理 jar）走 `java <jvmArgs> -jar <jar> <serverArgs>`；
- * 运行目录下存在 `libraries/` 的 thin jar 构件（如部分 Folia / Forge 系）走
+ * 运行目录下存在 [INJECTED_LIBRARY_DIR_NAME] 的 thin jar 构件（如部分 Folia / Forge 系）走
  * `java <jvmArgs> -cp <启动器 jar> <Main-Class> <serverArgs>`，启动器 jar 只带一份
- * `Class-Path` 清单，把服务端 jar 与全部运行库接进来（同时规避 Windows 命令行长度限制）。
+ * `Class-Path` 清单，把服务端 jar 与全部注入运行库接进来（同时规避 Windows 命令行长度限制）。
  *
  * 在 [runDirectory] 运行（cwd）。日志重定向到运行目录下 `<key>.log`，合并 stderr。
  * 不在此连真服 / 判定（结果以桩写出的结果文件为权威，见 verify/）。
@@ -135,7 +147,7 @@ object ServerLauncher {
     /**
      * 组装服务端启动命令。
      *
-     * 自包含 jar 走 `java -jar`；thin jar（有 `Main-Class` 且运行目录下有 `libraries/`）改为
+     * 自包含 jar 走 `java -jar`；thin jar（有 `Main-Class` 且运行目录下有注入运行库目录）改为
      * 经启动器 jar 传完整 classpath。选路结果写入 [logger]，便于排查“服务端为何没起来”。
      */
     internal fun buildCommand(
@@ -149,9 +161,9 @@ object ServerLauncher {
     ): List<String> {
         val executable = javaPath ?: javaExecutable()
         val mainClass = readMainClass(jar)
-        val libraries = runtimeLibraries(runDirectory)
-        // 无入口类 / 无运行库时按自包含 jar 处理；paperclip 必须自己引导（见 PAPERCLIP_MAIN_CLASS）
-        if (mainClass == null || mainClass == PAPERCLIP_MAIN_CLASS || libraries.isEmpty()) {
+        val libraries = injectedLibraries(runDirectory)
+        // 无入口类 / 无注入运行库时按自包含 jar 处理；paperclip 必须自己引导（见 PAPERCLIP_MAIN_CLASS_PREFIX）
+        if (mainClass == null || mainClass.startsWith(PAPERCLIP_MAIN_CLASS_PREFIX) || libraries.isEmpty()) {
             logger("按自包含 jar 启动：key=$key 主类=${mainClass ?: "无"} 运行库=${libraries.size} 个")
             return buildList {
                 add(executable)
@@ -175,12 +187,15 @@ object ServerLauncher {
     }
 
     /**
-     * 收集运行目录 `libraries/` 下的运行库 jar（thin jar 服务端把依赖拆到这里）。
+     * 收集注入运行库目录（[INJECTED_LIBRARY_DIR_NAME]）下的运行库 jar（thin jar 服务端把依赖拆到这里）。
+     *
+     * 只认该目录：`libraries/` 归 paperclip 自有（运行期下载 + 跨轮保留），扫它会把上一轮的库
+     * 接进本轮 classpath 造成版本冲突。
      *
      * 按相对路径升序排序，保证多次运行与多机器之间的装载顺序稳定（出现同名类时不靠运气）。
      */
-    private fun runtimeLibraries(runDirectory: File): List<File> {
-        val librariesDirectory = File(runDirectory, "libraries").takeIf(File::isDirectory) ?: return emptyList()
+    private fun injectedLibraries(runDirectory: File): List<File> {
+        val librariesDirectory = File(runDirectory, INJECTED_LIBRARY_DIR_NAME).takeIf(File::isDirectory) ?: return emptyList()
         return librariesDirectory.walkTopDown()
             .filter { it.isFile && it.extension.equals("jar", ignoreCase = true) }
             .sortedBy { it.relativeTo(runDirectory).path.replace(File.separatorChar, '/') }

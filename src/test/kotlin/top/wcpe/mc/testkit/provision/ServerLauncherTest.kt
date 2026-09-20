@@ -273,8 +273,48 @@ class ServerLauncherTest {
         )
         val classpath = assembleClassPath(serverJar, workDir)
         assertEquals("server.jar", classpath.first(), "服务端 jar 必须排在 classpath 首位：$classpath")
-        assertTrue(classpath.contains("libraries/probe.jar"), "运行库应接进 classpath：$classpath")
-        assertTrue(classpath.contains("libraries/kotlin-stdlib.jar"), "运行库应接进 classpath：$classpath")
+        assertTrue(
+            classpath.contains("$INJECTED_LIBRARY_DIR_NAME/probe.jar"),
+            "注入运行库应接进 classpath：$classpath",
+        )
+        assertTrue(
+            classpath.contains("$INJECTED_LIBRARY_DIR_NAME/kotlin-stdlib.jar"),
+            "注入运行库应接进 classpath：$classpath",
+        )
+    }
+
+    @Test
+    @DisplayName("组装命令时 paperclip 自带的 libraries 不得进入 classpath")
+    fun buildCommandIgnoresPaperclipOwnedLibraries() {
+        val workDir = File("build/test-command-paperclip-libs-${System.nanoTime()}").apply { mkdirs() }
+        // 模拟 paperclip 运行期自行下载到 libraries/ 的库（上一轮残留）：不得被扫进 classpath，
+        // 否则会顶掉该版本自带库（实测 1.16.5 因此 NoSuchMethodError 启动即崩）
+        val paperclipLibraries = File(workDir, "libraries/org/yaml/snakeyaml/2.6").apply { mkdirs() }
+        createProbeLibraryJar(File(paperclipLibraries, "snakeyaml-2.6.jar"))
+        val serverJar = createMainOnlyJar(File(workDir, "server.jar"))
+
+        val command = ServerLauncher.buildCommand(serverJar, workDir, "node", emptyList(), emptyList(), null)
+
+        assertTrue(command.contains("-jar"), "paperclip 自带库不得进 classpath，应走 -jar：$command")
+        assertFalse(
+            provisionClasspathFile(workDir, "node").exists(),
+            "不得为 paperclip 自带库生成 classpath 启动器",
+        )
+    }
+
+    @Test
+    @DisplayName("组装命令时旧版 paperclip 入口即使存在注入运行库也应走 java -jar")
+    fun buildCommandKeepsJarModeForLegacyPaperclipMain() {
+        val workDir = File("build/test-command-paperclip-legacy-${System.nanoTime()}").apply { mkdirs() }
+        // 1.8.8–1.17.1 的 paperclip 入口是 io.papermc.paperclip.Paperclip（与新版 Main 不同名）
+        val paperclipJar = createMainOnlyJar(File(workDir, "paperclip.jar"), "io.papermc.paperclip.Paperclip")
+        createInjectedLibraries(workDir)
+
+        val command = ServerLauncher.buildCommand(paperclipJar, workDir, "paperclip", emptyList(), emptyList(), null)
+
+        assertTrue(command.contains("-jar"), "paperclip 必须自己引导，不得替它拼 classpath：$command")
+        assertEquals(paperclipJar.absolutePath, command[command.indexOf("-jar") + 1])
+        assertFalse(provisionClasspathFile(workDir, "paperclip").exists(), "paperclip 场景不应生成 classpath 启动器")
     }
 
     @Test
@@ -288,21 +328,32 @@ class ServerLauncherTest {
         assertTrue(classpath.any { "%20" in it }, "空格必须编码为 %20，否则 JVM 会截断条目：$classpath")
         assertTrue(classpath.none { " " in it }, "Class-Path 条目不得含未编码空格：$classpath")
         val decoded = classpath.map { URLDecoder.decode(it, StandardCharsets.UTF_8.name()) }
-        assertTrue(decoded.contains("libraries/probe 副本.jar"), "编码后必须能还原原运行库路径：$classpath")
+        assertTrue(
+            decoded.contains("$INJECTED_LIBRARY_DIR_NAME/probe 副本.jar"),
+            "编码后必须能还原原运行库路径：$classpath",
+        )
     }
 
     @Test
     @DisplayName("组装命令时运行库应按相对路径升序排列且多次调用结果一致")
     fun buildCommandSortsLibrariesDeterministically() {
         val workDir = File("build/test-command-order-${System.nanoTime()}").apply { mkdirs() }
-        val librariesDir = File(workDir, "libraries").apply { mkdirs() }
+        val librariesDir = File(workDir, INJECTED_LIBRARY_DIR_NAME).apply { mkdirs() }
         val serverJar = createMainOnlyJar(File(workDir, "server.jar"))
         listOf("c.jar", "a.jar", "b.jar").forEach { createProbeLibraryJar(File(librariesDir, it)) }
 
         val first = assembleClassPath(serverJar, workDir)
         val second = assembleClassPath(serverJar, workDir)
 
-        assertEquals(listOf("server.jar", "libraries/a.jar", "libraries/b.jar", "libraries/c.jar"), first)
+        assertEquals(
+            listOf(
+                "server.jar",
+                "$INJECTED_LIBRARY_DIR_NAME/a.jar",
+                "$INJECTED_LIBRARY_DIR_NAME/b.jar",
+                "$INJECTED_LIBRARY_DIR_NAME/c.jar",
+            ),
+            first,
+        )
         assertEquals(first, second, "装载顺序必须稳定，不能依赖文件系统返回顺序")
     }
 
@@ -324,17 +375,22 @@ class ServerLauncherTest {
     }
 
     /**
-     * 铺出 thin jar 服务端布局：运行目录下只有清单的 `server.jar`，依赖拆到 `libraries/`。
+     * 铺出 thin jar 服务端布局：运行目录下只有清单的 `server.jar`，依赖拆到注入运行库目录。
      *
      * @param probeLibraryName 探针库文件名（可含空格，用于覆盖路径编码场景）。
      */
     private fun createThinServerLayout(workDir: File, probeLibraryName: String = "probe.jar"): File {
         workDir.mkdirs()
-        val librariesDir = File(workDir, "libraries").apply { mkdirs() }
-        val serverJar = createMainOnlyJar(File(workDir, "server.jar"))
+        createInjectedLibraries(workDir, probeLibraryName)
+        return createMainOnlyJar(File(workDir, "server.jar"))
+    }
+
+    /** 铺出消费方注入的运行库目录（[INJECTED_LIBRARY_DIR_NAME]），返回该目录。 */
+    private fun createInjectedLibraries(workDir: File, probeLibraryName: String = "probe.jar"): File {
+        val librariesDir = File(workDir, INJECTED_LIBRARY_DIR_NAME).apply { mkdirs() }
         createProbeLibraryJar(File(librariesDir, probeLibraryName))
         Files.copy(codeSourceFile(Unit::class.java).toPath(), File(librariesDir, "kotlin-stdlib.jar").toPath())
-        return serverJar
+        return librariesDir
     }
 
     /** 创建只有 Main-Class 清单的服务端 jar，入口类由运行库提供。 */
@@ -348,7 +404,7 @@ class ServerLauncherTest {
         return target
     }
 
-    /** 创建运行库 jar，把探针入口类放入 libraries 目录模拟 Paper/Folia 依赖布局。 */
+    /** 创建运行库 jar，把探针入口类放入注入运行库目录模拟 thin jar 服务端的依赖布局。 */
     private fun createProbeLibraryJar(target: File): File {
         val resourceName = LaunchProbeMain::class.java.name.replace('.', '/') + ".class"
         val bytes = LaunchProbeMain::class.java.classLoader.getResourceAsStream(resourceName)!!.use { it.readBytes() }

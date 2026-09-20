@@ -6,7 +6,22 @@
 
 ## [未发布]
 
+## [0.10.0] - 2026-09-20
+
+### 新增
+- **`backend { }` 支持显式 `javaVersion`（与 proxy 对称）**：声明后走强制解析路径——必须由 `MC_TESTKIT_JAVA_HOME_<主版本>` 精确提供该 JRE，不回退 `JAVA_HOME` 或当前 JVM；用于低版本服务端（如 1.16.5 patcher 拒绝 Java 17+）在插件运行于新 JVM 时锁定旧 JRE。未声明时维持既有「按 MC 版本段选运行时」解析链。校验与代理同规则（须为正整数）。
+- **MC 26.x 纪元版本支持确认**：`MinecraftVersionGroup` 数字比较下 26.x 自动落入 PaperConfig 段（写 `paper-global.yml`）、`javaVersionSegment("26.2") → "26_2"`，补 26.1/26.2/26.3 穷举单测；Paper Fill v3 已收录 26.1/26.2/26.3（26.2 要求 Java 25+）。
+- **`versionMatrix("name") { }` 第 6 个顶层块（多版本矩阵）**：声明多个 MC 版本后自动展开为 `backend("v<key>")` + `scenario("full-<key>"|"smoke-<key>")`，并注册串行聚合任务 `e2eMatrix<Key>` / `e2eMatrix<Key>SmokeOnly`（`mustRunAfter` 链，兼容 `org.gradle.parallel=true`）。key 默认由版本号压数字推导（`1.20.1`→`1201`）。
+- **公开运行目录访问器 `mcTestkit.backendRunDirectory("<后端名>")`**（返回 `Provider<Directory>`，`<buildDir>/mc-testkit/run-<后端名>`）：消费方注入配置 / 验收桩文件的**唯一落点**，不必再自己拼目录路径。
+
+### 修复
+- **消费方注入运行库的目录与 paperclip 自有的 `libraries/` 解耦**：启动器改为只扫描 `server-libraries/`。此前它扫描 `libraries/`，而该目录是 paperclip 运行期的下载目标、又在 clean 的保留集合内，导致同一后端**第二次**运行时上一轮下载的服务端库被强行接进 classpath、顶掉该版本自带库——实测 Paper 1.16.5 / 1.8.8 在已跑过一轮的运行目录上重跑，启动即抛 `NoSuchMethodError: org.yaml.snakeyaml.representer.Representer: method <init>()V not found`（1.16.5 落在 `Main.loadConfigFile`、1.8.8 落在 `CraftServer.<init>`），清空 `libraries/` 后立即恢复 PASS。
+- **paperclip 引导入口按包前缀 `io.papermc.paperclip.` 识别**：此前只匹配 `io.papermc.paperclip.Main`，而 1.8.8–1.17.1 的入口是 `io.papermc.paperclip.Paperclip`，这些版本没被「paperclip 必须自己引导」保护住，正是上一条缺陷的命中区间（1.18.2+ 为 `Main`，不受影响）。
+- **单后端运行目录按 backend 隔离（`run-<backendName>`）**：多版本矩阵不再共用 `run/libraries`，避免新 Paper 的 Java 16+ 依赖污染旧版（Java 8）导致 `UnsupportedClassVersionError`。`syncE2eRuntimeCache` 会汇总全部 `run*` 目录回写。
+
 ### 变更
+- **运行目录布局收敛为单点真源**：新增 `contract/McTestkitRunDirectories`（工作根 / `run-<后端名>` / `run-proxy`），`RunLayout` 的路径推导与上述访问器同源。此前消费方按旧布局（共享 `run/`）自行拼路径注入配置与桩 jar，而单后端运行目录已隔离为 `run-<后端名>`——注入文件落在无人使用的目录，服务端以默认配置启动（MCP 端点未开），场景静默失败且只在结果文件里表现为超时或连接被拒。
+- **注入运行库目录不进 clean 保留集合**：`server-libraries/` 每轮由消费方 prepare 重建，避免陈旧注入跨轮泄漏；`libraries/` 仍保留（省重复下载）。既有 thin jar 平台（部分 Folia / Forge 系）需把运行库放到新目录。
 - **README 改为公开仓库风格**：压缩特性列表、补充环境要求与 GitHub Releases 链接，弱化内部 FR/ADR 噪音，突出快速开始。
 
 ## [0.9.3] - 2026-09-13

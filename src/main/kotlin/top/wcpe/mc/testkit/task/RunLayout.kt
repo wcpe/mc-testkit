@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.task
 
+import top.wcpe.mc.testkit.contract.McTestkitRunDirectories
 import java.io.File
 
 /**
@@ -22,28 +23,40 @@ class RunLayout(
     private val rootDir: File,
 ) : java.io.Serializable {
     /** E2E 工作根：`build/mc-testkit`（clean 即清，含运行目录 / 结果 / 代理运行目录）。 */
-    val workRoot: File get() = File(buildDir, WORK_DIR_NAME)
+    val workRoot: File get() = File(buildDir, McTestkitRunDirectories.WORK_DIR_NAME)
 
-    /** 前台被测后端的运行目录（cwd）。 */
+    /** 前台被测后端的运行目录（cwd）。多版本矩阵下已弃用共享目录，见 [backendRunDir]。 */
     val runDir: File get() = File(workRoot, "run")
+
+    /**
+     * 单个后端节点的独立运行目录：`run-<backendName>`。
+     *
+     * 多版本矩阵必须隔离 `libraries`/`cache`：新 Paper 的 Java 16+ 依赖会被旧版（Java 8）
+     * 误用导致 `UnsupportedClassVersionError`。与集群 [clusterBackendRunDir] 同形。
+     */
+    fun backendRunDir(backendName: String): File = clusterBackendRunDir(backendName)
 
     /** 桩写出结果文件、机器人日志 / pid 的目录。 */
     val resultsDir: File get() = File(workRoot, "results")
 
     /** 后台代理的运行目录（cwd；与后端运行目录隔离，避免互相覆盖配置）。 */
-    val proxyRunDir: File get() = File(workRoot, "run-proxy")
+    val proxyRunDir: File get() = File(workRoot, McTestkitRunDirectories.PROXY_RUN_DIR_NAME)
 
     /** 服务端 / 代理 jar 的下载缓存根（挂 Gradle 用户主目录，跨工程 / 跨 clean 复用，避免反复下载）。 */
     val jarCacheRoot: File get() = File(gradleUserHome, "caches/$JAR_CACHE_DIR_NAME")
 
     /** 持久运行库缓存（运行库 / 资源回写此处，clean 后可恢复而非冷启动）。 */
-    val persistentServerBaseDir: File get() = File(rootDir, ".gradle/$WORK_DIR_NAME/server-base")
+    val persistentServerBaseDir: File get() = File(rootDir, ".gradle/${McTestkitRunDirectories.WORK_DIR_NAME}/server-base")
 
     /** 某代理节点的 pid 文件（落结果目录，供收尾按 pid 杀）。 */
     fun proxyPidFile(proxyName: String): File = File(resultsDir, "proxy-$proxyName.pid")
 
-    /** 某集群后端的运行目录（cwd；与其它后端 / 单后端运行目录隔离，集群编排）。 */
-    fun clusterBackendRunDir(backendName: String): File = File(workRoot, "run-$backendName")
+    /**
+     * 某集群后端的运行目录（cwd；与其它后端 / 单后端运行目录隔离，集群编排）。
+     *
+     * 目录名取自 [McTestkitRunDirectories.backendRunDirName]——对外契约同一真源。
+     */
+    fun clusterBackendRunDir(backendName: String): File = File(workRoot, McTestkitRunDirectories.backendRunDirName(backendName))
 
     /** 某集群后端的 pid 文件（落结果目录，供收尾按 pid 杀）。 */
     fun clusterBackendPidFile(backendName: String): File = File(resultsDir, "backend-$backendName.pid")
@@ -56,9 +69,6 @@ class RunLayout(
     }
 
     companion object {
-        /** E2E 工作目录名（build 下与持久缓存下同名）。 */
-        const val WORK_DIR_NAME = "mc-testkit"
-
         /** jar 下载缓存目录名（Gradle caches 下）。 */
         const val JAR_CACHE_DIR_NAME = "mc-testkit-jars"
 
@@ -68,7 +78,13 @@ class RunLayout(
         /** 机器人入口脚本相对 bot 目录的路径（template 既定，见 template/bot/src/connectAndWait.js）。 */
         const val BOT_SCRIPT_RELATIVE = "src/connectAndWait.js"
 
-        /** clean 运行目录时保留的运行库 / 缓存子目录（避免连续重跑反复下载）。 */
+        /**
+         * clean 运行目录时保留的运行库 / 缓存子目录（避免连续重跑反复下载）。
+         *
+         * `libraries` 是 paperclip 自有的运行库下载目标，保留它只为省下重复下载；消费方注入运行库
+         * 用的 `server-libraries`（`provision/` 的 `INJECTED_LIBRARY_DIR_NAME`）**刻意不在**此集合内：
+         * 它每轮由消费方 prepare 重建，陈旧注入不得跨轮泄漏到下一轮 classpath。
+         */
         val PRESERVED_RUNTIME_CACHE_ENTRIES = setOf("libraries", "cache", "assets", "versions")
     }
 }

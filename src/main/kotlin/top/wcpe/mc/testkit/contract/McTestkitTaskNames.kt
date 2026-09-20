@@ -49,6 +49,16 @@ object McTestkitTaskNames {
 
     /** 持久手测收尾任务（按 pid 停 serve 后端 + 代理）：`stop<Key>Serve`。 */
     fun stopServe(serveName: String): String = "stop" + serveName.toTaskKey() + "Serve"
+
+    /**
+     * 版本矩阵串行聚合任务：`e2eMatrix<Key>`（如 `versionMatrix("nms")` → `e2eMatrixNms`）。
+     * dependsOn 矩阵内全部场景任务，并以 mustRunAfter 链强制串行。
+     */
+    fun versionMatrix(matrixName: String): String = "e2eMatrix" + matrixName.toTaskKey()
+
+    /** 版本矩阵仅 smoke 子集聚合：`e2eMatrix<Key>SmokeOnly`。 */
+    fun versionMatrixSmokeOnly(matrixName: String): String =
+        versionMatrix(matrixName) + "SmokeOnly"
 }
 
 /** 把场景 / 代理名（kebab-case / camelCase / 空格分隔）折成任务名用的 PascalCase 中缀。 */

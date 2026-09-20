@@ -38,7 +38,7 @@ class VelocityPrepareRuntimeFunctionalTest {
             .build()
 
         assertEquals(TaskOutcome.SUCCESS, result.task(":prepareE2eVelocityPrepareSentinel")?.outcome)
-        val runtimeConfig = file("build/mc-testkit/run/config/paper-global.yml").readText()
+        val runtimeConfig = file("build/mc-testkit/run-paper-backend/config/paper-global.yml").readText()
         assertTrue(Regex("(?m)^\\s*enabled:\\s*true\\s*$").containsMatchIn(runtimeConfig), runtimeConfig)
         assertTrue(runtimeConfig.contains(McTestkitDefaults.VELOCITY_FORWARDING_SECRET), runtimeConfig)
     }

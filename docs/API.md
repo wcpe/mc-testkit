@@ -96,8 +96,27 @@ mcTestkit {
         pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR"
         plugin("SampleLib")
     }
+    // 多版本矩阵（versionMatrix，第 6 个顶层块）：声明 N 个 MC 版本，自动展开 backend + scenario
+    // 并注册串行聚合任务 e2eMatrix<Key> / e2eMatrix<Key>SmokeOnly（mustRunAfter 链）
+    versionMatrix("nms") {
+        platform = paper          // 默认 paper；也支持 folia / spigot
+        portBase = 25600          // 默认 25600；条目端口 = portBase + 序号
+        botUsernamePrefix = "Tb"  // bot-full 用户名前缀 → Tb1206
+        botAction = "taboolib-full" // bot 场景 action（与机器人分发表一致）
+        entry("1.20.1")                 // key 自动推导为 1201，smoke
+        entry("1.20.6") { bot = true }  // full-1206 + bot
+        entry("26.2", key = "262")      // 显式 key
+        // versions("1.21.1", "1.21.5")  // 批量 smoke
+    }
 }
 ```
+
+**版本矩阵展开规则**：每个条目生成
+- 后端 `backendNamePrefix + key`（默认 `v` + key，如 `v1201`）
+- `bot=false` → 场景 `smoke-<key>`（ACTIVE 即跑，无机器人）
+- `bot=true` → 场景 `full-<key>` + bot（`e2eFull<Key>WithBot`）
+- 聚合 `e2eMatrix<Key>` dependsOn 全部场景任务，并用 `mustRunAfter` 串行，避免并行起多套 Paper
+- 矩阵名/条目 key 与既有 backend/scenario 撞名时配置期中文报错
 
 **节点运行时注入（FR-20/22）**：`BackendSpec` 提供 `env(name, value)`、`templateDirectory(envOrPath)`、`jvmArg(value)` 与 `javaAgent(envOrPath)`；`ProxySpec` 额外提供独立 `version`、`javaVersion`、`plugin(envOrPath)`、`env(name, value)`、`templateDirectory(envOrPath)`、`jvmArg(value)` 与 `javaAgent(envOrPath)`。`javaAgent` 在执行期优先按环境变量取值，否则按路径解析；同一节点重复声明同名 `env` 时后值覆盖前值，不同节点互不共享。`dependencies { }` 的语义不变，仍只把待测与依赖插件注入后端；代理插件只能经对应代理节点的 `plugin(...)` 声明。
 
@@ -114,6 +133,8 @@ mcTestkit {
 > 经 **Velocity 代理**走 modern forwarding（代理 `velocity.toml` + 后端 `paper-global proxies.velocity`，共享 forwarding secret，见 ADR-0010）：支持单后端经代理 / 集群 `/server` 切换 / 崩溃接管 fallback；**不支持压测钉服**（Velocity 单端口无「一端口对一后端」，`stress + via=velocity` 配置期中文报错）。Velocity 用自有版本号（env `…VELOCITY_VERSION` 缺省 `3.5.1`，即受控的最新 3.x，非后端 MC 版本）；Waterfall/BungeeCord 经代理写 `config.yml`、Velocity 写 `velocity.toml` + `forwarding.secret`。
 
 **机器人目录定位（Gradle 属性，非 DSL 块）**：消费方照抄 `template/bot` 到其项目；编排经 Gradle 属性 `mcTestkit.botDir` 定位（缺省相对**根工程**的 `e2e-bot`，入口脚本固定 `<botDir>/src/connectAndWait.js`）。目录命名不同的用 `-PmcTestkit.botDir=<目录>` 覆盖（相对路径相对根工程解析，绝对路径直接采用），保证可移植、不写死本机绝对路径。这是 FR-04 唯一新增可配项，刻意走 Gradle 属性而非新增 DSL 顶层块（保持 §3.1 冻结形态不变）。
+
+**运行目录注入点（公开访问器，非 DSL 块）**：`mcTestkit.backendRunDirectory("<后端名>")` 返回该后端节点运行目录的 `Provider<Directory>`（`<buildDir>/mc-testkit/run-<后端名>`）。目录命名由 `McTestkitRunDirectories` 单点定义、与任务侧路径推导同源，消费方**不要自己拼目录路径**：布局属插件内部实现，自行拼写会在布局调整后静默失配（历史事故：消费方按旧布局写配置，配置落在无人使用的目录，服务端以默认配置启动、场景静默失败）。用法：注入任务以 `dependsOn("prepareE2e<场景>")` 保证顺序，动作内 `provider.get().asFile` 取目录；不要把扩展对象本身捕获进任务动作（配置缓存不友好）。
 
 ### 3.2 生成的任务（命名约定已冻结）
 
@@ -136,6 +157,8 @@ mcTestkit {
 | `stop<Key>Stress` | 停止某压测场景的全部后端、代理与机器人（按 pid 收尾）；由 `e2e<Key>Stress` 经 `finalizedBy` 触发，亦可单独调用 |
 | `serve<Key>` | 持久起服挂住供真人手测（FR-17，ADR-0011）：起后端（声明 `via` 则先起代理）、注入插件、桩空闲不判定，**前台阻塞**到手动停（Ctrl+C / `stop<Key>Serve`）。声明 `backends(...)` 即集群 serve（N 后端 + 代理整套挂起、`/server` 切服，FR-18）；可选 `bot { }` 起 bot 人机混场（FR-19）。`<Key>` = serve 名折 PascalCase |
 | `stop<Key>Serve` | 停止某 serve 的全部后端 + 代理 + 机器人（按 pid 收尾）；供「另一终端停」或「Ctrl+C 没清干净」时兜底 |
+| `e2eMatrix<Key>` | 版本矩阵串行聚合：dependsOn 矩阵全部场景任务 + mustRunAfter 链（versionMatrix） |
+| `e2eMatrix<Key>SmokeOnly` | 版本矩阵仅 smoke 子集串行聚合 |
 
 > 集群任务（`e2e<Key>Cluster` / `stop<Key>Cluster`）由场景声明 `backends(...)`、压测任务（`e2e<Key>Stress` / `stop<Key>Stress`）由场景声明 `stress {}` 触发（FR-10/11，ADR-0008）。任务名一旦发布即视为契约，保持稳定。
 > **单场景多 bot 不新增任务名**（FR-16，ADR-0009）：场景声明多个 bot 时，既有 `launch<Key>Bot` / `e2e<Key>` / `e2e<Key>WithBot` / `e2e<Key>Cluster` **起多个 bot 进程**（per-bot 唯一 `BOT_USERNAME` / 各自 `BOT_ACTION` / 同质复制下发 `BOT_INDEX`），并随场景结束按 pid 全部收尾（集群多 bot pid 收尾并入 `stop<Key>Cluster`）。

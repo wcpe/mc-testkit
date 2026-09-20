@@ -35,6 +35,7 @@ import top.wcpe.mc.testkit.dsl.ProxyPlatform
 import top.wcpe.mc.testkit.dsl.ScenarioSpec
 import top.wcpe.mc.testkit.dsl.ServeSpec
 import top.wcpe.mc.testkit.dsl.StressSpec
+import top.wcpe.mc.testkit.dsl.VersionMatrixSpec
 import top.wcpe.mc.testkit.provision.JavaRuntimeSelector
 import top.wcpe.mc.testkit.provision.ProvisionPlatform
 import top.wcpe.mc.testkit.provision.ServerJarProvisioner
@@ -167,6 +168,58 @@ object McTestkitTasks {
         extension.declaredServes.forEach { serve ->
             registerServeTasks(project, ctx, topology, serve)
         }
+
+        // ⑥ 版本矩阵聚合：e2eMatrix<Key> / e2eMatrix<Key>SmokeOnly + mustRunAfter 串行链
+        extension.declaredVersionMatrices.forEach { matrix ->
+            registerVersionMatrixAggregate(project, matrix)
+        }
+    }
+
+    /**
+     * 为版本矩阵注册串行聚合任务。
+     *
+     * 场景任务本身已由 [registerScenarioTasks] 注册；此处只挂聚合 dependsOn 与 mustRunAfter 链，
+     * 避免 `org.gradle.parallel=true` 时多个 Paper 端口/下载缓存踩踏。
+     */
+    private fun registerVersionMatrixAggregate(
+        project: Project,
+        matrix: VersionMatrixSpec,
+    ) {
+        val orderedTaskNames = matrix.entries.map { entry ->
+            val scenarioName = if (entry.bot) "full-${entry.key}" else "smoke-${entry.key}"
+            if (entry.bot) {
+                McTestkitTaskNames.withBot(scenarioName)
+            } else {
+                McTestkitTaskNames.verify(scenarioName)
+            }
+        }
+        val smokeTaskNames = matrix.entries.filter { !it.bot }.map { entry ->
+            McTestkitTaskNames.verify("smoke-${entry.key}")
+        }
+
+        fun chainSerial(names: List<String>) {
+            for (i in 1 until names.size) {
+                project.tasks.named(names[i]).configure { mustRunAfter(names[i - 1]) }
+            }
+        }
+
+        registerTask(project, McTestkitTaskNames.versionMatrix(matrix.name)) { task ->
+            task.group = TASK_GROUP
+            task.description =
+                "串行跑版本矩阵「${matrix.name}」全部场景（${orderedTaskNames.size} 个）"
+            task.dependsOn(orderedTaskNames)
+        }
+        chainSerial(orderedTaskNames)
+
+        if (smokeTaskNames.isNotEmpty()) {
+            registerTask(project, McTestkitTaskNames.versionMatrixSmokeOnly(matrix.name)) { task ->
+                task.group = TASK_GROUP
+                task.description =
+                    "串行跑版本矩阵「${matrix.name}」smoke 子集（${smokeTaskNames.size} 个，无 bot）"
+                task.dependsOn(smokeTaskNames)
+            }
+            chainSerial(smokeTaskNames)
+        }
     }
 
     /** 配置期一次性提取动作执行上下文快照（全部可序列化，供动作闭包安全捕获，兼容配置缓存）。 */
@@ -203,13 +256,20 @@ object McTestkitTasks {
             task.description = "将运行库 / 下载缓存回写到持久缓存目录"
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
-                val runDir = ctx.layout.runDir
                 val cacheDir = ctx.layout.persistentServerBaseDir
                 cacheDir.mkdirs()
-                RunLayout.PRESERVED_RUNTIME_CACHE_ENTRIES.forEach { name ->
-                    val src = File(runDir, name)
-                    if (src.exists()) {
-                        src.copyRecursively(File(cacheDir, name), overwrite = true)
+                // 汇总所有后端运行目录（含历史共享 run/ 与新的 run-<backend>/）
+                val runDirs = (
+                    ctx.layout.workRoot.listFiles()?.filter {
+                        it.isDirectory && (it.name == "run" || it.name.startsWith("run-"))
+                    } ?: emptyList()
+                    ) + listOf(ctx.layout.runDir)
+                runDirs.distinctBy { it.absolutePath }.forEach { runDir ->
+                    RunLayout.PRESERVED_RUNTIME_CACHE_ENTRIES.forEach { name ->
+                        val src = File(runDir, name)
+                        if (src.exists()) {
+                            src.copyRecursively(File(cacheDir, name), overwrite = true)
+                        }
                     }
                 }
                 ctx.info("已更新持久缓存：${cacheDir.absolutePath}")
@@ -276,9 +336,10 @@ object McTestkitTasks {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val runtime = preflightRuntimeForTask(ctx, listOf(backend))
                 clearPreviousScenarioResult(ctx.layout.resultsDir, scenario.name)
-                prepareRunDirectory(ctx, backend, ctx.layout.runDir, runtime.backends.getValue(backend.name))
+                val backendRunDir = ctx.layout.backendRunDir(backend.name)
+                prepareRunDirectory(ctx, backend, backendRunDir, runtime.backends.getValue(backend.name))
                 if (viaProxy?.platform == ProxyPlatform.VELOCITY) {
-                    BackendVelocityConfig.apply(ctx.layout.runDir, backend.version)
+                    BackendVelocityConfig.apply(backendRunDir, backend.version)
                 }
             }
         }
@@ -392,10 +453,11 @@ object McTestkitTasks {
                     // 代理资源由本任务自足预检（与 prepare 不共享可变状态，兼容配置缓存）
                     val runtime = preflightRuntimeForTask(ctx, listOf(backend), listOf(proxy))
                     // ① 后端切到代理模式：BungeeCord 系走三件套，Velocity 走 modern forwarding 两件套（含共享 secret）
+                    val backendRunDir = layout.backendRunDir(backend.name)
                     if (isBungeeMode) {
-                        BackendBungeeCordConfig.apply(layout.runDir, backend.version)
+                        BackendBungeeCordConfig.apply(backendRunDir, backend.version)
                     } else {
-                        BackendVelocityConfig.apply(layout.runDir, backend.version)
+                        BackendVelocityConfig.apply(backendRunDir, backend.version)
                     }
                     // ② 后台起代理（写 pid 供收尾）
                     proxyProcess = startProxyBackground(
@@ -567,7 +629,7 @@ object McTestkitTasks {
                     McTestkitEnv.BACKEND_NAME to backend.name,
                 ),
             ),
-            javaPath = resolveBackendJava(ctx, backend.version),
+            javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
         )
         layout.clusterBackendPidFile(backend.name).apply { parentFile?.mkdirs() }
@@ -988,7 +1050,7 @@ object McTestkitTasks {
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val layout = ctx.layout
-                stopProcessByPidFile(provisionPidFile(layout.runDir, backend.name)) { ctx.info(it) }
+                stopProcessByPidFile(provisionPidFile(layout.backendRunDir(backend.name), backend.name)) { ctx.info(it) }
                 proxy?.let { stopProcessByPidFile(layout.proxyPidFile(it.name)) { ctx.info(it) } }
                 botKeys.forEach { key -> stopProcessByPidFile(botPidFile(layout.resultsDir, key)) { ctx.info(it) } }
             }
@@ -1044,9 +1106,10 @@ object McTestkitTasks {
         botSpecs: List<BotSpec> = emptyList(),
     ) {
         val layout = ctx.layout
+        val backendRunDir = layout.backendRunDir(backend.name)
         val runtime = preflightRuntimeForTask(ctx, listOf(backend), proxy?.let(::listOf) ?: emptyList())
         // ① 准备运行目录（注入被测 + 依赖插件，含桩；桩由哨兵场景置空闲）
-        prepareRunDirectory(ctx, backend, layout.runDir, runtime.backends.getValue(backend.name))
+        prepareRunDirectory(ctx, backend, backendRunDir, runtime.backends.getValue(backend.name))
 
         var proxyProcess: Process? = null
         var backendProcess: Process? = null
@@ -1064,15 +1127,15 @@ object McTestkitTasks {
             // ② 经代理：写后端代理模式配置 + 后台起代理 + 等代理端口可连
             if (proxy != null) {
                 if (proxy.platform == ProxyPlatform.VELOCITY) {
-                    BackendVelocityConfig.apply(layout.runDir, backend.version)
+                    BackendVelocityConfig.apply(backendRunDir, backend.version)
                 } else {
-                    BackendBungeeCordConfig.apply(layout.runDir, backend.version)
+                    BackendBungeeCordConfig.apply(backendRunDir, backend.version)
                 }
                 proxyProcess = startProxyBackground(ctx, proxy, backend, runtime.proxies.getValue(proxy.name))
                 awaitPortOpen(ctx, proxy.port, "代理 ${proxy.name}")
             }
             // ③ 前台起后端：下发哨兵场景 id 使桩空闲、不关服（ADR-0011），不下发 RESULT_FILE（serve 不判定）
-            backendProcess = startServeBackend(ctx, backend, layout.runDir)
+            backendProcess = startServeBackend(ctx, backend, backendRunDir)
             // ④ 等后端端口就绪，打印连接信息
             awaitPortOpen(ctx, backend.port, "后端 ${backend.name}")
             val connectPort = proxy?.port ?: backend.port
@@ -1096,7 +1159,7 @@ object McTestkitTasks {
                 ctx.info("serve「$serveName」已起 ${botProcesses.size} 个 bot（人机混场，不判定）")
             }
             // ⑥ 后端日志流到控制台（手测需可见启动 / 玩家活动）
-            logTail = startServeLogTail(ctx, File(layout.runDir, "${backend.name}.log"))
+            logTail = startServeLogTail(ctx, File(backendRunDir, "${backend.name}.log"))
             // ⑦ 阻塞挂住：等后端进程退出（用户在服务端控制台 stop / kill / Ctrl+C）
             backendProcess.waitFor()
             ctx.info("serve「$serveName」后端已退出，收尾。")
@@ -1107,7 +1170,7 @@ object McTestkitTasks {
             // 三重收尾兜底（即便 shutdown hook 未触发）：bot（自停兜底 + 按 pid）+ 后端 + 代理，删 pid
             botProcesses.forEach { destroyProcessQuietly(ctx, it) }
             if (botSpecs.isNotEmpty()) stopBots(ctx, serveName, botSpecs)
-            backendProcess?.let { stopProcessQuietly(ctx, it, provisionPidFile(layout.runDir, backend.name)) }
+            backendProcess?.let { stopProcessQuietly(ctx, it, provisionPidFile(backendRunDir, backend.name)) }
             proxy?.let { p -> proxyProcess?.let { stopProcessQuietly(ctx, it, layout.proxyPidFile(p.name)) } }
         }
     }
@@ -1131,7 +1194,7 @@ object McTestkitTasks {
                     McTestkitEnv.BACKEND_NAME to backend.name,
                 ),
             ),
-            javaPath = resolveBackendJava(ctx, backend.version),
+            javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
         )
         ctx.info("已起 serve 后端 ${backend.name} pid=${process.pid()} 端口=${backend.port}（桩空闲、不判定）")
@@ -1322,7 +1385,7 @@ object McTestkitTasks {
                     McTestkitEnv.BACKEND_NAME to backend.name,
                 ),
             ),
-            javaPath = resolveBackendJava(ctx, backend.version),
+            javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
         )
         layout.clusterBackendPidFile(backend.name).apply { parentFile?.mkdirs() }.writeText(process.pid().toString())
@@ -1351,7 +1414,7 @@ object McTestkitTasks {
      */
     private fun runBackendForeground(ctx: TaskExecutionContext, backend: ResolvedBackend, scenario: String) {
         val layout = ctx.layout
-        val runDir = layout.runDir
+        val runDir = layout.backendRunDir(backend.name)
         val provisioner = ServerJarProvisioner.create(layout.jarCacheRoot, ctx::readEnv)
         val jar = provisioner.resolve(backend.platform.name.lowercase(), backend.version) { ctx.info(it) }
         // 桩↔编排交接：下发场景与结果文件绝对路径（= verify 读取处），桩据此选场景并写到对齐位置
@@ -1370,7 +1433,7 @@ object McTestkitTasks {
                     McTestkitEnv.BACKEND_NAME to backend.name,
                 ),
             ),
-            javaPath = resolveBackendJava(ctx, backend.version),
+            javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
         )
         // 等被测后端跑完：以「桩写出结果文件」为权威完成信号（结果文件是真源，见 verify/），
@@ -1665,13 +1728,17 @@ object McTestkitTasks {
     }
 
     /**
-     * 按 MC 版本解析后端应用的 `java` 可执行路径（多版本服务端拉起）。
+     * 解析后端应用的 `java` 可执行路径（多版本服务端拉起）。
      *
-     * 优先级：`MC_TESTKIT_JAVA_HOME_<版本段>` > `JAVA_HOME` > 当前 JVM。
-     * 仅用于后端启动（代理用当前 JVM，代理 Java 版本由代理软件自身决定）。
+     * 显式声明了 [ResolvedBackend.javaVersion] 时走强制路径：必须由
+     * `MC_TESTKIT_JAVA_HOME_<主版本>` 精确提供（不回退 `JAVA_HOME` / 当前 JVM），
+     * 用于低版本服务端在插件运行于新 JVM 时锁定旧 JRE（如 1.16.5 的 patcher 拒绝 Java 17+）。
+     * 未声明时维持既有解析链：`MC_TESTKIT_JAVA_HOME_<版本段>` > `JAVA_HOME` > 当前 JVM。
      */
-    private fun resolveBackendJava(ctx: TaskExecutionContext, version: String): String =
-        JavaRuntimeSelector.executable(version, ctx::readEnv)
+    private fun resolveBackendJava(ctx: TaskExecutionContext, backend: ResolvedBackend): String =
+        backend.javaVersion
+            ?.let { javaVersion -> JavaRuntimeSelector.requiredExecutableForMajor(javaVersion, ctx::readEnv) }
+            ?: JavaRuntimeSelector.executable(backend.version, ctx::readEnv)
 
     /** 显式代理 Java 主版本必须由专属环境变量提供，未声明时保留当前 JVM 行为。 */
     private fun resolveProxyJava(ctx: TaskExecutionContext, proxy: ResolvedProxy): String? =

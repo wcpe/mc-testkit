@@ -94,10 +94,11 @@ class NodeRuntimeInjectionFunctionalTest {
         )
 
         assertEquals(TaskOutcome.SUCCESS, run("serveDevSentinel", environment).task(":serveDevSentinel")?.outcome)
-        assertEquals("serve-one-node-sentinel", probe("build/mc-testkit/run")["node-sentinel"])
-        assertEquals("__mc_testkit_serve__", probe("build/mc-testkit/run")["scenario"])
-        assertEquals("serve-one-jvm-sentinel", probe("build/mc-testkit/run")["jvm-sentinel"])
-        assertEquals("enabled", probe("build/mc-testkit/run")["agent-sentinel"])
+        // 单后端 serve 使用按 backend 隔离的 run-<name>（多版本矩阵防 libraries 污染）
+        assertEquals("serve-one-node-sentinel", probe("build/mc-testkit/run-serve-one-sentinel")["node-sentinel"])
+        assertEquals("__mc_testkit_serve__", probe("build/mc-testkit/run-serve-one-sentinel")["scenario"])
+        assertEquals("serve-one-jvm-sentinel", probe("build/mc-testkit/run-serve-one-sentinel")["jvm-sentinel"])
+        assertEquals("enabled", probe("build/mc-testkit/run-serve-one-sentinel")["agent-sentinel"])
         assertBungeeAuthority(
             linkedMapOf("backend" to "127.0.0.1:${runtimePorts.serveOne}"),
             listOf(runtimePorts.proxy to listOf("backend")),
@@ -252,7 +253,7 @@ class NodeRuntimeInjectionFunctionalTest {
             .build()
 
         assertEquals(TaskOutcome.SUCCESS, result.task(":consumer:prepareE2eLegacyRelativeSentinel")?.outcome)
-        assertTrue(file("consumer/build/mc-testkit/run/root-working-directory-sentinel.txt").isFile)
+        assertTrue(file("consumer/build/mc-testkit/run-legacy-relative-backend-sentinel/root-working-directory-sentinel.txt").isFile)
     }
 
     @Test
@@ -290,11 +291,56 @@ class NodeRuntimeInjectionFunctionalTest {
         assertFalse(Regex("(?i)\\bprovide").containsMatchIn(result.output), result.output)
     }
 
+    @Test
+    @DisplayName("消费方应能经公开访问器把文件注入后端运行目录")
+    fun injectConsumerFileIntoBackendRunDirectory() {
+        write("settings.gradle.kts", """rootProject.name = "run-directory-sentinel"""")
+        write(
+            "build.gradle.kts",
+            """
+            plugins { id("top.wcpe.mc-testkit") }
+            mcTestkit {
+                backend("inject-target-sentinel") {
+                    templateDirectory("inject-template-sentinel")
+                }
+                scenario("inject-sentinel") { backend = "inject-target-sentinel" }
+            }
+            val injectedRunDirectory = mcTestkit.backendRunDirectory("inject-target-sentinel")
+            tasks.register("injectConsumerSentinel") {
+                dependsOn("prepareE2eInjectSentinel")
+                doLast {
+                    val target = java.io.File(injectedRunDirectory.get().asFile, "plugins/consumer-sentinel.txt")
+                    target.parentFile.mkdirs()
+                    target.writeText("consumer-sentinel")
+                }
+            }
+            """.trimIndent(),
+        )
+        file("inject-template-sentinel/server.properties").writeText("server-port=1\n")
+
+        val result = GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withPluginClasspath()
+            .withArguments("injectConsumerSentinel", "--stacktrace")
+            .build()
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":injectConsumerSentinel")?.outcome)
+        val runDirectory = file("build/mc-testkit/run-inject-target-sentinel")
+        assertTrue(
+            File(runDirectory, "plugins/consumer-sentinel.txt").isFile,
+            "消费方注入的文件应落在公开访问器给出的后端运行目录",
+        )
+        assertTrue(
+            File(runDirectory, "eula.txt").isFile && File(runDirectory, "server.properties").isFile,
+            "该目录应同时是 prepareE2e 铺好的运行目录，证明访问器与任务侧布局同源",
+        )
+    }
+
     private fun assertSinglePathResults() {
-        val backendProbe = probe("build/mc-testkit/run")
+        val backendProbe = probe("build/mc-testkit/run-single-sentinel")
         val proxyProbe = probe("build/mc-testkit/run-proxy")
         val serverProperties = Properties().apply {
-            file("build/mc-testkit/run/server.properties").inputStream().use(::load)
+            file("build/mc-testkit/run-single-sentinel/server.properties").inputStream().use(::load)
         }
 
         assertEquals("single-node-sentinel", backendProbe["node-sentinel"])
@@ -302,12 +348,12 @@ class NodeRuntimeInjectionFunctionalTest {
         assertEquals("single-sentinel", backendProbe["scenario"])
         assertEquals("proxy-node-sentinel", proxyProbe["node-sentinel"])
         assertEquals("host-backend-sentinel", proxyProbe["backend-name"])
-        assertTrue(file("build/mc-testkit/run/node-template-sentinel.txt").isFile)
-        assertFalse(file("build/mc-testkit/run/legacy-template-sentinel.txt").exists())
+        assertTrue(file("build/mc-testkit/run-single-sentinel/node-template-sentinel.txt").isFile)
+        assertFalse(file("build/mc-testkit/run-single-sentinel/legacy-template-sentinel.txt").exists())
         assertEquals(runtimePorts.single.toString(), serverProperties.getProperty("server-port"))
-        assertEquals("single-jvm-sentinel", probe("build/mc-testkit/run")["jvm-sentinel"])
-        assertEquals("enabled", probe("build/mc-testkit/run")["agent-sentinel"])
-        assertTrue(file("build/mc-testkit/run/plugins/plugin-under-test.jar").isFile)
+        assertEquals("single-jvm-sentinel", probe("build/mc-testkit/run-single-sentinel")["jvm-sentinel"])
+        assertEquals("enabled", probe("build/mc-testkit/run-single-sentinel")["agent-sentinel"])
+        assertTrue(file("build/mc-testkit/run-single-sentinel/plugins/plugin-under-test.jar").isFile)
         assertTrue(file("build/mc-testkit/run-proxy/plugins/proxy-plugin-sentinel.jar").isFile)
         assertFalse(file("build/mc-testkit/run-proxy/plugins/plugin-under-test.jar").exists())
         assertTrue(file("build/mc-testkit/run-proxy/proxy-template-sentinel.txt").isFile)

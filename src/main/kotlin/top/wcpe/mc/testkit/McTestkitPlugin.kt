@@ -3,7 +3,9 @@ import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.tasks.bundling.Jar
 import top.wcpe.mc.testkit.contract.McTestkitContract
+import top.wcpe.mc.testkit.contract.McTestkitRunDirectories
 import top.wcpe.mc.testkit.dsl.McTestkitExtension
+import top.wcpe.mc.testkit.dsl.VersionMatrixExpander
 import top.wcpe.mc.testkit.task.McTestkitTasks
 
 /**
@@ -21,9 +23,14 @@ class McTestkitPlugin : Plugin<Project> {
     override fun apply(project: Project) {
         val extension =
             project.extensions.create(McTestkitContract.EXTENSION_NAME, McTestkitExtension::class.java)
+        // 运行根目录与任务侧同源（McTestkitRunDirectories），供消费方经
+        // McTestkitExtension.backendRunDirectory 拿到注入落点
+        extension.runRoot = project.layout.buildDirectory.dir(McTestkitRunDirectories.WORK_DIR_NAME)
         // 等 mcTestkit { } 声明就绪后，按拓扑数据驱动注册任务（含配置期校验，任务自动编排）
         project.afterEvaluate {
             applySelfJarDefault(project, extension)
+            // 版阵先展开为 backend + scenario，再走统一拓扑校验与任务注册
+            VersionMatrixExpander.expandAll(extension)
             McTestkitTasks.register(project, extension)
         }
     }

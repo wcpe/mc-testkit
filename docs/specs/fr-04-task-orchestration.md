@@ -33,7 +33,7 @@ FR-04 是第一期（MVP）的**整合器**：把已落地的各包（`contract/
 
 - **运行目录与缓存路径**（依赖 Gradle `project.layout`，留在 task 包工厂方法/插件侧解析，不写死绝对路径）：
   - 运行目录 `build/mc-testkit/run`、结果目录 `build/mc-testkit/results`、代理运行目录 `build/mc-testkit/run-proxy`、jar 下载缓存根 `<gradleUserHome>/caches/mc-testkit-jars`、持久运行库缓存 `<rootProject>/.gradle/mc-testkit/server-base`。
-  - clean 时保留运行库子目录集合（`libraries`/`cache`/`assets`/`versions`），避免连续重跑反复下载（NFR 幂等可重跑）。
+  - clean 时保留运行库子目录集合（`libraries`/`cache`/`assets`/`versions`），避免连续重跑反复下载（NFR 幂等可重跑）。其中 `libraries` 是 paperclip 自有的下载目标；消费者注入运行库用的 `server-libraries` 刻意不保留，每轮由消费方 prepare 重建，避免陈旧注入跨轮泄漏。
 - **装配入口** `McTestkitTasks.register(project)`：
   1. `TopologyResolver.resolve(extension)` 得 `Topology`（同时完成配置期校验，失败抛中文 `GradleException`）。
   2. 注册固定名任务（`npmInstallE2eBot` / `syncE2eRuntimeCache` / `purgeE2eRuntimeCache`）。

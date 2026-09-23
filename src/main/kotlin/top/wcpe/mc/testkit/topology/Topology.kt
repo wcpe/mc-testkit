@@ -31,6 +31,13 @@ data class ResolvedBackend(
     val environment: Map<String, String> = emptyMap(),
     /** 后端模板目录的原始声明（环境变量名或路径）；null 表示回退旧全局模板。 */
     val templateDirectory: String? = null,
+    /**
+     * 服务端 jar 的 Maven 坐标声明（`group:artifact:version`）；null 表示走内置下载。
+     *
+     * 解析优先级为 `*_JAR` 环境变量覆盖 > 本坐标 > 内置下载；与本节点的 [version] 字段互不干涉
+     * （[version] 仍驱动配置生成与 Java 运行时选择）。
+     */
+    val mavenServer: String? = null,
 ) : java.io.Serializable
 
 /**
@@ -64,6 +71,12 @@ data class ResolvedProxy(
     val environment: Map<String, String> = emptyMap(),
     /** 代理模板目录的原始声明（环境变量名或路径）。 */
     val templateDirectory: String? = null,
+    /**
+     * 代理软件 jar 的 Maven 坐标声明（`group:artifact:version`）；null 表示走内置下载。
+     *
+     * 解析优先级为 `*_JAR` 环境变量覆盖 > 本坐标 > 内置下载。
+     */
+    val mavenServer: String? = null,
 ) : java.io.Serializable
 
 /**

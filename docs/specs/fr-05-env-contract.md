@@ -43,7 +43,7 @@
 - **`ProxyProtocolVersion`**（协议版本固定规则）
   - `forBackend(backendVersion)`：纯函数，经代理时返回 `backendVersion`（机器人 mineflayer 协议版本 = 后端 MC 版本）。FR-04 接线时把它喂给 `BotConnection.version` / env `MC_TESTKIT_E2E_BOT_VERSION`。
 - **`DependencyInjections`**（注入缺失校验）
-  - `requireAll(injections, hintEnvByName)`：给定 `injections: Map<String,Boolean>`（注入项名 → 是否已提供），任一为 `false` 即收集，全部缺失项汇总抛**中文** `GradleException`（列出缺哪些、怎么补，可选 `hintEnvByName` 给每项对应的环境变量逃生口提示）。全部齐全则静默返回。机制通用，不写死具体依赖名。
+  - `requireAll(injections, hintTextByName)`：给定 `injections: Map<String,Boolean>`（注入项名 → 是否已提供），任一为 `false` 即收集，全部缺失项汇总抛**中文** `GradleException`（列出缺哪些、怎么补，可选 `hintTextByName` 给每项一句**补充说明**，原样写进该项括号里）。补充说明的两种既有用法：环境变量逃生口提示（"可经环境变量 X 提供其 jar / 路径"）与 Maven 坐标未解析到的归因。全部齐全则静默返回。机制通用，不写死具体依赖名 / 环境变量名 / 坐标。
 
 依赖方向：本包只依赖 `contract/`（如 [McTestkitDefaults] 缺省、[McTestkitEnv] 名做提示）、`model/`（如需 [ResolvedBackend] 取版本）与 JDK；配置期错误抛 `GradleException`（与 `model/` 一致），不反依赖消费项目 / `template/`。沿用 ADR-0004 既定决策，无需新 ADR。
 

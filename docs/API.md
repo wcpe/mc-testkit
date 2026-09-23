@@ -32,6 +32,7 @@ mcTestkit {
         port = 25565              // Int?，可省
         env("MYPLUGIN_NODE", "s1")
         templateDirectory("MC_TESTKIT_E2E_S1_TEMPLATE_DIR")
+        mavenServer("io.papermc.paper:paper:1.12.2") // 可省；服务端 jar 来自 Maven 坐标（优先级：*_JAR > 本坐标 > 内置下载）
     }
     // 代理节点与路由
     proxy("wf") {
@@ -91,10 +92,11 @@ mcTestkit {
         backends("s1", "s2")      // 多后端（须配 via 代理，与单后端 backend 互斥）
         via = "wf"
     }
-    // 注入到后端运行目录的待测/依赖插件 jar；不注入代理（值为环境变量名或路径，运行期解析）
+    // 注入到后端运行目录的待测/依赖插件 jar；不注入代理
     dependencies {
-        pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR"
-        plugin("SampleLib")
+        pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR" // 环境变量名或路径，运行期解析
+        plugin("SampleLib")                                     // 环境变量名或路径，运行期解析
+        mavenPlugin("com.example:foo-plugin:1.2.0")             // Maven 坐标，按 Gradle 原生依赖解析拉取
     }
     // 多版本矩阵（versionMatrix，第 6 个顶层块）：声明 N 个 MC 版本，自动展开 backend + scenario
     // 并注册串行聚合任务 e2eMatrix<Key> / e2eMatrix<Key>SmokeOnly（mustRunAfter 链）
@@ -118,7 +120,7 @@ mcTestkit {
 - 聚合 `e2eMatrix<Key>` dependsOn 全部场景任务，并用 `mustRunAfter` 串行，避免并行起多套 Paper
 - 矩阵名/条目 key 与既有 backend/scenario 撞名时配置期中文报错
 
-**节点运行时注入（FR-20/22）**：`BackendSpec` 提供 `env(name, value)`、`templateDirectory(envOrPath)`、`jvmArg(value)` 与 `javaAgent(envOrPath)`；`ProxySpec` 额外提供独立 `version`、`javaVersion`、`plugin(envOrPath)`、`env(name, value)`、`templateDirectory(envOrPath)`、`jvmArg(value)` 与 `javaAgent(envOrPath)`。`javaAgent` 在执行期优先按环境变量取值，否则按路径解析；同一节点重复声明同名 `env` 时后值覆盖前值，不同节点互不共享。`dependencies { }` 的语义不变，仍只把待测与依赖插件注入后端；代理插件只能经对应代理节点的 `plugin(...)` 声明。
+**节点运行时注入（FR-20/22）**：`BackendSpec` 提供 `env(name, value)`、`templateDirectory(envOrPath)`、`jvmArg(value)`、`javaAgent(envOrPath)` 与 `mavenServer(coordinate)`；`ProxySpec` 额外提供独立 `version`、`javaVersion`、`plugin(envOrPath)`、`env(name, value)`、`templateDirectory(envOrPath)`、`jvmArg(value)`、`javaAgent(envOrPath)` 与 `mavenServer(coordinate)`。`javaAgent` 在执行期优先按环境变量取值，否则按路径解析；同一节点重复声明同名 `env` 时后值覆盖前值，不同节点互不共享。`dependencies { }` 的语义不变，仍只把待测与依赖插件注入后端；代理插件只能经对应代理节点的 `plugin(...)` 声明。
 
 新增 `BackendSpec` / `ProxySpec` 的 `envOrPath` 先按环境变量名读取：非空环境值优先且不再回退；未设置或空值时把声明本身作为路径。绝对路径原样使用，相对路径相对应用插件的 `Project.projectDir` 解析；代理插件必须是存在的普通 `.jar` 文件，模板必须是存在的目录，否则在启动任务涉及的任一节点前中文失败。后端未声明节点模板时继续兼容旧全局 `MC_TESTKIT_E2E_SERVER_TEMPLATE_DIR`，声明后只使用节点模板。
 
@@ -135,6 +137,28 @@ mcTestkit {
 **机器人目录定位（Gradle 属性，非 DSL 块）**：消费方照抄 `template/bot` 到其项目；编排经 Gradle 属性 `mcTestkit.botDir` 定位（缺省相对**根工程**的 `e2e-bot`，入口脚本固定 `<botDir>/src/connectAndWait.js`）。目录命名不同的用 `-PmcTestkit.botDir=<目录>` 覆盖（相对路径相对根工程解析，绝对路径直接采用），保证可移植、不写死本机绝对路径。这是 FR-04 唯一新增可配项，刻意走 Gradle 属性而非新增 DSL 顶层块（保持 §3.1 冻结形态不变）。
 
 **运行目录注入点（公开访问器，非 DSL 块）**：`mcTestkit.backendRunDirectory("<后端名>")` 返回该后端节点运行目录的 `Provider<Directory>`（`<buildDir>/mc-testkit/run-<后端名>`）。目录命名由 `McTestkitRunDirectories` 单点定义、与任务侧路径推导同源，消费方**不要自己拼目录路径**：布局属插件内部实现，自行拼写会在布局调整后静默失配（历史事故：消费方按旧布局写配置，配置落在无人使用的目录，服务端以默认配置启动、场景静默失败）。用法：注入任务以 `dependsOn("prepareE2e<场景>")` 保证顺序，动作内 `provider.get().asFile` 取目录；不要把扩展对象本身捕获进任务动作（配置缓存不友好）。
+
+**依赖插件按 Maven 坐标解析（`dependencies { mavenPlugin(…) }`，加法扩展）**：`DependenciesSpec` 新增 `mavenPlugin(coordinate)`，声明一个依赖插件注入，坐标为 `group:artifact:version`。它解决的是「制品不随公开仓库分发」的场景——此前只能本机放文件 + 设环境变量，CI 里没有那个文件就跑不了；现在直接写坐标即可。
+
+- **解析交给 Gradle 原生依赖解析**（见 ADR-0015）：框架不自己解析 POM、不做传递依赖、不管仓库与鉴权，用消费方**当前生效**的仓库即可。
+- **只拉声明的那个制品**（`isTransitive = false`）：插件运行期依赖该进**服务端的库目录**而非 `plugins/`，自动投放会放错位置；消费方如需运行库仍自行管理。
+- **注入位置与命名**：落后端运行目录的 `plugins/<制品名>.jar`（如 `foo-plugin-1.2.0.jar`），与 `plugin(...)` 的路径 / 环境变量来源自然共存；顺序为「被测插件 → `plugin(...)` 声明 → `mavenPlugin(…)` 坐标」，按各自声明顺序。
+- **配置期校验**：必须恰为 `group:artifact:version` 三段非空；拒绝动态版本与版本区间（`+` / `latest.*` / `[1.0,2.0)`），因为它们会让同一份声明在不同时刻拉到不同制品。`-SNAPSHOT` 后缀**允许**（测试框架有正当用途），但快照制品不可复现，不适用需要严格重现的回归。
+- **缺失报错**：坐标在仓库里找不到时，`prepareE2e*` 抛中文错误并归因（坐标拼写 / 该坐标的仓库未在本构建声明 / 拉取凭据缺失），不会留下半铺的运行目录。
+- **目标文件名冲突**：多份声明（含坐标与路径 / 环境变量混用）落到同一 `plugins/<文件名>` 时，在铺运行目录前中文报错并列出冲突声明，不再静默覆盖（§1 的启动前资源预检契约；被测插件的目标名固定为 `plugin-under-test.jar`，故依赖插件不得与它同名）。
+- **消费方若用 `RepositoriesMode.PREFER_SETTINGS`**（如 ServerProbe）：**项目级** repositories 会被忽略、只有 **settings 级**生效，请把仓库写在 `settings.gradle.kts` 里；框架不会替你在项目级补仓库。
+- **配置缓存的边界**（ADR-0015/0016）：Gradle 原生解析无法真正推迟到任务动作内，故本实现**限定捕获范围**——坐标只被真正需要的任务捕获：起服类任务（`e2e*` / `serve*` 等）捕获依赖插件 + 全部服务端/代理坐标（故其调度时会解析全部已声明坐标）；`prepareE2e*` 只注入插件、不起服务端，只捕获依赖插件坐标；`stop<Key>Serve` / `syncE2eRuntimeCache` / `npmInstallBot` 等一概不解析坐标、不访问仓库。需要坐标的任务在配置缓存下照常存储 / 重用。
+
+v1 **不做** `pluginUnderTest` 的坐标形式（解析机制可复用，待真实需求再加）；`pluginUnderTest` / `plugin(...)` 的语义与优先级完全不变。
+
+**服务端 / 代理 jar 按 Maven 坐标解析（`backend/proxy { mavenServer(…) }`，加法扩展）**：`BackendSpec` 与 `ProxySpec` 各新增 `mavenServer(coordinate)`，声明该节点的服务端 / 代理软件 jar 来自 Maven 坐标 `group:artifact:version`。用于制品不随公开仓库分发、或需要固定 / 自建构建的场景（ADR-0016）。
+
+- **解析优先级**：`①` env `*_JAR` 覆盖（最高，且**不会求值坐标**）→ `②` `mavenServer(坐标)` → `③` 内置下载。镜像命中不改变该顺序：同时设了 `*_JAR` 仍走覆盖。
+- **解析交给 Gradle 原生依赖解析**（`isTransitive = false`，只取声明的那个制品）；仓库用你**当前生效**的仓库，凭据由你自己的 Gradle 配置提供。
+- **镜像缓存**：解析出的 jar 会被拷贝进 `<gradleUserHome>/caches/mc-testkit-jars/maven/<group 路径>/<artifact>/<version>/<artifact>-<version>.jar`（沿用 Maven 仓库层级，**只由坐标推导，与 `version` 字段无关**）。**注册期先查该镜像**：命中则不创建任何解析配置 → 该任务被调度时不触仓库、可离线；镜像被删时执行期以中文错误拦下（提示重跑），绝不静默用错文件。
+- **`version` 字段不受影响**：`version` 仍驱动服务端配置生成与 Java 运行时选择；`mavenServer` 只决定「jar 从哪来」。框架**不校验**两者一致（本就是不同维度）。
+- **配置期校验**：与 `mavenPlugin` 同规则（三段式、拒动态版本与区间、放行 `-SNAPSHOT`）。
+- **CI**：`~/.gradle/caches/mc-testkit-jars/maven` 在 `e2e.yml` 里有独立 `actions/cache` 条目；同时它也被 Gradle `modules-2` 与父目录条目覆盖，命中任一路径即可复用。
 
 ### 3.2 生成的任务（命名约定已冻结）
 

@@ -17,6 +17,8 @@
 | [0012](0012-proxy-runtime-and-javaagent.md) | 代理版本、独立 Java 运行时与 Java Agent 注入（补充 0010） | 已接受 |
 | [0013](0013-spigot-backend-support.md) | 把 Spigot 后端纳入平台范围（受控公共构件源 + 多源回退 + 溯源，取代 0003） | 已接受 |
 | [0014](0014-shared-harness-bot.md) | 发布共享桩协议胶水库 harness-core 与机器人内核包 bot-core（取代 0002 的「暂不发布」条款） | 已接受 |
+| [0015](0015-maven-coordinate-plugin-dependencies.md) | 依赖插件制品按 Maven 坐标解析，交给 Gradle 原生依赖解析（限定捕获范围以兼容配置缓存） | 已接受 |
+| [0016](0016-maven-coordinate-server-jars.md) | 服务端 / 代理 jar 支持按 Maven 坐标解析（注册期查镜像以真正短路解析，镜像进 mc-testkit-jars） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

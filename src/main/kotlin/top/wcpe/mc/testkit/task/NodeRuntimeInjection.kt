@@ -34,16 +34,25 @@ internal data class NodeRuntimePreflight(
  *
  * 旧全局模板环境变量（[McTestkitEnv.SERVER_TEMPLATE_DIR]）在**执行期**经 [readEnv] 读取（保持原
  * `providers.environmentVariable` 的执行期求值语义，配置缓存重用时环境变量变更仍生效）。
+ *
+ * @param resolvedCoordinates Maven 坐标 → 已解析 jar（任务侧执行期经 `resolveMavenCoordinates` 得到；
+ *   空表示未声明坐标）。
  */
 internal fun preflightNodeRuntime(
     projectDirectory: File,
     dependencies: DependencyDeclarations,
+    resolvedCoordinates: Map<String, File>,
     backends: List<ResolvedBackend>,
     proxies: List<ResolvedProxy>,
     readEnv: (String) -> String?,
 ): NodeRuntimePreflight {
     val legacyTemplatePath = readEnv(McTestkitEnv.SERVER_TEMPLATE_DIR)
-    val dependencyJars = if (backends.isEmpty()) emptyList() else resolveDependencyJars(dependencies, readEnv)
+    val dependencyJars =
+        if (backends.isEmpty()) {
+            emptyList()
+        } else {
+            resolveDependencyJars(dependencies, resolvedCoordinates, readEnv)
+        }
     val backendResources = backends.associate { backend ->
         backend.name to resolveBackendRuntimeResources(projectDirectory, backend, legacyTemplatePath, readEnv, dependencyJars)
     }
@@ -259,7 +268,7 @@ private fun injectBackendDependencies(
 ) {
     val pluginsDirectory = File(runDirectory, "plugins").apply { mkdirs() }
     dependencies.forEach { dependency ->
-        val targetName = if (dependency.underTest) "plugin-under-test.jar" else dependency.jar.name
+        val targetName = if (dependency.underTest) UNDER_TEST_TARGET_FILE_NAME else dependency.jar.name
         copyOverwritingRetrying(dependency.jar, File(pluginsDirectory, targetName))
         logger("已注入后端插件：${dependency.jar.name} → plugins/$targetName")
     }

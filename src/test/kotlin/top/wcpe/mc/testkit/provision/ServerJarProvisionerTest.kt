@@ -233,4 +233,151 @@ class ServerJarProvisionerTest {
             zip.closeEntry()
         }
     }
+
+    // ── Maven 坐标来源（mavenServer）──
+
+    /** 每个用例独立的缓存根，避免镜像跨用例串扰。 */
+    private fun isolatedCache(): JarCache = JarCache(File("build/maven-provision-${System.nanoTime()}"))
+
+    private fun provisionerWith(cache: JarCache, readEnv: (String) -> String? = { null }): ServerJarProvisioner {
+        val service = JarProvisionService(
+            cache = cache,
+            paperApi = PaperDownloadsApi(fetchText = { error("不应发网络：maven 来源命中时不该触下载") }),
+            bungeeApi = BungeeCordJenkinsApi(fetchText = { error("不应发网络：maven 来源命中时不该触下载") }),
+            download = { _, _, _ -> error("不应发网络：maven 来源命中时不该下载") },
+        )
+        return ServerJarProvisioner(service, readEnv, cache)
+    }
+
+    /** 坐标 jar 解析出的「源文件」（模拟 Gradle 依赖缓存里的产物）。 */
+    private fun coordinateSource(content: String): File =
+        File.createTempFile("maven-source-", ".jar").apply {
+            deleteOnExit()
+            writeText(content)
+        }
+
+    /**
+     * 记录被求值次数、且一旦求值即失败的 [MavenServerJarSource]。
+     *
+     * 用于证明「镜像命中 / `*_JAR` 覆盖」时**不会**去触碰坐标解析（真实实现里那会触发 Gradle 依赖解析）。
+     */
+    private class RecordingFailingSource(override val coordinate: String) : MavenServerJarSource {
+        var resolveCalls = 0
+            private set
+
+        override fun file(): File {
+            resolveCalls++
+            error("不应求值坐标来源：命中镜像 / JAR 覆盖时应短路")
+        }
+    }
+
+    @Test
+    @DisplayName("未命中镜像时应把坐标来源镜像进缓存并返回镜像路径")
+    fun mirrorCoordinateSourceIntoCacheOnMiss() {
+        val cache = isolatedCache()
+        val provisioner = provisionerWith(cache)
+        val source = coordinateSource("server-jar-bytes")
+
+        val resolved = provisioner.resolve(
+            "paper",
+            "1.12.2",
+            FixedMavenServerJarSource("io.papermc.paper:paper:1.12.2", source),
+        )
+
+        val mirror = cache.mavenJarFile("io.papermc.paper:paper:1.12.2")
+        assertEquals(mirror.absoluteFile, resolved.absoluteFile, "应返回镜像路径")
+        assertTrue(mirror.isFile, "镜像应已落盘")
+        assertEquals("server-jar-bytes", mirror.readText(), "镜像内容应与来源逐字节一致")
+    }
+
+    @Test
+    @DisplayName("镜像已存在时应直接复用且不调用坐标解析")
+    fun reuseExistingMirrorWithoutResolvingCoordinate() {
+        val cache = isolatedCache()
+        val provisioner = provisionerWith(cache)
+        val mirror = cache.mavenJarFile("io.papermc.paper:paper:1.12.2").apply {
+            parentFile?.mkdirs()
+            writeText("already-mirrored")
+        }
+        // 来源被设计为「一旦求值即失败」：镜像命中若去碰它就会响亮暴露
+        val explodingSource = RecordingFailingSource("io.papermc.paper:paper:1.12.2")
+
+        val resolved = provisioner.resolve("paper", "1.12.2", explodingSource)
+
+        assertEquals(mirror.absoluteFile, resolved.absoluteFile)
+        assertEquals(0, explodingSource.resolveCalls, "镜像命中必须跳过坐标解析")
+        assertEquals("already-mirrored", resolved.readText())
+    }
+
+    @Test
+    @DisplayName("镜像命中后再次解析应与首次结果逐字节一致")
+    fun mirrorReuseIsByteIdenticalToFirstResolution() {
+        val cache = isolatedCache()
+        val provisioner = provisionerWith(cache)
+        val source = coordinateSource("stable-bytes")
+        val coordinate = "io.papermc.paper:paper:1.12.2"
+
+        val first = provisioner.resolve("paper", "1.12.2", FixedMavenServerJarSource(coordinate, source))
+        val firstBytes = first.readBytes()
+        val secondSource = RecordingFailingSource(coordinate)
+        val second = provisioner.resolve("paper", "1.12.2", secondSource)
+
+        assertEquals(first.absoluteFile, second.absoluteFile)
+        assertEquals(0, secondSource.resolveCalls, "第二次应走镜像、不求值坐标")
+        assertTrue(firstBytes.contentEquals(second.readBytes()), "重用镜像应与首次解析结果逐字节一致")
+    }
+
+    @Test
+    @DisplayName("设置 JAR 覆盖时应优先于 Maven 坐标来源且不解析坐标")
+    fun preferJarOverrideOverMavenServer() {
+        val cache = isolatedCache()
+        val overrideJar = tempJar()
+        val envName = McTestkitEnv.PREFIX + "PAPER_JAR"
+        val provisioner = provisionerWith(cache) { name -> if (name == envName) overrideJar.absolutePath else null }
+        val explodingSource = RecordingFailingSource("io.papermc.paper:paper:1.12.2")
+
+        val resolved = provisioner.resolve("paper", "1.12.2", explodingSource)
+
+        assertEquals(overrideJar.absoluteFile, resolved.absoluteFile)
+        assertEquals(0, explodingSource.resolveCalls, "JAR 覆盖应短路 Maven 来源")
+    }
+
+    @Test
+    @DisplayName("坐标解析结果不存在时应抛出中文错误且不产生镜像")
+    fun rejectMissingCoordinateSourceWithChineseError() {
+        val cache = isolatedCache()
+        val provisioner = provisionerWith(cache)
+        val missing = File("build/does-not-exist-${System.nanoTime()}.jar")
+        val coordinate = "io.papermc.paper:paper:1.12.2"
+
+        val ex = assertFailsWith<IllegalStateException> {
+            provisioner.resolve("paper", "1.12.2", FixedMavenServerJarSource(coordinate, missing))
+        }
+
+        assertTrue(coordinate in ex.message!!, "报错应点名坐标：${ex.message}")
+        assertTrue("不存在" in ex.message!!, "应提示解析结果不存在：${ex.message}")
+        assertTrue(!cache.mavenJarFile(coordinate).exists(), "失败不应留下镜像")
+    }
+
+    @Test
+    @DisplayName("未声明坐标来源时应照常走内置下载路径")
+    fun fallBackToBuiltInDownloadWithoutMavenServer() {
+        val cache = isolatedCache()
+        val requestedUrls = mutableListOf<String>()
+        val provisioner = ServerJarProvisioner(
+            service = JarProvisionService(
+                cache = cache,
+                download = { url, destination, _ ->
+                    requestedUrls += url
+                    writeMinimalJar(destination)
+                },
+            ),
+            readEnv = { null },
+            cache = cache,
+        )
+
+        provisioner.resolve("spigot", requestedVersion = "1.20.1")
+
+        assertEquals(listOf("https://download.getbukkit.org/spigot/spigot-1.20.1.jar"), requestedUrls)
+    }
 }

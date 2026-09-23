@@ -91,11 +91,15 @@ pluginManagement {
 
 ```kotlin
 plugins {
-    id("top.wcpe.mc-testkit") version "0.9.3"
+    id("top.wcpe.mc-testkit") version "0.12.0"
 }
 
 mcTestkit {
-    backend("s1") { platform = paper; version = "1.20.1"; port = 25565 }
+    backend("s1") {
+        platform = paper; version = "1.20.1"; port = 25565
+        // 服务端 jar 也可来自 Maven 坐标（优先级：*_JAR 覆盖 > 本坐标 > 内置下载）
+        // mavenServer("io.papermc.paper:paper:1.12.2")
+    }
     proxy("wf") { platform = waterfall; port = 25577; routesTo("s1") }
     scenario("buy") {
         backend = "s1"; via = "wf"
@@ -104,9 +108,13 @@ mcTestkit {
     dependencies {
         // 环境变量名或 jar 路径；被测插件就是本模块时可省略（自测模式自动接线 jar）
         pluginUnderTest = "MY_PLUGIN_JAR"
+        // 或直接写 Maven 坐标：框架按 Gradle 原生依赖解析拉取（仓库用你当前生效的仓库，见下方提示）
+        mavenPlugin("com.example:foo-plugin:1.2.0")
     }
 }
 ```
+
+> 用私有仓库的坐标时，仓库要写在**生效的那一层**：消费方若启用 `RepositoriesMode.PREFER_SETTINGS`（如 ServerProbe），项目级 `repositories { }` 会被忽略，只有 `settings.gradle.kts` 里的仓库生效。凭据由你自己的 Gradle 配置提供，框架不感知。
 
 ### 3. 接入脚手架并运行
 

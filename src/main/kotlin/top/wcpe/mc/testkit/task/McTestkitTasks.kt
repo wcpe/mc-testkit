@@ -36,6 +36,7 @@ import top.wcpe.mc.testkit.dsl.ScenarioSpec
 import top.wcpe.mc.testkit.dsl.ServeSpec
 import top.wcpe.mc.testkit.dsl.StressSpec
 import top.wcpe.mc.testkit.dsl.VersionMatrixSpec
+import top.wcpe.mc.testkit.provision.JarCache
 import top.wcpe.mc.testkit.provision.JavaRuntimeSelector
 import top.wcpe.mc.testkit.provision.ProvisionPlatform
 import top.wcpe.mc.testkit.provision.ServerJarProvisioner
@@ -156,17 +157,26 @@ object McTestkitTasks {
         //    兼容 Gradle 9.x 配置缓存（捕获 Project 会在存储阶段报 cannot serialize DefaultProject）
         val ctx = executionContextOf(project, extension)
 
+        // ②' Maven 坐标来源（依赖插件 + 服务端/代理 jar）：只传给需要它们的任务注册点，
+        //     避免无关任务触发仓库访问；服务端坐标在注册期先查镜像，命中即不创建解析配置
+        val mavenSources = MavenCoordinateSources.of(
+            project = project,
+            cache = JarCache(layoutOf(project).jarCacheRoot),
+            pluginCoordinates = extension.declaredDependencies.mavenPlugins.toList(),
+            serverCoordinates = serverCoordinatesOf(extension),
+        )
+
         // ③ 固定名任务（npm 安装 / 缓存回写 / 清缓存）
         registerFixedTasks(project, ctx)
 
         // ④ 数据驱动：每个场景注册 prepare / e2e（+ bot 时 launch / withBot；+ via 时经代理任务）
         extension.declaredScenarios.forEach { scenario ->
-            registerScenarioTasks(project, ctx, topology, scenario)
+            registerScenarioTasks(project, ctx, topology, scenario, mavenSources)
         }
 
         // ⑤ 持久手测：每个 serve 注册 serve<Key> + stop<Key>Serve（持久手测 serve，ADR-0011）
         extension.declaredServes.forEach { serve ->
-            registerServeTasks(project, ctx, topology, serve)
+            registerServeTasks(project, ctx, topology, serve, mavenSources)
         }
 
         // ⑥ 版本矩阵聚合：e2eMatrix<Key> / e2eMatrix<Key>SmokeOnly + mustRunAfter 串行链
@@ -222,6 +232,17 @@ object McTestkitTasks {
         }
     }
 
+    /**
+     * 收集全部**服务端 / 代理 jar 的 Maven 坐标**声明（后端在前、代理在后，各自按声明顺序）。
+     *
+     * 去重后返回：同一坐标（如两个后端共用同一服务端构件）只需一份镜像与一份解析配置。
+     */
+    private fun serverCoordinatesOf(extension: McTestkitExtension): List<String> =
+        (
+            extension.declaredBackends.mapNotNull { it.mavenServer } +
+                extension.declaredProxies.mapNotNull { it.mavenServer }
+            ).distinct()
+
     /** 配置期一次性提取动作执行上下文快照（全部可序列化，供动作闭包安全捕获，兼容配置缓存）。 */
     private fun executionContextOf(project: Project, extension: McTestkitExtension): TaskExecutionContext {
         val layout = layoutOf(project)
@@ -234,6 +255,7 @@ object McTestkitTasks {
                 pluginUnderTest = extension.declaredDependencies.pluginUnderTest,
                 plugins = extension.declaredDependencies.plugins.toList(),
                 pluginUnderTestSelfJar = extension.declaredDependencies.selfJar,
+                mavenPlugins = extension.declaredDependencies.mavenPlugins.toList(),
             ),
         )
     }
@@ -294,6 +316,7 @@ object McTestkitTasks {
         ctx: TaskExecutionContext,
         topology: Topology,
         scenario: ScenarioSpec,
+        mavenSources: MavenCoordinateSources,
     ) {
         // 压测场景（声明 stress）走 N 服 × M bot 钉服编排（压测编排，ADR-0008）：不生成单后端 / 集群任务
         scenario.stressSpec?.let { stress ->
@@ -308,7 +331,7 @@ object McTestkitTasks {
                         "「N-listener 一端口对一后端」钉服。请改用 Waterfall / BungeeCord 代理，或去掉 via 直连后端。",
                 )
             }
-            registerStressTask(project, ctx, scenario, stress, stressBackends, proxy)
+            registerStressTask(project, ctx, scenario, stress, stressBackends, proxy, mavenSources)
             return
         }
 
@@ -318,7 +341,7 @@ object McTestkitTasks {
                 topology.backends.first { it.name == name } // 已由 TopologyResolver 校验存在
             }
             val proxy = topology.proxies.first { it.name == scenario.via } // 集群必有 via 且已校验存在
-            registerClusterTask(project, ctx, scenario, clusterBackends, proxy)
+            registerClusterTask(project, ctx, scenario, clusterBackends, proxy, mavenSources)
             return
         }
 
@@ -329,12 +352,14 @@ object McTestkitTasks {
         // prepare：先预检本任务涉及的后端资源，再准备后端运行目录。
         // 注：经代理任务的代理资源由其自身预检（动作闭包间不再共享预检结果——跨任务共享可变状态
         //   不兼容 Gradle 配置缓存，且代理资源缺失仍会在经代理任务执行期得到同样的中文报错）。
+        // prepare 只注入插件、不起服务端，故只捕获依赖插件坐标（见 pluginsOnly 的说明）。
+        val prepareSources = mavenSources.pluginsOnly()
         val prepare = registerTask(project, prepareName) { task ->
             task.group = TASK_GROUP
             task.description = "准备场景 ${scenario.name} 的运行目录（注入插件、写配置）"
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
-                val runtime = preflightRuntimeForTask(ctx, listOf(backend))
+                val runtime = preflightRuntimeForTask(ctx, listOf(backend), mavenSources = prepareSources)
                 clearPreviousScenarioResult(ctx.layout.resultsDir, scenario.name)
                 val backendRunDir = ctx.layout.backendRunDir(backend.name)
                 prepareRunDirectory(ctx, backend, backendRunDir, runtime.backends.getValue(backend.name))
@@ -378,7 +403,7 @@ object McTestkitTasks {
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 try {
-                    runBackendForeground(ctx, backend, scenario.name)
+                    runBackendForeground(ctx, backend, scenario.name, mavenSources)
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
                     // 成功 / 失败都收尾全部 bot（多 bot 防残留；单 bot 已自停为安全 no-op）
@@ -409,7 +434,7 @@ object McTestkitTasks {
 
         // 经代理的场景：e2e<Key>Via<Proxy>
         viaProxy?.let { proxy ->
-            registerViaProxyTask(project, ctx, scenario, backend, proxy)
+            registerViaProxyTask(project, ctx, scenario, backend, proxy, mavenSources)
         }
     }
 
@@ -420,6 +445,7 @@ object McTestkitTasks {
         scenario: ScenarioSpec,
         backend: ResolvedBackend,
         proxy: ResolvedProxy,
+        mavenSources: MavenCoordinateSources,
     ) {
         val layout = ctx.layout
         val prepareName = McTestkitTaskNames.prepare(scenario.name)
@@ -451,7 +477,7 @@ object McTestkitTasks {
                 var proxyProcess: Process? = null
                 try {
                     // 代理资源由本任务自足预检（与 prepare 不共享可变状态，兼容配置缓存）
-                    val runtime = preflightRuntimeForTask(ctx, listOf(backend), listOf(proxy))
+                    val runtime = preflightRuntimeForTask(ctx, listOf(backend), listOf(proxy), mavenSources)
                     // ① 后端切到代理模式：BungeeCord 系走三件套，Velocity 走 modern forwarding 两件套（含共享 secret）
                     val backendRunDir = layout.backendRunDir(backend.name)
                     if (isBungeeMode) {
@@ -466,6 +492,7 @@ object McTestkitTasks {
                         backend,
                         runtime.proxies.getValue(proxy.name),
                         scenario.name,
+                        mavenSources,
                     )
                     // ③ 起全部 bot：经代理端口进服，协议版本固定为后端版本（环境契约；多 bot 各唯一名）
                     launchScenarioBots(
@@ -476,7 +503,7 @@ object McTestkitTasks {
                         protocolVersion = ProxyProtocolVersion.forBackend(backend.version),
                     )
                     // ④ 前台起后端（自停 waitFor）
-                    runBackendForeground(ctx, backend, scenario.name)
+                    runBackendForeground(ctx, backend, scenario.name, mavenSources)
                     // ⑤ 只认结果文件判定
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
@@ -499,6 +526,7 @@ object McTestkitTasks {
         scenario: ScenarioSpec,
         clusterBackends: List<ResolvedBackend>,
         proxy: ResolvedProxy,
+        mavenSources: MavenCoordinateSources,
     ) {
         val layout = ctx.layout
         val stopName = McTestkitTaskNames.stopCluster(scenario.name)
@@ -536,7 +564,7 @@ object McTestkitTasks {
                 var proxyProcess: Process? = null
                 val botProcesses = mutableListOf<Process>()
                 try {
-                    val runtime = preflightRuntimeForTask(ctx, clusterBackends, listOf(proxy))
+                    val runtime = preflightRuntimeForTask(ctx, clusterBackends, listOf(proxy), mavenSources)
                     layout.resultsDir.mkdirs()
                     val resultFile = File(layout.resultsDir, McTestkitResultFile.fileName(scenario.name))
                     if (resultFile.exists()) resultFile.delete() // 清上轮结果，避免误判
@@ -562,7 +590,7 @@ object McTestkitTasks {
                             BackendBungeeCordConfig.apply(runDir, backend.version)
                         }
                         backendProcesses[backend.name] =
-                            startBackendBackground(ctx, backend, runDir, scenario.name, resultFile)
+                            startBackendBackground(ctx, backend, runDir, scenario.name, resultFile, mavenSources)
                     }
                     // ② 后台起集群代理（单 listener + N 具名 server）
                     proxyProcess = startClusterProxyBackground(
@@ -572,6 +600,7 @@ object McTestkitTasks {
                         runtime.proxies.getValue(proxy.name),
                         scenario.name,
                         resultFile,
+                        mavenSources,
                     )
                     // ②' 确定性就绪门：等全部后端 + 代理端口可连再起 bot（不靠 bot 盲重试赛慢启动，慢 CI 上稳）
                     clusterBackends.forEach { awaitPortOpen(ctx, it.port, "集群后端 ${it.name}") }
@@ -611,10 +640,10 @@ object McTestkitTasks {
         runDir: File,
         scenario: String,
         resultFile: File,
+        sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
     ): Process {
         val layout = ctx.layout
-        val provisioner = ServerJarProvisioner.create(layout.jarCacheRoot, ctx::readEnv)
-        val jar = provisioner.resolve(backend.platform.name.lowercase(), backend.version) { ctx.info(it) }
+        val jar = resolveBackendJar(ctx, backend, sources)
         val process = ServerLauncher.launch(
             jar = jar,
             runDirectory = runDir,
@@ -646,6 +675,7 @@ object McTestkitTasks {
         resources: ProxyRuntimeResources,
         scenario: String? = null,
         resultFile: File? = null,
+        sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
     ): Process {
         val layout = ctx.layout
         val proxyRunDir = layout.proxyRunDir
@@ -661,7 +691,7 @@ object McTestkitTasks {
             },
             logger = { ctx.info(it) },
         )
-        val jar = resolveNodeJar(ctx, proxy.platform.name.lowercase(), requestedVersion)
+        val jar = resolveNodeJar(ctx, proxy.platform.name.lowercase(), requestedVersion, proxy.mavenServer, sources)
         val process = ServerLauncher.launch(
             jar = jar,
             runDirectory = proxyRunDir,
@@ -746,6 +776,7 @@ object McTestkitTasks {
         stress: StressSpec,
         stressBackends: List<ResolvedBackend>,
         proxy: ResolvedProxy?,
+        mavenSources: MavenCoordinateSources,
     ) {
         val layout = ctx.layout
         val stopName = McTestkitTaskNames.stopStress(scenario.name)
@@ -792,6 +823,7 @@ object McTestkitTasks {
                         ctx,
                         stressBackends,
                         proxy?.let(::listOf) ?: emptyList(),
+                        mavenSources,
                     )
                     layout.resultsDir.mkdirs()
                     // 清上轮 per-server 结果，避免误判
@@ -805,7 +837,14 @@ object McTestkitTasks {
                         prepareRunDirectory(ctx, backend, runDir, runtime.backends.getValue(backend.name))
                         if (proxy != null) BackendBungeeCordConfig.apply(runDir, backend.version)
                         backendProcesses[backend.name] =
-                            startBackendBackground(ctx, backend, runDir, scenario.name, stressResultFile(layout, scenario.name, backend.name))
+                            startBackendBackground(
+                                ctx,
+                                backend,
+                                runDir,
+                                scenario.name,
+                                stressResultFile(layout, scenario.name, backend.name),
+                                mavenSources,
+                            )
                     }
 
                     // ② 计算钉服绑定（listener 端口 = 代理端口基数 + 序号）；若经代理则后台起 N-listener 钉服代理
@@ -816,9 +855,10 @@ object McTestkitTasks {
                         proxyProcess = startStressProxyBackground(
                             ctx,
                             proxy,
-                            bindings,
                             proxyDownloadVersion(proxy, stressBackends.first().version),
+                            bindings,
                             runtime.proxies.getValue(proxy.name),
+                            mavenSources,
                         )
                     }
 
@@ -865,9 +905,10 @@ object McTestkitTasks {
     private fun startStressProxyBackground(
         ctx: TaskExecutionContext,
         proxy: ResolvedProxy,
-        bindings: List<StressProxyBinding>,
         proxyVersion: String,
+        bindings: List<StressProxyBinding>,
         resources: ProxyRuntimeResources,
+        sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
     ): Process {
         val layout = ctx.layout
         val proxyRunDir = layout.proxyRunDir
@@ -882,7 +923,7 @@ object McTestkitTasks {
             },
             logger = { ctx.info(it) },
         )
-        val jar = resolveNodeJar(ctx, proxy.platform.name.lowercase(), proxyVersion)
+        val jar = resolveNodeJar(ctx, proxy.platform.name.lowercase(), proxyVersion, proxy.mavenServer, sources)
         val process = ServerLauncher.launch(
             jar = jar,
             runDirectory = proxyRunDir,
@@ -1020,12 +1061,13 @@ object McTestkitTasks {
         ctx: TaskExecutionContext,
         topology: Topology,
         serve: ServeSpec,
+        mavenSources: MavenCoordinateSources,
     ) {
         // 声明 backends(...) 即集群 serve；否则单后端 serve（持久手测 serve）
         if (serve.backendRefs.isNotEmpty()) {
-            registerClusterServeTasks(project, ctx, topology, serve)
+            registerClusterServeTasks(project, ctx, topology, serve, mavenSources)
         } else {
-            registerSingleServeTasks(project, ctx, topology, serve)
+            registerSingleServeTasks(project, ctx, topology, serve, mavenSources)
         }
     }
 
@@ -1035,6 +1077,7 @@ object McTestkitTasks {
         ctx: TaskExecutionContext,
         topology: Topology,
         serve: ServeSpec,
+        mavenSources: MavenCoordinateSources,
     ) {
         val backend = resolveServeBackend(topology, serve)
         val proxy = serve.via?.let { via -> topology.proxies.first { it.name == via } } // 已由 TopologyResolver 校验存在 + 路由
@@ -1067,7 +1110,7 @@ object McTestkitTasks {
             }
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
-                serveForeground(ctx, backend, proxy, serve.name, serve.botSpecs)
+                serveForeground(ctx, backend, proxy, serve.name, serve.botSpecs, mavenSources)
             }
         }
 
@@ -1104,10 +1147,11 @@ object McTestkitTasks {
         proxy: ResolvedProxy?,
         serveName: String,
         botSpecs: List<BotSpec> = emptyList(),
+        mavenSources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
     ) {
         val layout = ctx.layout
         val backendRunDir = layout.backendRunDir(backend.name)
-        val runtime = preflightRuntimeForTask(ctx, listOf(backend), proxy?.let(::listOf) ?: emptyList())
+        val runtime = preflightRuntimeForTask(ctx, listOf(backend), proxy?.let(::listOf) ?: emptyList(), mavenSources)
         // ① 准备运行目录（注入被测 + 依赖插件，含桩；桩由哨兵场景置空闲）
         prepareRunDirectory(ctx, backend, backendRunDir, runtime.backends.getValue(backend.name))
 
@@ -1131,11 +1175,11 @@ object McTestkitTasks {
                 } else {
                     BackendBungeeCordConfig.apply(backendRunDir, backend.version)
                 }
-                proxyProcess = startProxyBackground(ctx, proxy, backend, runtime.proxies.getValue(proxy.name))
+                proxyProcess = startProxyBackground(ctx, proxy, backend, runtime.proxies.getValue(proxy.name), sources = mavenSources)
                 awaitPortOpen(ctx, proxy.port, "代理 ${proxy.name}")
             }
             // ③ 前台起后端：下发哨兵场景 id 使桩空闲、不关服（ADR-0011），不下发 RESULT_FILE（serve 不判定）
-            backendProcess = startServeBackend(ctx, backend, backendRunDir)
+            backendProcess = startServeBackend(ctx, backend, backendRunDir, mavenSources)
             // ④ 等后端端口就绪，打印连接信息
             awaitPortOpen(ctx, backend.port, "后端 ${backend.name}")
             val connectPort = proxy?.port ?: backend.port
@@ -1176,10 +1220,13 @@ object McTestkitTasks {
     }
 
     /** 前台起 serve 后端：下发哨兵场景 id 使桩空闲（不关服）+ BACKEND_NAME；不下发 RESULT_FILE（serve 不判定）。 */
-    private fun startServeBackend(ctx: TaskExecutionContext, backend: ResolvedBackend, runDir: File): Process {
-        val layout = ctx.layout
-        val provisioner = ServerJarProvisioner.create(layout.jarCacheRoot, ctx::readEnv)
-        val jar = provisioner.resolve(backend.platform.name.lowercase(), backend.version) { ctx.info(it) }
+    private fun startServeBackend(
+        ctx: TaskExecutionContext,
+        backend: ResolvedBackend,
+        runDir: File,
+        sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
+    ): Process {
+        val jar = resolveBackendJar(ctx, backend, sources)
         val process = ServerLauncher.launch(
             jar = jar,
             runDirectory = runDir,
@@ -1246,6 +1293,7 @@ object McTestkitTasks {
         ctx: TaskExecutionContext,
         topology: Topology,
         serve: ServeSpec,
+        mavenSources: MavenCoordinateSources,
     ) {
         val clusterBackends = serve.backendRefs.map { name -> topology.backends.first { it.name == name } } // 已校验存在
         val proxy = topology.proxies.first { it.name == serve.via } // 集群 serve 必有 via 且已校验路由覆盖
@@ -1278,7 +1326,7 @@ object McTestkitTasks {
             }
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
-                serveClusterForeground(ctx, clusterBackends, proxy, serve.name, serve.botSpecs)
+                serveClusterForeground(ctx, clusterBackends, proxy, serve.name, serve.botSpecs, mavenSources)
             }
         }
     }
@@ -1293,9 +1341,10 @@ object McTestkitTasks {
         proxy: ResolvedProxy,
         serveName: String,
         botSpecs: List<BotSpec> = emptyList(),
+        mavenSources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
     ) {
         val layout = ctx.layout
-        val runtime = preflightRuntimeForTask(ctx, clusterBackends, listOf(proxy))
+        val runtime = preflightRuntimeForTask(ctx, clusterBackends, listOf(proxy), mavenSources)
         val backendProcesses = LinkedHashMap<String, Process>()
         var proxyProcess: Process? = null
         var logTail: Thread? = null
@@ -1317,7 +1366,7 @@ object McTestkitTasks {
                 } else {
                     BackendBungeeCordConfig.apply(runDir, backend.version)
                 }
-                backendProcesses[backend.name] = startServeClusterBackend(ctx, backend, runDir)
+                backendProcesses[backend.name] = startServeClusterBackend(ctx, backend, runDir, mavenSources)
             }
             // ② 后台起集群代理（单 listener + N 具名 server，供真人 /server 切换）
             proxyProcess = startClusterProxyBackground(
@@ -1325,6 +1374,7 @@ object McTestkitTasks {
                 proxy,
                 clusterBackends,
                 runtime.proxies.getValue(proxy.name),
+                sources = mavenSources,
             )
             // ③ 就绪门：等全部后端 + 代理端口可连
             clusterBackends.forEach { awaitPortOpen(ctx, it.port, "集群后端 ${it.name}") }
@@ -1368,10 +1418,14 @@ object McTestkitTasks {
     }
 
     /** 后台起一个集群 serve 后端：下发哨兵场景使桩空闲 + BACKEND_NAME；pid 落结果目录供收尾。不下发 RESULT_FILE。 */
-    private fun startServeClusterBackend(ctx: TaskExecutionContext, backend: ResolvedBackend, runDir: File): Process {
+    private fun startServeClusterBackend(
+        ctx: TaskExecutionContext,
+        backend: ResolvedBackend,
+        runDir: File,
+        sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
+    ): Process {
         val layout = ctx.layout
-        val provisioner = ServerJarProvisioner.create(layout.jarCacheRoot, ctx::readEnv)
-        val jar = provisioner.resolve(backend.platform.name.lowercase(), backend.version) { ctx.info(it) }
+        val jar = resolveBackendJar(ctx, backend, sources)
         val process = ServerLauncher.launch(
             jar = jar,
             runDirectory = runDir,
@@ -1412,11 +1466,15 @@ object McTestkitTasks {
      * 后端 BungeeCord 模式配置（经代理必需）由调用方在起后端前另行 [BackendBungeeCordConfig.apply]，
      * 本函数只负责"起后端 + 等自停"，不掺配置逻辑。
      */
-    private fun runBackendForeground(ctx: TaskExecutionContext, backend: ResolvedBackend, scenario: String) {
+    private fun runBackendForeground(
+        ctx: TaskExecutionContext,
+        backend: ResolvedBackend,
+        scenario: String,
+        sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
+    ) {
         val layout = ctx.layout
         val runDir = layout.backendRunDir(backend.name)
-        val provisioner = ServerJarProvisioner.create(layout.jarCacheRoot, ctx::readEnv)
-        val jar = provisioner.resolve(backend.platform.name.lowercase(), backend.version) { ctx.info(it) }
+        val jar = resolveBackendJar(ctx, backend, sources)
         // 桩↔编排交接：下发场景与结果文件绝对路径（= verify 读取处），桩据此选场景并写到对齐位置
         val resultFilePath = File(layout.resultsDir, McTestkitResultFile.fileName(scenario)).absolutePath
         val process = ServerLauncher.launch(
@@ -1470,6 +1528,7 @@ object McTestkitTasks {
         backend: ResolvedBackend,
         resources: ProxyRuntimeResources,
         scenario: String? = null,
+        sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
     ): Process {
         val layout = ctx.layout
         val proxyRunDir = layout.proxyRunDir
@@ -1485,7 +1544,7 @@ object McTestkitTasks {
             },
             logger = { ctx.info(it) },
         )
-        val jar = resolveNodeJar(ctx, proxy.platform.name.lowercase(), requestedVersion)
+        val jar = resolveNodeJar(ctx, proxy.platform.name.lowercase(), requestedVersion, proxy.mavenServer, sources)
         val process = ServerLauncher.launch(
             jar = jar,
             runDirectory = proxyRunDir,
@@ -1708,24 +1767,56 @@ object McTestkitTasks {
         rootDir = project.rootProject.projectDir,
     )
 
-    /** 一次性预检任务涉及的全部节点模板、代理插件与后端 dependencies（执行期 env 经 [TaskExecutionContext.readEnv]）。 */
+    /**
+     * 一次性预检任务涉及的全部节点模板、代理插件与后端 dependencies（执行期 env 经 [TaskExecutionContext.readEnv]）。
+     *
+     * Maven 坐标在**这里**（执行期）才落成 jar：逐个坐标解析失败即抛中文错误（[resolveMavenCoordinates]），
+     * 解析成功的结果注入 [preflightNodeRuntime] 与路径 / 环境变量声明合并校验。坐标声明为空时零开销。
+     */
     private fun preflightRuntimeForTask(
         ctx: TaskExecutionContext,
         backends: List<ResolvedBackend>,
         proxies: List<ResolvedProxy> = emptyList(),
+        mavenSources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
     ): NodeRuntimePreflight = preflightNodeRuntime(
         projectDirectory = ctx.projectDir,
         dependencies = ctx.dependencies,
+        resolvedCoordinates = resolveMavenCoordinates(mavenSources.pluginCoordinates, mavenSources::pluginJarOf),
         backends = backends,
         proxies = proxies,
         readEnv = ctx::readEnv,
     )
 
-    /** 解析单个后端或代理平台 jar，统一复用现有 provision 模块。 */
-    private fun resolveNodeJar(ctx: TaskExecutionContext, platform: String, version: String): File {
+    /**
+     * 解析单个后端或代理平台 jar，统一复用现有 provision 模块。
+     *
+     * 传 [mavenCoordinate] 时由 provisioner 按「`*_JAR` 覆盖 > Maven 坐标（含镜像命中）> 内置下载」
+     * 裁决来源；坐标来源经 [sources] 惰性取得（`*_JAR` 覆盖时不会被求值，故不会触碰依赖解析）。
+     */
+    private fun resolveNodeJar(
+        ctx: TaskExecutionContext,
+        platform: String,
+        version: String,
+        mavenCoordinate: String? = null,
+        sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
+    ): File {
         val provisioner = ServerJarProvisioner.create(ctx.layout.jarCacheRoot, ctx::readEnv)
-        return provisioner.resolve(platform, version) { ctx.info(it) }
+        val mavenServer = mavenCoordinate?.let(sources::serverJarOf)
+        return provisioner.resolve(platform, version, mavenServer) { ctx.info(it) }
     }
+
+    /** 解析后端服务端 jar（后端起服路径统一入口；`*_JAR` 覆盖 > Maven 坐标 > 内置下载）。 */
+    private fun resolveBackendJar(
+        ctx: TaskExecutionContext,
+        backend: ResolvedBackend,
+        sources: MavenCoordinateSources,
+    ): File = resolveNodeJar(
+        ctx = ctx,
+        platform = backend.platform.name.lowercase(),
+        version = backend.version,
+        mavenCoordinate = backend.mavenServer,
+        sources = sources,
+    )
 
     /**
      * 解析后端应用的 `java` 可执行路径（多版本服务端拉起）。

@@ -85,6 +85,14 @@ jobs:
           restore-keys: |
             mc-testkit-jars-${{ runner.os }}-
 
+      - name: 缓存 maven 服务端 jar 镜像（mavenServer 坐标解析的镜像子树）
+        uses: actions/cache@v5
+        with:
+          path: ~/.gradle/caches/mc-testkit-jars/maven
+          key: mc-testkit-maven-servers-${{ runner.os }}-${{ hashFiles('.github/workflows/e2e.yml') }}
+          restore-keys: |
+            mc-testkit-maven-servers-${{ runner.os }}-
+
       - name: 配置 Gradle
         uses: gradle/actions/setup-gradle@v5
 
@@ -205,6 +213,14 @@ jobs:
           key: mc-testkit-jars-${{ runner.os }}-${{ matrix.suite }}-${{ hashFiles('.github/workflows/e2e.yml') }}
           restore-keys: |
             mc-testkit-jars-${{ runner.os }}-
+
+      - name: 缓存 maven 服务端 jar 镜像（mavenServer 坐标解析的镜像子树）
+        uses: actions/cache@v5
+        with:
+          path: ~/.gradle/caches/mc-testkit-jars/maven
+          key: mc-testkit-maven-servers-${{ runner.os }}-${{ hashFiles('.github/workflows/e2e.yml') }}
+          restore-keys: |
+            mc-testkit-maven-servers-${{ runner.os }}-
 
       - name: 配置 Gradle
         uses: gradle/actions/setup-gradle@v5

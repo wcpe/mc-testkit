@@ -61,6 +61,7 @@ object TopologyResolver {
                 javaAgents = spec.javaAgents,
                 environment = spec.environment,
                 templateDirectory = spec.templateDirectoryDeclaration,
+                mavenServer = spec.mavenServer,
             )
         }
         val resolvedProxies = proxies.mapIndexed { index, spec ->
@@ -76,6 +77,7 @@ object TopologyResolver {
                 javaAgents = spec.javaAgents,
                 environment = spec.environment,
                 templateDirectory = spec.templateDirectoryDeclaration,
+                mavenServer = spec.mavenServer,
             )
         }
 

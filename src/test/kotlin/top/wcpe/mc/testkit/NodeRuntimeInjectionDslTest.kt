@@ -127,4 +127,84 @@ class NodeRuntimeInjectionDslTest {
         assertTrue(exception.message!!.contains("非法"))
         assertTrue(exception.message!!.contains("BAD=NAME"))
     }
+
+    @Test
+    @DisplayName("mavenPlugin 声明应进入坐标访问器且与路径/被测声明并列共存")
+    fun declareMavenPluginAlongsideLegacyDeclarations() {
+        val extension = McTestkitExtension().apply {
+            dependencies {
+                pluginUnderTest = "under-test-sentinel.jar"
+                plugin("legacy-dependency-sentinel.jar")
+                mavenPlugin("com.example:foo-plugin:1.2.0")
+                mavenPlugin("com.example:bar-plugin:2.0.0-SNAPSHOT")
+            }
+        }
+
+        val dependencies = extension.declaredDependencies
+        // 既有语义不变（纯加法）：被测声明与路径声明照旧
+        assertEquals("under-test-sentinel.jar", dependencies.pluginUnderTest)
+        assertEquals(listOf("legacy-dependency-sentinel.jar"), dependencies.plugins)
+        // 新增维度：坐标按声明顺序进入独立访问器
+        assertEquals(
+            listOf("com.example:foo-plugin:1.2.0", "com.example:bar-plugin:2.0.0-SNAPSHOT"),
+            dependencies.mavenPlugins,
+        )
+    }
+
+    @Test
+    @DisplayName("mavenPlugin 声明非法坐标时应在配置期中文失败")
+    fun rejectInvalidMavenPluginCoordinateAtConfigurationTime() {
+        val exception = assertFailsWith<GradleException> {
+            McTestkitExtension().apply {
+                dependencies { mavenPlugin("com.example:foo") }
+            }
+        }
+
+        assertTrue(exception.message!!.contains("Maven 坐标"))
+        assertTrue(exception.message!!.contains("group:artifact:version"))
+    }
+
+    @Test
+    @DisplayName("mavenServer 声明应进入后端与代理的解析模型")
+    fun declareMavenServerOnBackendAndProxy() {
+        val extension = McTestkitExtension().apply {
+            backend("backend-sentinel") { mavenServer("io.papermc.paper:paper:1.12.2") }
+            proxy("proxy-sentinel") {
+                routesTo("backend-sentinel")
+                mavenServer("com.example:my-waterfall:1.20")
+            }
+        }
+
+        val topology = TopologyResolver.resolve(extension)
+
+        assertEquals("io.papermc.paper:paper:1.12.2", topology.backends.single().mavenServer)
+        assertEquals("com.example:my-waterfall:1.20", topology.proxies.single().mavenServer)
+    }
+
+    @Test
+    @DisplayName("未声明 mavenServer 时后端与代理的坐标应保持为空")
+    fun leaveMavenServerNullWhenNotDeclared() {
+        val extension = McTestkitExtension().apply {
+            backend("backend-sentinel")
+            proxy("proxy-sentinel") { routesTo("backend-sentinel") }
+        }
+
+        val topology = TopologyResolver.resolve(extension)
+
+        assertEquals(null, topology.backends.single().mavenServer)
+        assertEquals(null, topology.proxies.single().mavenServer)
+    }
+
+    @Test
+    @DisplayName("mavenServer 声明非法坐标时应在配置期中文失败")
+    fun rejectInvalidMavenServerCoordinateAtConfigurationTime() {
+        val exception = assertFailsWith<GradleException> {
+            McTestkitExtension().apply {
+                backend("backend-sentinel") { mavenServer("com.example:foo") }
+            }
+        }
+
+        assertTrue(exception.message!!.contains("Maven 坐标"))
+        assertTrue(exception.message!!.contains("group:artifact:version"))
+    }
 }

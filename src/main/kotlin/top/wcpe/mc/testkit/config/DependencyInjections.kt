@@ -17,22 +17,23 @@ object DependencyInjections {
      *
      * @param injections 注入项名 → 是否已提供（`true` 已提供 / `false` 缺失）。用 `LinkedHashMap`
      *   可让缺项在报错里保持声明顺序。
-     * @param hintEnvByName 可选：每个注入项名 → 对应的环境变量逃生口（如 `MC_TESTKIT_E2E_*_JAR` /
-     *   `SERVER_TEMPLATE_DIR`），在缺失报错里提示消费方如何补。
+     * @param hintTextByName 可选：每个注入项名 → 该项的**补充说明**（整句，原样写进括号里），
+     *   用于给出「怎么补」或「为什么没解析到」。环境变量逃生口提示与 Maven 坐标解析失败提示都经此传入，
+     *   故本对象仍不写死任何具体依赖名 / 环境变量名 / 坐标。
      * @throws GradleException 存在缺失注入项时抛出，文案为中文、列出缺哪些 / 怎么补。
      */
     fun requireAll(
         injections: Map<String, Boolean>,
-        hintEnvByName: Map<String, String> = emptyMap(),
+        hintTextByName: Map<String, String> = emptyMap(),
     ) {
         val missing = injections.filterValues { !it }.keys
         if (missing.isEmpty()) {
             return
         }
         val details = missing.joinToString("\n") { name ->
-            val hint = hintEnvByName[name]
+            val hint = hintTextByName[name]
             if (hint != null) {
-                "  - $name（可经环境变量 $hint 提供其 jar / 路径）"
+                "  - $name（$hint）"
             } else {
                 "  - $name"
             }

@@ -40,7 +40,7 @@ FR-04 是第一期（MVP）的**整合器**：把已落地的各包（`contract/
   3. 遍历场景：解析其 `backend`（缺省取首个后端）与 `via`，注册 `prepareE2e<Key>` / `e2e<Key>`（+ bot 时 `launch<Key>Bot` / `e2e<Key>WithBot`；+ via 时 `e2e<Key>Via<Proxy>`）。
 - **纯函数尽量下沉、可单测**：把"运行目录注入计划""env 覆盖取值器"等无副作用部分做成纯函数（如 `RunLayout` 路径推导、注入项解析），任务 `doLast` 只做 IO 编排。任务体内 `provision`/`ServerLauncher`/`BotLauncher`/`ResultReader`/`serverconfig` 全走各包既有公开 API。
 - **env 取值**：任务侧用 `project.providers.environmentVariable(name).orNull` 作 `readEnv`/`override` 取值器喂给 `ServerJarProvisioner.create` 与 `BotConnection.toEnvironment`，保持各包纯函数边界。
-- **依赖注入校验**：`dependencies { pluginUnderTest / plugin(...) }` 声明的项在 prepare `doLast` 里解析（环境变量名→值 或 直接路径）；解析不到对应 jar → 经 `DependencyInjections.requireAll` 抛中文错误（缺什么/怎么补）。
+- **依赖注入校验**：`dependencies { pluginUnderTest / plugin(...) }` 声明的项在 prepare `doLast` 里解析（环境变量名→值 或 直接路径）；解析不到对应 jar → 经 `DependencyInjections.requireAll` 抛中文错误（缺什么/怎么补）。`mavenPlugin("…")` 坐标声明走 Gradle 原生依赖解析（注册期建 `isTransitive = false` 的惰性集合、执行期落成 jar），与路径 / 环境变量来源合并进同一校验；缺失项给出归因（坐标拼写 / 仓库未在 settings 声明 / 凭据缺失）。坐标集合**只被需要依赖的任务捕获**（不进共享上下文），故 `stop<Key>Serve` / `syncE2eRuntimeCache` / `npmInstallBot` 等不解析坐标（ADR-0015）。
 - **bot 目录**：`project.findProperty("mcTestkit.botDir")?.toString() ?: "e2e-bot"`，相对 `rootProject` 解析为 `BotProcessContext.botDir`，脚本 `botDir/src/connectAndWait.js`，结果目录作 `resultsDir`。
 
 依赖方向：`task/` 单向依赖本仓库各内部包与 Gradle API，不反依赖消费项目 / `template/`（架构不变量）。沿用 ADR-0004 / ADR-0001 既定决策，无需新 ADR。

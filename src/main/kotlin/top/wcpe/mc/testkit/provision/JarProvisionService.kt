@@ -25,7 +25,7 @@ import java.util.jar.JarFile
  * @property download 实际下载函数（url, 目标文件, 日志）→ 落地文件；注入以便单测。
  */
 internal class JarProvisionService(
-    private val cache: JarCache,
+    internal val cache: JarCache,
     private val paperApi: PaperDownloadsApi = PaperDownloadsApi(),
     private val bungeeApi: BungeeCordJenkinsApi = BungeeCordJenkinsApi(),
     private val download: (String, File, (String) -> Unit) -> Unit = { url, dest, log -> Downloader.download(url, dest, log) },

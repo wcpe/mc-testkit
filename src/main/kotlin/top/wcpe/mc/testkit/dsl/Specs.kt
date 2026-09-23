@@ -31,6 +31,7 @@ class BackendSpec(val name: String) {
     private val mutableJvmArgs = mutableListOf<String>()
     private val mutableJavaAgents = mutableListOf<String>()
     private var mutableTemplateDirectory: String? = null
+    private var mutableMavenServer: String? = null
 
     /** 注入该后端进程的节点环境变量（后声明同名值覆盖先声明值）。 */
     val environment: Map<String, String> get() = mutableEnvironment.toMap()
@@ -43,6 +44,23 @@ class BackendSpec(val name: String) {
 
     /** 该后端模板目录的原始声明（环境变量名或路径）；null 表示回退旧全局模板环境变量。 */
     val templateDirectoryDeclaration: String? get() = mutableTemplateDirectory
+
+    /** 该后端服务端 jar 的 Maven 坐标声明；null 表示走内置下载。 */
+    val mavenServer: String? get() = mutableMavenServer
+
+    /**
+     * 声明该后端的服务端 jar 来自 **Maven 坐标** `group:artifact:version`（框架按 Gradle 原生依赖解析拉取）。
+     *
+     * 用于制品不随公开仓库分发、或需要固定构建（如自建 / 私有仓库里的服务端）的场景——不必再在本机
+     * 放文件 + 设 `MC_TESTKIT_E2E_<平台>_JAR`。解析优先级：env `*_JAR` 覆盖 > 本坐标 > 内置下载；坐标
+     * 解析出的 jar 会**镜像**进 `<mc-testkit-jars>/maven/...`，下次直接命中镜像、不再触发解析。
+     *
+     * 坐标版本与 [version] 字段互不干涉：[version] 仍驱动服务端配置生成与 Java 运行时选择，本坐标只决定
+     * 「jar 从哪来」。
+     */
+    fun mavenServer(coordinate: String) {
+        mutableMavenServer = MavenCoordinate.requireValid(coordinate)
+    }
 
     /** 声明一个仅注入该后端进程的字面量环境变量。 */
     fun env(name: String, value: String) {
@@ -93,6 +111,7 @@ class ProxySpec(val name: String) {
     private val mutableJvmArgs = mutableListOf<String>()
     private val mutableJavaAgents = mutableListOf<String>()
     private var mutableTemplateDirectory: String? = null
+    private var mutableMavenServer: String? = null
 
     /** 该代理转发到的后端名（按声明顺序，路由目标存在性由 拓扑 DSL 配置期校验）。 */
     val routes: List<String> get() = mutableRoutes.toList()
@@ -111,6 +130,20 @@ class ProxySpec(val name: String) {
 
     /** 该代理模板目录的原始声明（环境变量名或路径）。 */
     val templateDirectoryDeclaration: String? get() = mutableTemplateDirectory
+
+    /** 该代理软件 jar 的 Maven 坐标声明；null 表示走内置下载。 */
+    val mavenServer: String? get() = mutableMavenServer
+
+    /**
+     * 声明该代理的软件 jar 来自 **Maven 坐标** `group:artifact:version`（框架按 Gradle 原生依赖解析拉取）。
+     *
+     * 与 [BackendSpec.mavenServer] 对称：用于制品不随公开仓库分发、或需要固定构建（如自建代理构建）的场景。
+     * 解析优先级：env `*_JAR` 覆盖 > 本坐标 > 内置下载；坐标 jar 会**镜像**进
+     * `<mc-testkit-jars>/maven/...`，下次直接命中镜像、不再触发解析。
+     */
+    fun mavenServer(coordinate: String) {
+        mutableMavenServer = MavenCoordinate.requireValid(coordinate)
+    }
 
     /** 声明该代理转发到的后端（按 [BackendSpec.name] 引用）。 */
     fun routesTo(vararg backendNames: String) {
@@ -323,7 +356,8 @@ class ServeSpec(val name: String) : java.io.Serializable {
 /**
  * 注入到运行目录的待测 / 依赖插件 jar 声明。
  *
- * 值为「环境变量名或路径」，运行期解析以求可移植（不写死本机绝对路径，NFR）。
+ * 依赖插件有两种来源，可混用：**环境变量名或路径**（[plugin]，运行期解析以求可移植，不写死本机
+ * 绝对路径，NFR）与 **Maven 坐标**（[mavenPlugin]，经 Gradle 原生依赖解析拉取）。
  */
 @McTestkitDsl
 class DependenciesSpec {
@@ -354,5 +388,31 @@ class DependenciesSpec {
     /** 声明一个依赖插件注入（环境变量名或路径）。 */
     fun plugin(envVarOrPath: String) {
         mutablePlugins += envVarOrPath
+    }
+
+    private val mutableMavenPlugins = mutableListOf<String>()
+
+    /** 已声明的依赖插件 Maven 坐标（`group:artifact:version`，按声明顺序）。 */
+    val mavenPlugins: List<String> get() = mutableMavenPlugins.toList()
+
+    /**
+     * 声明一个依赖插件注入：Maven 坐标 `group:artifact:version`（框架按 Gradle 原生依赖解析拉取）。
+     *
+     * 与 [plugin] 的「环境变量名或路径」并列，是**加法扩展**：既有声明语义不变。坐标在任务执行期
+     * 落成本地 jar，按制品名（如 `foo-plugin-1.2.0.jar`）注入后端运行目录的 `plugins/`，与
+     * [plugins] 同为非被测插件——不必再在本机放文件 + 设环境变量，CI 因而能跑这类场景。
+     *
+     * 仓库用消费方**当前生效**的仓库：框架不管理仓库声明，也不感知凭据（由消费方自己的 Gradle
+     * 配置提供）。注意消费方若启用 `RepositoriesMode.PREFER_SETTINGS`，只有 settings 级仓库生效。
+     *
+     * 配置期校验：必须恰为 `group:artifact:version` 三段非空，且拒绝动态版本与区间
+     * （`+` / `latest.*` / `[1.0,2.0)`）——它们会让同一份声明拉到不同制品。`-SNAPSHOT` 后缀**允许**
+     * （测试框架有正当用途：验证尚未发布的快照），但快照制品不可复现，不适用需要严格重现的回归。
+     *
+     * 只拉声明的那个制品，**不解析传递依赖**（`isTransitive = false`）：插件运行期依赖该进服务端的
+     * 库目录而非 `plugins/`，自动投放会放错位置；消费方如需运行库仍自行管理。
+     */
+    fun mavenPlugin(coordinate: String) {
+        mutableMavenPlugins += MavenCoordinate.requireValid(coordinate)
     }
 }

@@ -12,7 +12,7 @@ E2E 编排要先把真实「代理 + 后端」拉起来：下载对应平台 / �
 
 - 范围内：
   - **下载 + 缓存**：Paper / Folia / Velocity / Waterfall 经 PaperMC 下载服务 Fill v3（`fill.papermc.io` / `fill-data.papermc.io`）；BungeeCord 经 SpigotMC Jenkins（`hub.spigotmc.org/jenkins`）；Spigot 经受控公共构件源（首源 GetBukkit、不可达时回退 GitHub 镜像）。按 平台 / 版本 / 构建号 缓存到持久缓存目录；hash 校验复用（PaperMC 给 sha256 则校验远端 hash，BungeeCord / Spigot 无远端校验则校验为结构合法 jar，Spigot 另把实际来源 / 版本 / 本地 hash 写入 `source.properties` 并在命中缓存时复核）。
-  - **jar 解析**：给定 平台 + 版本，返回 jar `File`。**优先** [McTestkitEnv] 的 `*_JAR` 覆盖——存在即直接返回该路径、**不发网络**（离线 / CI 逃生口）；版本可由 `*_VERSION` 覆盖（缺省取 [McTestkitDefaults.MINECRAFT_VERSION] / 平台缺省）。
+  - **jar 解析**：给定 平台 + 版本，返回 jar `File`。解析优先级：**①** [McTestkitEnv] 的 `*_JAR` 覆盖——存在即直接返回该路径、**不发网络、也不求值 Maven 来源**（离线 / CI 逃生口）；**②** Maven 坐标来源（`backend/proxy { mavenServer(...) }`，见 ADR-0016）——命中镜像直接复用，否则取坐标解析结果并镜像进 `<mc-testkit-jars>/maven/...`；**③** 内置下载，版本可由 `*_VERSION` 覆盖（缺省取 [McTestkitDefaults.MINECRAFT_VERSION] / 平台缺省）。
   - **启动助手（精简）**：给定 jar + 运行目录 + JVM 参数，以子进程启动 server / proxy，返回 `Process`；pid 落盘供收尾（复用 FR-06 `bot/` 的 pid 收尾思路，但**不改 `bot/` 包**）。启动命令按构件形态选路：自包含 jar（Paper / 代理）与 paperclip 引导件走 `java -jar`；运行目录带注入运行库目录（`server-libraries/`）的 thin jar 走 `java -cp <启动器 jar> <Main-Class>`，由启动器补齐运行库。
 - 不做（范围外）：
   - **不外挂第三方下载库**（架构红线，ADR-0001）。
@@ -32,7 +32,7 @@ E2E 编排要先把真实「代理 + 后端」拉起来：下载对应平台 / �
 - **Jenkins API** `BungeeCordJenkinsApi`（自实现）：取 `lastSuccessfulBuild` 构建号、拼 artifact 下载 URL。
 - **下载工具** `Downloader`（自实现）+ `Hashing`（自实现）：HTTP 下载到临时文件、sha256 校验。
 - **缓存键 / 路径** `JarCache`（自实现缓存布局）：`<cacheRoot>/<platform>/<version>/<build>.jar` 路径推导（纯函数）；命中且 hash 一致即复用，否则下载。
-- **jar 解析** `ServerJarProvisioner`：编排「env `*_JAR` 覆盖 → 直接返回；否则 env `*_VERSION` / 缺省定版本 → 经对应 API 解析构建 → 缓存命中复用 / 下载」。env 取值经注入的 `(name)->String?` 取值器（纯函数边界，便于「设了 `*_JAR` 就不发网络」单测），不耦合 Gradle `Project`。
+- **jar 解析** `ServerJarProvisioner`：编排「env `*_JAR` 覆盖 → 直接返回；否则 Maven 坐标来源（命中镜像复用 / 解析后镜像）；否则 env `*_VERSION` / 缺省定版本 → 经对应 API 解析构建 → 缓存命中复用 / 下载」。env 取值经注入的 `(name)->String?` 取值器（纯函数边界，便于「设了 `*_JAR` 就不发网络」单测），不耦合 Gradle `Project`。Maven 来源经 [MavenServerJarSource] 惰性接口传入（实现持 Gradle `FileCollection`，不可用 lambda——Kotlin lambda 非 `Serializable`，配置缓存会拒）。
 - **启动助手** `ServerLauncher`（自实现，用 `ProcessBuilder`）：用 `java.home` 的 `java` 可执行 + JVM 参数 + jar 在运行目录后台启动，返回 `Process`；pid 落盘（复用 FR-06 同款 pid 文件思路，本包自带 `provisionPidFile`，不改 `bot/`）。启动命令按构件形态选路：自包含 jar（Paper / 代理）与 paperclip 引导件走 `-jar`；运行目录下带注入运行库目录（`server-libraries/`）的 thin jar 走 `-cp <启动器 jar> <Main-Class>`，启动器只含一份 `Class-Path` 清单（服务端 jar 在前、运行库按相对路径升序，条目按 UTF-8 百分号编码），该目录缺失 / 读不出 `Main-Class` 时退回 `-jar`。paperclip 引导件按包前缀 `io.papermc.paperclip.` 识别，覆盖实测两个入口名（1.8.8–1.17.1 `Paperclip`、1.18.2+ `Main`）。**注入运行库目录刻意与 paperclip 自有的 `libraries/` 分离**：后者是 paperclip 运行期下载目标且跨轮保留，扫它会把上一轮下载的服务端库接进下一轮 classpath（实测 1.16.5 因 snakeyaml 2.6 报 `NoSuchMethodError` 启动即崩）。
 
 依赖方向：本包只依赖 `contract/`（env 名 / 缺省版本）与 JDK；不反依赖消费项目 / `template/`；不外挂第三方下载库、不引第三方 JSON / HTTP。下载 / 运行核心全部由维护者自实现，整包随 mc-testkit 本体以 MIT 发布。
@@ -52,7 +52,7 @@ E2E 编排要先把真实「代理 + 后端」拉起来：下载对应平台 / �
 - 新增单测红 → 绿；`./gradlew build` 全绿（validatePlugins + 全部测试，FR-01/03/06 既有测试不回归）。
 - 启动选路：运行目录带注入运行库目录（`server-libraries/`）的 thin jar 经启动器 jar 拉起，`Class-Path` 含服务端 jar 与全部注入运行库且按相对路径升序；路径含空格 / 中文时按 UTF-8 百分号编码，条目不被截断（子进程能加载到入口类）。自包含 jar、paperclip 主入口（含 1.8.8–1.17.1 的 `io.papermc.paperclip.Paperclip`）、读不出 `Main-Class` 三种情况退回 `-jar`；**paperclip 自有的 `libraries/` 不参与 classpath**（跨轮残留不得进入下一轮）；启动前清理上一轮残留的启动器 jar。
 - Spigot 供应：按版本下载受控公共构件（首源失败回退镜像），下载后校验结构合法 jar 并把实际来源 / 版本 / 本地 SHA-256 写入缓存目录 `source.properties`；命中缓存时复核这三项与当前文件哈希；全部源不可达抛中文错误；设 `MC_TESTKIT_E2E_SPIGOT_JAR` 时全程不发网络。
-- jar 解析：设某 `*_JAR` 环境变量时返回该覆盖路径且**全程不发网络**；`*_VERSION` 覆盖被采纳。
+- jar 解析：设某 `*_JAR` 环境变量时返回该覆盖路径且**全程不发网络**；`*_VERSION` 覆盖被采纳；Maven 坐标来源命中镜像时**不创建解析配置、不触仓库**（配置缓存可存储），未命中时解析后镜像、镜像内容与来源逐字节一致。
 - JSON / 构建 / URL 解析：对固定样本文本解析出正确构建号 / 下载名 / sha256 / 下载 URL。
 - 缓存路径：按 平台 / 版本 / 构建号推导稳定、不写死本机绝对路径（缓存根由调用方注入）。
 - **实机维度（需用户在 FR-08 备齐网络 / JDK 环境确认）**：真实经 PaperMC / Jenkins / 受控公共构件源下载六个平台的 jar、缓存复用、子进程起服 / 起代理成功——单测不打网络、不替代，标「待 FR-08 实机验」。

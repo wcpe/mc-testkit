@@ -41,12 +41,29 @@ class DependencyInjectionsTest {
         val ex = assertFailsWith<GradleException> {
             DependencyInjections.requireAll(
                 injections = linkedMapOf("ServerTemplate" to false),
-                hintEnvByName = mapOf("ServerTemplate" to McTestkitEnv.SERVER_TEMPLATE_DIR),
+                hintTextByName = mapOf(
+                    "ServerTemplate" to "可经环境变量 ${McTestkitEnv.SERVER_TEMPLATE_DIR} 提供其 jar / 路径",
+                ),
             )
         }
         assertTrue(
             ex.message!!.contains(McTestkitEnv.SERVER_TEMPLATE_DIR),
             "报错应给出对应环境变量逃生口：${ex.message}",
+        )
+    }
+
+    @Test
+    @DisplayName("缺失注入项带补充说明时错误应原样写进括号")
+    fun missingInjectionErrorIncludesCustomHintText() {
+        val ex = assertFailsWith<GradleException> {
+            DependencyInjections.requireAll(
+                injections = linkedMapOf("com.example:missing:1.0.0" to false),
+                hintTextByName = mapOf("com.example:missing:1.0.0" to "未解析到该坐标的本地制品"),
+            )
+        }
+        assertTrue(
+            ex.message!!.contains("com.example:missing:1.0.0（未解析到该坐标的本地制品）"),
+            "报错应把补充说明原样写进该项括号：${ex.message}",
         )
     }
 

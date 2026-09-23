@@ -6,6 +6,8 @@
 
 ## [未发布]
 
+## [0.11.0] - 2026-09-23
+
 ### 新增
 - **`dependencies { mavenPlugin("group:artifact:version") }`：依赖插件按 Maven 坐标注入（加法、非破坏）**：消费方可直接写坐标，框架自动解析到本地 jar 并落后端运行目录 `plugins/<制品名>.jar`（如 `foo-plugin-1.2.0.jar`）——此前值只支持「环境变量名或路径」，制品不随公开仓库分发的场景只能本机放文件 + 设环境变量，CI 里没有那个文件就跑不了。解析**交给 Gradle 原生依赖解析**（不自己解析 POM、不做传递依赖、不管仓库与鉴权，见 ADR-0015），仓库用消费方当前生效的仓库；`isTransitive = false` 只拉声明的那个制品（插件运行期依赖应进服务端库目录而非 `plugins/`）。坐标配置期校验三段非空并拒绝动态版本与版本区间（`+` / `latest.*` / `[1.0,2.0)`），`-SNAPSHOT` 放行（不可复现）。坐标解析不到时 `prepareE2e*` 抛中文错误并归因（坐标拼写 / 该坐标的仓库未在本构建声明 / 拉取凭据缺失），不留半铺运行目录。配置缓存兼容：坐标只被真正需要注入依赖的任务捕获，`stop<Key>Serve` / `syncE2eRuntimeCache` / `npmInstallBot` 等永不解析坐标、永不访问仓库；`pluginUnderTest` / `plugin(...)` 语义与优先级不变。
 - **`backend/proxy { mavenServer("group:artifact:version") }`：服务端 / 代理 jar 也支持按 Maven 坐标解析（加法、非破坏，见 ADR-0016）**：此前服务端 jar 只能内置下载或经 env `*_JAR` 本机放文件——制品不随公开仓库分发（或需固定 / 自建构建，如从私有仓库取 `io.papermc.paper:paper:1.12.2`）时 CI 跑不了。现可直接写坐标，解析**交给 Gradle 原生依赖解析**（`isTransitive = false`，不自己解析 POM / 不做传递依赖 / 不管仓库与鉴权）。解析优先级 **env `*_JAR` 覆盖 > `mavenServer(坐标)` > 内置下载**；`*_JAR` 覆盖时**不会求值坐标**（仍零网络），`version` 字段仍单独驱动配置生成与 Java 运行时选择。坐标解析出的 jar 会**镜像**进 `<gradleUserHome>/caches/mc-testkit-jars/maven/<group 路径>/<artifact>/<version>/…`（原子落盘），**注册期先查镜像**：命中即不创建任何解析配置、该任务被调度时零仓库访问且可离线（配置缓存照常存储 / 重用）；镜像被删时执行期抛中文错误提示重跑，绝不静默用错文件。CI 为该镜像子树在 `e2e.yml` 增加独立 `actions/cache` 条目。

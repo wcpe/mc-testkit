@@ -1,6 +1,7 @@
 # mc-testkit
 
 [![CI](https://github.com/wcpe/mc-testkit/actions/workflows/ci.yml/badge.svg)](https://github.com/wcpe/mc-testkit/actions/workflows/ci.yml)
+[![Release](https://github.com/wcpe/mc-testkit/actions/workflows/release.yml/badge.svg)](https://github.com/wcpe/mc-testkit/actions/workflows/release.yml)
 [![E2E](https://github.com/wcpe/mc-testkit/actions/workflows/e2e.yml/badge.svg)](https://github.com/wcpe/mc-testkit/actions/workflows/e2e.yml)
 [![Release](https://img.shields.io/github/v/release/wcpe/mc-testkit)](https://github.com/wcpe/mc-testkit/releases/latest)
 [![Maven](https://img.shields.io/badge/maven.wcpe.top-top.wcpe.mc-blue)](https://maven.wcpe.top/repository/maven-releases/)
@@ -38,7 +39,7 @@ mcTestkit {
 - 内置下载并运行 Paper / Folia / Spigot 与 Velocity / Waterfall / BungeeCord（自实现，不外挂第三方下载库）
 - Paper 代表版本 1.7.10 – 1.21.1，含版本感知配置与 Java 运行时选择
 - Velocity modern forwarding、集群 `/server` 切换、崩溃接管 fallback
-- 持久手测 `serve`：同一拓扑挂起供真人客户端连入，Ctrl+C / `stop<Key>Serve` 三重收尾
+- 持久手测 `serve`：同一拓扑挂起供真人客户端连入，Ctrl+C / `stop<Key>Serve` 三重收尾；挂住期间**可直接在终端敲服务端控制台命令**（`stop` / `say` / `op`，集群经代理 `end` / `send`）
 
 **机器人与判定**
 - mineflayer 机器人驱动场景；结果文件为唯一权威（PASS/FAIL）

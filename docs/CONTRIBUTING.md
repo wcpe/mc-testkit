@@ -78,15 +78,36 @@
 
 ## 8. 分支模型与发布渠道
 
-采用 GitHub Flow（适合小团队 + 持续发布）：
+采用 GitHub Flow（适合小团队 + 持续发布），并以**分支保护 + CI 门禁**强制执行：
 
-- **`main`**：始终可发布、受保护；改动经 PR 合入（PR 模板含防漂移自检）。main 每次推送由 CI 发**快照**（`latest` 预发布，见对应版本 ADR 与 `sdd-publish-snapshot` 技能）。
-- **`feature/*`、`fix/*`、`refactor/*`**：短生命周期分支，做完发 PR 回 main。
-- **稳定发布**：在 main 打 `vX.Y.Z` tag（`sdd-release-version` 技能），CI 据 tag 出正式 Release。
-- **`hotfix/*`**：从出问题的发布 tag 切分支紧急修，出补丁版后**回流 main**（`sdd-hotfix` 技能）。
-- **回滚**优先 `git revert`，不重写已 push 历史（`sdd-rollback-change` 技能）。
+- **`master`（默认分支，受保护）**：**禁止直接推送**——一切改动（功能、修复、重构、文档、发版）都必须经 PR 合入。
+  - 分支保护要求 **PR + 必需状态检查全绿**：`构建与测试（插件）`、`静态检查（模板 bot）`（即 `.github/workflows/ci.yml` 的两个 job）。
+  - 强制线性的合入方式由仓库设置决定；无论哪种，合并前检查必须为绿。
+  - 例外只有仓库管理员在紧急情况下显式绕过保护，事后须在 PR / Issue 记录原因。
+- **`feature/*`、`fix/*`、`refactor/*`、`docs/*`、`ci/*`**：短生命周期分支，做完发 PR 回 `master`。
+- **回滚**优先 `git revert`（同样走 PR），不重写已 push 历史。
+- **`hotfix/*`**：从出问题的发布 tag 切分支紧急修，出补丁版后**回流 `master`**。
 
-版本号唯一来源是根 `VERSION` 文件，构建把它注入插件构件（plugin jar 的版本元数据），恒一致。
+### 8.1 发版：打 tag 触发 CI，本地不再手工发布
+
+版本号唯一来源仍是根 `VERSION` 文件；发布动作**全部由 CI 完成**，维护者不再本地跑 `./gradlew publish`、不手工建 Release、不手抄 CHANGELOG。
+
+1. **定稿（发版 PR）**：在 PR 里把 `CHANGELOG.md` 的 `## [未发布]` 段定稿为 `## [X.Y.Z] - YYYY-MM-DD`，并把根 `VERSION` 改成 `X.Y.Z`（SemVer：破坏性变更升 major）。PR 模板里有「是否为发版 PR」勾选项。
+2. **合入**：PR 经 CI 全绿后合入 `master`。
+3. **打 tag（唯一的手工动作）**：`git tag vX.Y.Z && git push origin vX.Y.Z`（或 `gh release create` 前先打 tag）。
+4. **CI 自动发布**：tag 推送触发 [release.yml](../.github/workflows/release.yml)，依次执行
+   - 校验 **tag 与 `VERSION` 一致**、且 `CHANGELOG` 已有该版本段（不一致即失败，绝不发布错版本）；
+   - 再跑一遍验证门（`./gradlew build`），兜底防止 tag 打在门禁未过的提交上；
+   - 用仓库密钥（`release` environment 的 `WCPE_MAVEN_USERNAME` / `WCPE_MAVEN_PASSWORD`）发布构件到 **maven.wcpe.top**；
+   - 取 `CHANGELOG` 该版本段作为正文，建 **GitHub Release**。
+
+> **为什么是「打 tag 触发」而不是「合并即自动发版」**：GitHub Actions 有一个硬约束——用 `GITHUB_TOKEN` 创建的 tag **不会**触发其它 workflow（防递归）。因此「CI 自己打 tag 再自动发布」必须引入一个长期 PAT（额外凭据与轮换负担）。这里选择零额外凭据的形态：**tag 由人打（一条命令），发布由 CI 全自动**——需要人工判断的只有「什么时候发、发哪个版本号」。
+
+> **`GITHUB_TOKEN` 与密钥**：发布凭据只存在 GitHub 仓库 secret / environment，不入库（见 `SECURITY.md`）。`release.yml` 在缺凭据时给出中文报错与配置指引。
+
+### 8.2 快照（可选）
+
+需要「最新 master 的预发布构件」时，可在 `VERSION` 为 `X.Y.Z-SNAPSHOT` 时经 `./gradlew publish` 发到 `maven-snapshots` 仓库（凭据同 §8.1）；该动作目前不在 CI 中自动执行。
 
 ## 9. 文档如何长期演进（本次会话之后）
 

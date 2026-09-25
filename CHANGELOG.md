@@ -6,6 +6,13 @@
 
 ## [未发布]
 
+### 新增
+- **下载/运行基建开放为公开编程 API（ADR-0017）**：此前只能整体消费编排（声明拓扑与场景，框架全包下载→起服→跑 bot→判定→收尾），有一类消费方用不上它——例如驱动真实游戏客户端的验收编排、或需长期持有进程的 `BuildService` 形态自有编排。这类消费方的**下载与起服**层与框架高度重复却够不着：`PaperDownloadsApi` / `Downloader` / `WaterfallModuleProvisioner` / `File.sha256()` 此前是 Kotlin `internal`（跨构建不可访问；它们在字节码层其实已是 `public`，仅元数据标记挡住了消费方）。现开放这四个，连同已公开的 `ServerJarProvisioner` / `ServerLauncher` / `JavaRuntimeSelector`，消费方可**只复用底层、自建编排**而不必接受整体编排模型。仍留内部：`ProvisionPlatform`（源码已注明不对外暴露，DSL 侧有 `dsl/Platforms` 作对外平台枚举）、`JarProvisionService` / `JarCache`（签名依赖 `ProvisionPlatform`，而对外能力已由 `ServerJarProvisioner` 以 `String` 平台完整覆盖）。公开面即契约（签名变更按 SemVer 升 major）。
+- **`ExternalArtifactSource` + `ExternalArtifactProvisioner`：声明式外部制品源（ADR-0017）**：内置下载只覆盖六个平台，而验收常需注入平台枚举之外的第三方插件——此前只能各自手写「查 API → 解析地址 → 下载 → 缓存」，且没有 sha256 校验与来源溯源。现支持两种形态：`FixedUrl`（地址已知且稳定，如 Hangar 的固定版本下载端点）与 `ApiResolved`（地址须先查 API，如返回 URL 内嵌内容哈希、随再上传而变）；配套 `ArtifactUrlResolver`（响应文本 → 下载地址的纯函数，便利实现 `lastUrlMatch` 取末项，对应「版本数组按升序、末项即最新」的常见约定）。缓存落 `<cacheRoot>/external/<id>/<fileName>`（与 `<platform>/`、`maven/` 并列，运维可辨识、可清理），**命中缓存不发网络**——这条对 API 型来源尤其关键，否则离线 / 弱网复验会被外网波动阻塞；落盘走同目录临时文件 + `ATOMIC_MOVE`，并发读者只见「无文件」或「完整文件」。**刻意不做**（守 ADR-0001「保持精简」）：不实现市场 API / 搜索 / 版本列表 / 鉴权管理，不做依赖传递解析。可序列化是硬约束（消费方会捕获进任务动作，配置缓存拒不可序列化者），故 `lastUrlMatch` 用具名类而非 lambda 实现。
+
+### 修复
+- **`ArtifactUrlResolver` 等公开类型保证可序列化往返**：Kotlin SAM 转换产出的 lambda **不是** `Serializable`，直接以 lambda 实现解析器会静默埋雷——在自己工程里单测正常，一旦被消费方捕获进 `BuildService` 参数或任务动作，配置缓存存储即失败（消费方多启用严格模式 `problems=fail`，表现为构建直接失败且归因困难）。故 `lastUrlMatch` 用具名类 `LastUrlMatchResolver` 实现，并以序列化往返单测锁定该契约。
+
 ## [0.11.0] - 2026-09-23
 
 ### 新增

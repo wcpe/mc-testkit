@@ -25,8 +25,11 @@ private const val MAX_TEXT_RESPONSE_BYTES = 16 * 1024 * 1024
  * 把远端 URL 流式写入目标文件；跟随重定向；遵守 User-Agent。不带进度条 / 不耦合 Gradle
  * （上游用的 Gradle `ProgressLogger` 是内部 API，本项目精简掉，符合"下载模块保持精简"）。
  * 仅 JDK [HttpURLConnection]，不引第三方 HTTP 库。
+ *
+ * **对外公开（ADR-0017）**：消费方可直接复用它做制品下载 / 取文本，自带 UA、重定向跟随、
+ * 超时与响应体上限。签名变更按 SemVer 升 major。
  */
-internal object Downloader {
+object Downloader {
 
     /**
      * 下载 [url] 到 [destination]（覆盖已存在文件）。

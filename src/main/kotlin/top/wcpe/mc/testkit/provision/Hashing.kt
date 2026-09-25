@@ -8,8 +8,10 @@ import java.security.MessageDigest
  *
  * 用于下载缓存的 hash 校验复用：命中缓存时重算本地文件 hash 与记录值比对，
  * 不一致则失效重下（防本地损坏）。
+ *
+ * **对外公开（ADR-0017）**：消费方下载制品后可用它校验完整性。签名变更按 SemVer 升 major。
  */
-internal fun File.sha256(): String {
+fun File.sha256(): String {
     val digest = MessageDigest.getInstance("SHA-256")
     inputStream().use { input ->
         val buffer = ByteArray(8192)

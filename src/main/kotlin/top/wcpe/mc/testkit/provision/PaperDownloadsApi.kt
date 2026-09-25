@@ -1,7 +1,7 @@
 package top.wcpe.mc.testkit.provision
 
-/** PaperMC 下载 API 的某构建产物（下载名 + sha256 + 直接下载 URL）。 */
-internal data class PaperDownload(
+/** PaperMC 下载 API 的某构建产物（下载名 + sha256 + 直接下载 URL）。对外公开（ADR-0017）。 */
+data class PaperDownload(
     val name: String,
     val sha256: String,
     val url: String,
@@ -14,9 +14,12 @@ internal data class PaperDownload(
  * "取远端文本"经注入的 [fetchText] 完成（默认走 [Downloader.fetchText]），解析逻辑（[parseLatestBuild] /
  * [parseDownload]）是**纯函数**，可喂固定样本文本单测、不打网络。
  *
+ * **对外公开（ADR-0017）**：消费方可用它解析任意 PaperMC 项目（含 `module:*` 下载项）的构建产物。
+ * 签名变更按 SemVer 升 major。
+ *
  * @property fetchText 取 URL 文本的函数（注入以便单测替身；默认真实 HTTP）。
  */
-internal class PaperDownloadsApi(
+class PaperDownloadsApi(
     private val fetchText: (String) -> String = Downloader::fetchText,
 ) {
     companion object {

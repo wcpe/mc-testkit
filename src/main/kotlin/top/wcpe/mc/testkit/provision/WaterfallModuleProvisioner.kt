@@ -9,8 +9,11 @@ import java.nio.file.StandardCopyOption
  *
  * Waterfall 启动时会把 `/server` 等命令作为模块加载；旧版本运行期仍尝试从已 sunset 的 PaperMC v2
  * 端点自下载模块。这里在启动代理前经 Fill v3 预置 `module:*` 下载项，避免 `/server` 模块缺失。
+ *
+ * **对外公开（ADR-0017）**：消费方自建代理编排时可直接调用，省去手写 `module:*` 解析与预置。
+ * 签名变更按 SemVer 升 major。
  */
-internal class WaterfallModuleProvisioner(
+class WaterfallModuleProvisioner(
     private val api: PaperDownloadsApi = PaperDownloadsApi(),
     private val download: (String, File, (String) -> Unit) -> Unit = { url, dest, log -> Downloader.download(url, dest, log) },
 ) {

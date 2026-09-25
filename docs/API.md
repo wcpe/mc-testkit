@@ -239,3 +239,66 @@ v1 **不做** `pluginUnderTest` 的坐标形式（解析机制可复用，待真
 - **`@wcpe/mc-testkit-bot`**：`@wcpe/mc-testkit-bot@0.1.0`（npm）。mineflayer 公共内核 `runBot({ scenarios })`（端口探测 / 重试 / action 分发 / 断线重连 / 优雅收尾），子路径 `@wcpe/mc-testkit-bot/lib/{messages,random,normalize,env}`。
 
 **消费方接线**：桩插件 `implementation("top.wcpe.mc:harness-core:0.1.1")`（打进插件 jar），继承 `McTestkitHarnessPlugin` 写业务场景；机器人 `npm i @wcpe/mc-testkit-bot`，入口登记 action → 场景驱动表。`template/` 是这两个构件的示例消费者。
+
+## 5. 编程 API：复用下载/运行基建（FR-23，ADR-0017）
+
+除 DSL 与自动任务外，插件还**公开**了内部的下载与运行能力。适用场景：消费方有自己的编排模型（如驱动真实游戏客户端的验收编排、长期持有进程的 `BuildService`），用不上整体编排，但想复用下载 / 起服 / 缓存 / 校验。
+
+```kotlin
+import top.wcpe.mc.testkit.provision.*
+import top.wcpe.mc.testkit.config.ServerProperties
+
+// 平台 + 版本 → jar（含 `*_JAR` 覆盖 / Maven 坐标 / 内置下载三级裁决；缓存复用）
+val provisioner = ServerJarProvisioner.create(cacheRoot) { System.getenv(it) }
+val paper = provisioner.resolve("paper", "1.20.1") { logger.lifecycle(it) }
+
+// Fill v3 客户端：解析任意 PaperMC 项目的构建与下载项（含 `module:*`）
+val api = PaperDownloadsApi()
+val build = api.latestBuild("waterfall", "1.20")
+val modules = api.downloads("waterfall", "1.20", build)
+
+// Waterfall `module:*` 预置（保 `/server` 切服可用）
+WaterfallModuleProvisioner().provision("1.20", proxyRunDir)
+
+// 起服（返回 Process；stdin 保持打开，可向控制台注入命令）
+val process = ServerLauncher.launch(paper, runDir, "s1", jvmArgs = listOf("-Xmx1G"))
+
+// 其它：Java 运行时选择 / 服务端属性 / 完整性校验
+JavaRuntimeSelector.executable("1.20.1") { System.getenv(it) }
+ServerProperties.edit(runDir, mapOf("server-port" to "25565"))
+val digest = paper.sha256()
+```
+
+**外部制品源**（平台枚举之外的第三方制品，如 Hangar 固定版本、API 动态解析的最新版地址）：
+
+```kotlin
+val external = ExternalArtifactProvisioner(cacheRoot)
+
+// ① 固定 URL
+val fixed = ExternalArtifactSource.FixedUrl(
+    id = "placeholderapi",
+    fileName = "PlaceholderAPI-2.12.2.jar",
+    url = "https://hangar.papermc.io/api/v1/projects/PlaceholderAPI/versions/2.12.2/PAPER/download",
+)
+
+// ② API 动态解析：先取 apiUrl 响应文本，再交纯函数 resolver 解析地址
+val resolved = ExternalArtifactSource.ApiResolved(
+    id = "papi-expansion-player",
+    fileName = "PAPI-Expansion-Player.jar",
+    apiUrl = "https://ecloud.placeholderapi.com/api/v3/?platform=bukkit",
+    // 取最后一个匹配（版本数组按升序，末项即最新；避免硬编码带内容哈希的地址）
+    resolver = ArtifactUrlResolver.lastUrlMatch(""""url"\s*:\s*"([^"]*PAPI-Expansion-Player[^"]*\.jar)""""),
+)
+
+val jar = external.provision(resolved) { logger.lifecycle(it) }   // 命中缓存不发网络
+val path = external.cacheFile(fixed)                              // 纯函数推导，不下载
+```
+
+**公开面**：`ServerJarProvisioner`、`ServerLauncher`、`JavaRuntimeSelector`、`PaperDownloadsApi` / `PaperDownload`、`Downloader`、`WaterfallModuleProvisioner`、`ExternalArtifactProvisioner` / `ExternalArtifactSource` / `ArtifactUrlResolver`、`File.sha256()`。
+
+**契约与约束**：
+
+- 公开面**即对外契约**：签名变更按 SemVer 升 major；新增为加法演进。
+- **须可序列化**：消费方会把这些对象捕获进任务动作 / `BuildService` 参数，配置缓存拒不可序列化者。故实现自定义解析器时**不要用 Kotlin lambda**（SAM 转换结果不是 `Serializable`）——用具名类或 object 表达式，或直接用 `ArtifactUrlResolver.lastUrlMatch(...)`。
+- **不是市场客户端**：外部源刻意不做市场 API / 搜索 / 版本列表 / 鉴权管理，也不做依赖传递解析——只拉你声明的那个制品。需要鉴权的源请自行保证 URL 可达。
+- 未公开（`internal`）：`ProvisionPlatform`（对外平台用 `dsl/Platforms`）、`JarProvisionService` / `JarCache`（其能力已由 `ServerJarProvisioner` 以 `String` 平台完整覆盖）。

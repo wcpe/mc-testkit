@@ -145,10 +145,11 @@ class ExternalArtifactProvisionerTest {
     }
 
     /** 序列化往返：配置缓存要求任务动作捕获图可序列化，故这些类型须能经得起一次往返。 */
+    @Suppress("UNCHECKED_CAST")
     private fun <T> roundTrip(value: T): T {
         val buffer = java.io.ByteArrayOutputStream()
         java.io.ObjectOutputStream(buffer).use { it.writeObject(value) }
         return java.io.ObjectInputStream(java.io.ByteArrayInputStream(buffer.toByteArray()))
-            .use { @Suppress("UNCHECKED_CAST") (it.readObject() as T) }
+            .use { it.readObject() as T }
     }
 }

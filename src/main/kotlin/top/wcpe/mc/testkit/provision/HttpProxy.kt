@@ -145,7 +145,10 @@ internal object HttpProxy {
             pattern.forEach { char ->
                 when {
                     char == '*' -> append(".*")
-                    char in REGEX_METACHARACTERS -> { append('\\'); append(char) }
+                    char in REGEX_METACHARACTERS -> {
+                        append('\\')
+                        append(char)
+                    }
                     else -> append(char)
                 }
             }

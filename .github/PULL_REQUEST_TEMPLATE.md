@@ -1,3 +1,8 @@
+<!--
+master 受分支保护、禁止直接推送：一切改动（含发版）都经本 PR 合入（见 docs/CONTRIBUTING.md §8）。
+CI（`.github/workflows/ci.yml`）必须全绿方可合并；发版另经打 `vX.Y.Z` tag 触发 release.yml。
+-->
+
 ## 变更说明
 <!-- 这次改了什么、为什么。关联需求（PRD）或 Issue。 -->
 
@@ -16,6 +21,11 @@
 - [ ] 架构决策：如有，已写新 ADR（推翻旧决策则标记取代，不删）
 - [ ] CHANGELOG：用户可见变更已记入未发布段
 - [ ] 提交规范：中文 Conventional Commits、无 AI 署名
+
+## 本 PR 是否为发版 PR
+<!-- 发版 PR = 把 CHANGELOG 未发布段定稿为 '## [X.Y.Z] - YYYY-MM-DD' 并把根 VERSION 改成 X.Y.Z。 -->
+- [ ] 不是
+- [ ] 是 → 合入 master 后由维护者打 `vX.Y.Z` tag，CI 自动发布到 maven.wcpe.top 并建 GitHub Release（本 PR 无需手工发布）
 
 ## 破坏性变更 / 迁移
 <!-- 如有对外 API / 配置 / 数据模型的破坏性变更，写明影响与迁移步骤；否则填"无"。 -->

@@ -4,7 +4,7 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.12.0] - 2026-09-25
 
 ### 新增
 - **下载/运行基建开放为公开编程 API（ADR-0017）**：此前只能整体消费编排（声明拓扑与场景，框架全包下载→起服→跑 bot→判定→收尾），有一类消费方用不上它——例如驱动真实游戏客户端的验收编排、或需长期持有进程的 `BuildService` 形态自有编排。这类消费方的**下载与起服**层与框架高度重复却够不着：`PaperDownloadsApi` / `Downloader` / `WaterfallModuleProvisioner` / `File.sha256()` 此前是 Kotlin `internal`（跨构建不可访问；它们在字节码层其实已是 `public`，仅元数据标记挡住了消费方）。现开放这四个，连同已公开的 `ServerJarProvisioner` / `ServerLauncher` / `JavaRuntimeSelector`，消费方可**只复用底层、自建编排**而不必接受整体编排模型。仍留内部：`ProvisionPlatform`（源码已注明不对外暴露，DSL 侧有 `dsl/Platforms` 作对外平台枚举）、`JarProvisionService` / `JarCache`（签名依赖 `ProvisionPlatform`，而对外能力已由 `ServerJarProvisioner` 以 `String` 平台完整覆盖）。公开面即契约（签名变更按 SemVer 升 major）。

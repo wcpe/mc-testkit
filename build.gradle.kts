@@ -47,12 +47,28 @@ gradlePlugin {
 // Kotlin 语言/API 版本锁 1.9：保证构件同时被 K1（Gradle 8.x / Kotlin 1.9）与
 // K2（Gradle 9.x / Kotlin 2.x）消费方加载（ADR-0005）。
 // 注意：kotlin-dsl 插件会把语言/API 版本钉到 1.8（为预编译脚本前向兼容），需在**任务级**
-// 显式覆盖才会生效（configureEach 晚于 kotlin-dsl 的配置，故此处会赢）。jvmTarget 跟随
-// kotlin-dsl 默认以求最大兼容，不擅自抬高。
+// 显式覆盖才会生效（configureEach 晚于 kotlin-dsl 的配置，故此处会赢）。
+//
+// 目标字节码**显式钉到 Java 17**（语言/API 版本锁的同款理由，覆盖 gradle/java 层的默认）：
+// 此前 jvmTarget 跟随构建机的 JDK——用 JDK 21 构建产出 Java 21 字节码（class major 65）与
+// `org.gradle.jvm.version=21` 元数据，用 JDK 17 构建产出 Java 17；同一份源码在不同机器产出
+// 不兼容的构件。实测 JDK 17 消费方解析已发布的 0.12.0 直接失败
+// （"only compatible with JVM runtime version 21 or newer"）。钉死后构件与构建机脱钩：
+// 消费方（Gradle 8.9 及插件的 CI 均为 JDK 17）稳定可用。
+// 说明：实现用到 ProcessHandle / Process.pid()（Java 9+），故不能钉到 8；17 是 CI 与
+// Gradle 8.9/9.x 的共同基线，取它作兼容下限。
+val pluginJvmTarget = JavaVersion.VERSION_17
+
+java {
+    sourceCompatibility = pluginJvmTarget
+    targetCompatibility = pluginJvmTarget
+}
+
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
     compilerOptions {
         languageVersion.set(KotlinVersion.KOTLIN_1_9)
         apiVersion.set(KotlinVersion.KOTLIN_1_9)
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 

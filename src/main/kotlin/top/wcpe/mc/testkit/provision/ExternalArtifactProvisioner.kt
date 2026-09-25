@@ -140,7 +140,7 @@ class ExternalArtifactProvisioner(private val cacheRoot: File) {
         logger("下载 ${source.fileName}：$url")
         val temp = createTempFile(cached)
         try {
-            Downloader.download(url, temp, logger)
+            Downloader.download(url, temp, logger, DownloadProgress.logging(logger, source.fileName))
             verifyHash(source, temp)
             return moveIntoCache(temp, cached)
         } finally {

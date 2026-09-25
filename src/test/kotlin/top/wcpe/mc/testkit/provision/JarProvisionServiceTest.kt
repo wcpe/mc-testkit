@@ -42,7 +42,7 @@ class JarProvisionServiceTest {
         val service = JarProvisionService(
             cache = cache,
             paperApi = paperApiWithSha("00ff00ff"),
-            download = { _, dest, _ -> dest.writeText("被篡改 / 损坏的内容") },
+            download = { _, dest, _, _ -> dest.writeText("被篡改 / 损坏的内容") },
         )
         val ex = assertFailsWith<IllegalStateException> { service.resolve(paper, "1.20.1") }
         assertTrue(ex.message!!.contains("sha256 校验失败"), "应为中文 sha256 校验错误：${ex.message}")
@@ -62,7 +62,7 @@ class JarProvisionServiceTest {
         val service = JarProvisionService(
             cache = cache,
             paperApi = paperApiWithSha(tmp.sha256()),
-            download = { _, dest, _ -> dest.writeText(content) },
+            download = { _, dest, _, _ -> dest.writeText(content) },
         )
         val resolved = service.resolve(paper, "1.20.1")
         assertTrue(resolved.isFile, "应返回缓存中的完整 jar")
@@ -75,7 +75,7 @@ class JarProvisionServiceTest {
         val cache = freshCache()
         val service = JarProvisionService(
             cache = cache,
-            download = { url, dest, _ ->
+            download = { url, dest, _, _ ->
                 assertEquals("https://download.getbukkit.org/spigot/spigot-1.20.1.jar", url)
                 writeMinimalJar(dest)
             },
@@ -98,7 +98,7 @@ class JarProvisionServiceTest {
         val fallback = "https://github.com/BaldGang/spigot-build/releases/latest/download/spigot-1.20.1.jar"
         val service = JarProvisionService(
             cache = cache,
-            download = { url, dest, _ ->
+            download = { url, dest, _, _ ->
                 if (url.contains("getbukkit")) throw IllegalStateException("TLS 握手失败")
                 assertEquals(fallback, url)
                 writeMinimalJar(dest)

@@ -294,7 +294,22 @@ val jar = external.provision(resolved) { logger.lifecycle(it) }   // 命中缓�
 val path = external.cacheFile(fixed)                              // 纯函数推导，不下载
 ```
 
-**公开面**：`ServerJarProvisioner`、`ServerLauncher`、`JavaRuntimeSelector`、`PaperDownloadsApi` / `PaperDownload`、`Downloader`、`WaterfallModuleProvisioner`、`ExternalArtifactProvisioner` / `ExternalArtifactSource` / `ArtifactUrlResolver`、`File.sha256()`。
+**公开面**：`ServerJarProvisioner`、`ServerLauncher`、`JavaRuntimeSelector`、`PaperDownloadsApi` / `PaperDownload`、`Downloader`、`DownloadProgress`、`WaterfallModuleProvisioner`、`ExternalArtifactProvisioner` / `ExternalArtifactSource` / `ArtifactUrlResolver`、`File.sha256()`。
+
+**HTTP 代理（`Downloader` 自动生效）**：下载与取文本会**自动走你为 Gradle 配的代理**——读系统属性 `http.proxyHost/Port` 与 `https.proxyHost/Port`（即 `gradle.properties` 里 `systemProp.http.proxyHost=…` 的落点；Gradle 会把它施加为守护进程的真实系统属性，而插件正运行其中），未配置该组时回退环境变量 `HTTP_PROXY` / `HTTPS_PROXY`（两种大小写拼法都认，JVM 原生不读它，容器 / CI 常只提供这个）。绕过清单 `http.nonProxyHosts`（Java 语义：`|` 分隔、子域须显式 `*.`）与 `NO_PROXY`（curl 语义：`,` 分隔、裸域名**同时命中其子域**、支持 `*`）都会被遵守。**不接管代理认证**——带 userinfo 的地址只取 host:port；需要认证请用系统属性形式交由 JVM 的 `Authenticator` 处理。未配置任何代理时行为与本功能引入前完全一致（直连）。
+
+**下载进度**：`Downloader.download` 的第四参 `progress`（默认不回报）可拿到字节级进度，用于替代「十几 MB 的 jar 下载期间完全无输出」：
+
+```kotlin
+// 自定义：只要进度条 / 计数
+Downloader.download(url, target, logger) { written, total ->
+    println("$written / ${if (total > 0) total else "?"}")
+}
+// 或直接用框架的按百分比节流日志（推荐：逐块回调约 240 次，不节流会刷屏）
+Downloader.download(url, target, logger, DownloadProgress.logging(logger, "paper-1.20.1.jar"))
+```
+
+框架自身的下载路径（`ServerJarProvisioner` 起服任务、Waterfall 模块预置、外部制品源）**默认已开启**该进度日志，无需消费方额外接线。`total` 为 `-1` 表示总长未知（分块传输 / 无 `Content-Length`），此时 `logging` 退化为按 MB 节流。
 
 **契约与约束**：
 

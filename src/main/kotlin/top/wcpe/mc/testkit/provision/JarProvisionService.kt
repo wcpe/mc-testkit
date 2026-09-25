@@ -28,7 +28,12 @@ internal class JarProvisionService(
     internal val cache: JarCache,
     private val paperApi: PaperDownloadsApi = PaperDownloadsApi(),
     private val bungeeApi: BungeeCordJenkinsApi = BungeeCordJenkinsApi(),
-    private val download: (String, File, (String) -> Unit) -> Unit = { url, dest, log -> Downloader.download(url, dest, log) },
+    private val download: (String, File, String, (String) -> Unit) -> Unit = { url, dest, label, log ->
+        // 默认路径带上进度日志：十几 MB 的服务端 jar 下载期间不再是无输出的干等。
+        // 标签由调用点显式传入（如 `paper-1.20.1-196.jar`）——不能取 `dest.name`：那是带随机
+        // 后缀的临时文件名（`mc-testkit-paper-196-1234567.jar.tmp`），打出来是纯噪音。
+        Downloader.download(url, dest, log, DownloadProgress.logging(log, label))
+    },
 ) {
 
     /**
@@ -64,7 +69,7 @@ internal class JarProvisionService(
             val temp = createTempJar(cached, platform, GETBUKKIT_BUILD)
             try {
                 logger("下载 ${platform.id} $version（公共源 ${index + 1}/${sources.size}）…")
-                download(source, temp, logger)
+                download(source, temp, "${platform.id}-$version.jar", logger)
                 requireValidJar(temp, platform, GETBUKKIT_BUILD)
                 val resolved = moveIntoCache(temp, cached)
                 writeProvenance(provenance, source, version, resolved.sha256())
@@ -94,7 +99,7 @@ internal class JarProvisionService(
         val url = paperApi.downloadUrl(paperDownload)
         val temp = createTempJar(cached, platform, build)
         try {
-            download(url, temp, logger)
+            download(url, temp, "${platform.id}-$version-$build.jar", logger)
             val actual = temp.sha256()
             check(actual == paperDownload.sha256) {
                 "下载产物 sha256 校验失败：期望 ${paperDownload.sha256}，实际 $actual（${platform.id} $version 构建 $build）。"
@@ -118,7 +123,7 @@ internal class JarProvisionService(
         val url = bungeeApi.downloadUrl(build)
         val temp = createTempJar(cached, platform, build)
         try {
-            download(url, temp, logger)
+            download(url, temp, "${platform.id}-$build.jar", logger)
             requireValidJar(temp, platform, build)
             return moveIntoCache(temp, cached)
         } finally {

@@ -25,7 +25,7 @@ class ServerJarProvisionerTest {
         cache = JarCache(File("build/should-not-be-used")),
         paperApi = PaperDownloadsApi(fetchText = { error("不应发网络：PaperMC fetchText 被调用") }),
         bungeeApi = BungeeCordJenkinsApi(fetchText = { error("不应发网络：Jenkins fetchText 被调用") }),
-        download = { _, _, _ -> error("不应发网络：download 被调用") },
+        download = { _, _, _, _ -> error("不应发网络：download 被调用") },
     )
 
     /** 一个真实存在的临时 jar 文件，供 `*_JAR` 覆盖指向。 */
@@ -98,7 +98,7 @@ class ServerJarProvisionerTest {
         val provisioner = ServerJarProvisioner(
             service = JarProvisionService(
                 cache = JarCache(File("build/spigot-provision-${System.nanoTime()}")),
-                download = { url, destination, _ ->
+                download = { url, destination, _, _ ->
                     requestedUrls += url
                     writeMinimalJar(destination)
                 },
@@ -221,7 +221,7 @@ class ServerJarProvisionerTest {
                 """{"id":1,"channel":"STABLE"}"""
             }),
             bungeeApi = BungeeCordJenkinsApi(fetchText = { error("本用例不测 BungeeCord") }),
-            download = { _, _, _ -> error("不应发网络：命中缓存路径不应下载") },
+            download = { _, _, _, _ -> error("不应发网络：命中缓存路径不应下载") },
         )
     }
 
@@ -244,7 +244,7 @@ class ServerJarProvisionerTest {
             cache = cache,
             paperApi = PaperDownloadsApi(fetchText = { error("不应发网络：maven 来源命中时不该触下载") }),
             bungeeApi = BungeeCordJenkinsApi(fetchText = { error("不应发网络：maven 来源命中时不该触下载") }),
-            download = { _, _, _ -> error("不应发网络：maven 来源命中时不该下载") },
+            download = { _, _, _, _ -> error("不应发网络：maven 来源命中时不该下载") },
         )
         return ServerJarProvisioner(service, readEnv, cache)
     }
@@ -367,7 +367,7 @@ class ServerJarProvisionerTest {
         val provisioner = ServerJarProvisioner(
             service = JarProvisionService(
                 cache = cache,
-                download = { url, destination, _ ->
+                download = { url, destination, _, _ ->
                     requestedUrls += url
                     writeMinimalJar(destination)
                 },

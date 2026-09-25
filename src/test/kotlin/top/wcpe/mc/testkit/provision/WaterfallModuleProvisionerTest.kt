@@ -27,7 +27,7 @@ class WaterfallModuleProvisionerTest {
         val downloaded = mutableListOf<String>()
         val provisioner = WaterfallModuleProvisioner(
             api = api,
-            download = { url, dest, _ ->
+            download = { url, dest, _, _ ->
                 downloaded += url
                 dest.writeText(contents.getValue(url))
             },

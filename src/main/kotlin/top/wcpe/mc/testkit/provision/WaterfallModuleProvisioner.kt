@@ -15,7 +15,9 @@ import java.nio.file.StandardCopyOption
  */
 class WaterfallModuleProvisioner(
     private val api: PaperDownloadsApi = PaperDownloadsApi(),
-    private val download: (String, File, (String) -> Unit) -> Unit = { url, dest, log -> Downloader.download(url, dest, log) },
+    private val download: (String, File, String, (String) -> Unit) -> Unit = { url, dest, label, log ->
+        Downloader.download(url, dest, log, DownloadProgress.logging(log, label))
+    },
 ) {
 
     /** 下载并校验指定 Waterfall 版本的全部模块到运行目录的 `modules/` 下。 */
@@ -37,7 +39,7 @@ class WaterfallModuleProvisioner(
         }
         val temp = Files.createTempFile(modulesDir.toPath(), "mc-testkit-$moduleName-", ".jar.tmp").toFile()
         try {
-            download(module.url, temp, logger)
+            download(module.url, temp, module.name, logger)
             val actual = temp.sha256()
             check(actual == module.sha256) { "Waterfall 模块 $moduleName sha256 校验失败：期望 ${module.sha256}，实际 $actual。" }
             moveIntoPlace(temp, destination)

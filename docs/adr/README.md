@@ -24,7 +24,8 @@
 | [0019](0019-release-notes-from-prs.md) | Release 正文改为「GitHub 从 PR 自动生成」（补充 0018） | 已接受 |
 | [0020](0020-scenario-lifecycle-hooks.md) | 场景生命周期钩子：beforeScenario / readyScenario / afterScenario 三个时序点，含失败路径收尾保障 | 已接受 |
 | [0021](0021-serve-console-line-completion.md) | serve 控制台采用「框架侧行级补全 + 历史」，不引入 PTY（补充 0011） | 已接受（PTY 一条被 0022 部分修正） |
-| [0022](0022-serve-attach-console-pty.md) | serve 附加控制台：给服务端分配 PTY，另开终端 attach 得到原版控制台 | 已接受 |
+| [0022](0022-serve-attach-console-pty.md) | serve 附加控制台：给服务端分配 PTY，另开终端 attach 得到原版控制台 | 已被 0023 取代 |
+| [0023](0023-windows-pty4j-console.md) | serve 附加控制台改用 pty4j，跨平台支持 Windows ConPTY | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

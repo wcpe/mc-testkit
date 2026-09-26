@@ -2,7 +2,7 @@
 
 ## 状态
 
-已接受（扩展 [ADR-0011](0011-persistent-serve-mode.md) 的持久手测模式；**修正 [ADR-0021](0021-serve-console-line-completion.md) 中「不引入 PTY」一条**——Gradle 会话内仍以行级补全为默认形态，PTY 只用于新增的附加控制台）
+已被 [ADR-0023](0023-windows-pty4j-console.md) 取代（保留历史正文；默认关闭、attach 协议、单会话、日志清洗与收尾原则仍沿用）
 
 ## 背景
 

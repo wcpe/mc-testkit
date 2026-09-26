@@ -1,5 +1,9 @@
 package top.wcpe.mc.testkit.console
 
+import org.jline.terminal.Attributes
+import org.jline.terminal.Terminal
+import org.jline.terminal.TerminalBuilder
+import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 import kotlin.system.exitProcess
@@ -36,32 +40,66 @@ object ServeConsoleAttach {
             exitProcess(2)
         }
 
-        // 终端设置先存后改：无论退出路径如何，都要恢复，绝不能把用户的终端留在原始模式
-        val saved = stty(listOf("-g"))?.trim()
-        if (saved.isNullOrEmpty()) {
-            println("附加控制台客户端需要 POSIX 终端：读不到终端设置（stty -g 失败）。请在真实终端里运行本命令，不要重定向 / 走管道。")
+        val terminal = openTerminal()
+        if (terminal == null) exitProcess(1)
+        if (!terminal.isRealTerminal()) {
+            closeTerminal(terminal)
+            println("附加控制台客户端需要真实终端：当前输入输出不是 TTY，请在终端窗口中运行本命令，不要重定向或走管道。")
             exitProcess(1)
         }
 
         var failed = false
+        var savedAttributes: Attributes? = null
         try {
-            if (stty(listOf("raw", "-echo")) == null) {
-                println("无法把终端切换到原始模式（stty raw -echo 失败）。")
-                failed = true
-                return
-            }
-            failed = !bridge(options)
+            savedAttributes = terminal.enterRawMode()
+            failed = !bridge(options, terminal)
+        } catch (ex: Throwable) {
+            writeMessage(terminal.output(), "无法把终端切换到原始模式：${ex.message ?: ex.javaClass.simpleName}")
+            failed = true
         } finally {
-            stty(listOf(saved))
-            println()
-            println(if (failed) "附加中断；服务端仍在运行。" else "已断开附加控制台；服务端仍在运行（要停服可敲 stop 或跑 stop<Key>Serve）。")
+            savedAttributes?.let { attributes ->
+                runCatching { terminal.setAttributes(attributes) }
+                    .onFailure { writeMessage(terminal.output(), "恢复终端设置失败：${it.message ?: it.javaClass.simpleName}") }
+            }
+            writeMessage(
+                terminal.output(),
+                if (failed) {
+                    "附加中断；服务端仍在运行。"
+                } else {
+                    "已断开附加控制台；服务端仍在运行（要停服可敲 stop 或跑 stop<Key>Serve）。"
+                },
+            )
+            closeTerminal(terminal)
         }
         if (failed) exitProcess(1)
     }
 
+    /** 创建系统终端；JLine 或其原生支持缺失时给出中文错误。 */
+    private fun openTerminal(): Terminal? = runCatching {
+        TerminalBuilder.builder().system(true).build()
+    }.getOrElse { ex ->
+        println("附加控制台客户端无法加载 JLine terminal/terminal-jna 依赖：${ex.message ?: ex.javaClass.simpleName}。请确认 attach 命令的类路径包含插件及其运行依赖。")
+        null
+    }
+
+    /** 判断 JLine 是否拿到了真实系统终端，而不是 dumb 回退终端（尺寸 0×0 仍可能是合法的 pty 默认值）。 */
+    private fun Terminal.isRealTerminal(): Boolean =
+        type != Terminal.TYPE_DUMB && type != Terminal.TYPE_DUMB_COLOR
+
+    /** 关闭终端并忽略关闭阶段的重复错误。 */
+    private fun closeTerminal(terminal: Terminal) {
+        runCatching { terminal.close() }
+    }
+
+    /** 向当前终端输出中文提示。 */
+    private fun writeMessage(output: OutputStream, message: String) {
+        output.write((message + System.lineSeparator()).toByteArray(Charsets.UTF_8))
+        output.flush()
+    }
+
     /** 连接端点、握手、双向搬运；返回是否正常结束（服务端退出或用户 Ctrl+] 都算正常）。 */
-    private fun bridge(options: Options): Boolean {
-        val (rows, cols) = terminalSize()
+    private fun bridge(options: Options, terminal: Terminal): Boolean {
+        val (rows, cols) = terminalSize(terminal)
         Socket().use { socket ->
             return runCatching {
                 socket.connect(InetSocketAddress(options.host, options.port), CONNECT_TIMEOUT_MILLIS)
@@ -71,22 +109,22 @@ object ServeConsoleAttach {
 
                 val answer = readLine(socket.getInputStream())
                 if (answer == null || !answer.startsWith("OK")) {
-                    println("附加被拒绝：${answer?.removePrefix("REFUSED: ") ?: "服务端未应答"}")
+                    writeMessage(terminal.output(), "附加被拒绝：${answer?.removePrefix("REFUSED: ") ?: "服务端未应答"}")
                     return false
                 }
 
                 val fromServer = socket.getInputStream()
-                val printer = Thread { runCatching { copyAll(fromServer, System.out) } }.apply {
+                val printer = Thread { runCatching { copyAll(fromServer, terminal.output()) } }.apply {
                     isDaemon = true
                     name = "mc-testkit-attach-print"
                     start()
                 }
 
-                println("已接管本终端：Tab 补全 / ↑↓ 历史 / ←→ 编辑 / 颜色均为服务端原生行为；Ctrl+] 断开附加（服务端继续运行）。")
+                writeMessage(terminal.output(), "已接管本终端：Tab 补全 / ↑↓ 历史 / ←→ 编辑 / 颜色均为服务端原生行为；Ctrl+] 断开附加（服务端继续运行）。")
                 var detached = false
                 val buffer = ByteArray(4096)
                 while (!detached) {
-                    val read = System.`in`.read(buffer)
+                    val read = terminal.input().read(buffer)
                     if (read <= 0) break
                     // 逐字节过滤断开键：命中即停，不把它送进服务端
                     var end = read
@@ -106,7 +144,7 @@ object ServeConsoleAttach {
                 printer.join(500)
                 true
             }.getOrElse { ex ->
-                println("附加控制台失败：${ex.message ?: ex.javaClass.simpleName}")
+                writeMessage(terminal.output(), "附加控制台失败：${ex.message ?: ex.javaClass.simpleName}")
                 false
             }
         }
@@ -135,28 +173,11 @@ object ServeConsoleAttach {
     }
 
     /** 本终端尺寸（行、列）；拿不到就给 [UNKNOWN_SIZE]（服务端会跳过尺寸同步）。 */
-    private fun terminalSize(): Pair<Int, Int> {
-        val output = stty(listOf("size"))?.trim().orEmpty()
-        val parts = output.split(Regex("\\s+")).filter { it.isNotEmpty() }
-        val rows = parts.getOrNull(0)?.toIntOrNull() ?: UNKNOWN_SIZE
-        val cols = parts.getOrNull(1)?.toIntOrNull() ?: UNKNOWN_SIZE
+    private fun terminalSize(terminal: Terminal): Pair<Int, Int> {
+        val rows = terminal.height.takeIf { it > 0 } ?: UNKNOWN_SIZE
+        val cols = terminal.width.takeIf { it > 0 } ?: UNKNOWN_SIZE
         return rows to cols
     }
-
-    /**
-     * 对**本终端**执行一次 `stty`（stdin 继承，使 stty 操作的就是这个终端设备），并返回其标准输出。
-     *
-     * stdin 必须继承：`stty` 作用在它 stdin 指向的终端上；换成管道就会去操作「不是终端」的 fd 而失败。
-     */
-    private fun stty(args: List<String>): String? = runCatching {
-        val process = ProcessBuilder(listOf("stty") + args)
-            .redirectInput(ProcessBuilder.Redirect.INHERIT)
-            .redirectErrorStream(true)
-            .start()
-        val output = process.inputStream.bufferedReader().use { it.readText() }
-        process.waitFor()
-        output.takeIf { process.exitValue() == 0 }
-    }.getOrNull()
 
     private fun parseOptions(args: Array<String>): Options? {
         var host = "127.0.0.1"

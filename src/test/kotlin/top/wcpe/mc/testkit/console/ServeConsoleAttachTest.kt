@@ -134,12 +134,17 @@ class ServeConsoleAttachTest {
     fun bridgeBytesAndAllowSingleSession() {
         val serverInput = ByteArrayOutputStream()
         val infos = mutableListOf<String>()
+        val resized = mutableListOf<Pair<Int, Int>>()
         val host = ServeConsoleHost(
             token = "tok",
             serverStdin = { serverInput },
             serverPid = { null },
             info = infos::add,
             warn = {},
+            resizeTerminal = { rows, cols ->
+                resized += rows to cols
+                true
+            },
         )
         host.start()
         try {
@@ -148,6 +153,7 @@ class ServeConsoleAttachTest {
                 client.getOutputStream().write("MC_TESTKIT_ATTACH tok 120 30\n".toByteArray())
                 client.getOutputStream().flush()
                 assertEquals("OK", readLine(client))
+                assertEquals(listOf(30 to 120), resized, "握手尺寸应通过回调传给 PTY")
 
                 // 客户端 → 服务端 stdin
                 client.getOutputStream().write("list\n".toByteArray())

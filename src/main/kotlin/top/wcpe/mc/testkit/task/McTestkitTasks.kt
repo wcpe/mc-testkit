@@ -1748,6 +1748,7 @@ object McTestkitTasks {
             serverStdin = { process.outputStream },
             // 服务端（java）是 PTY 分配器的子进程，pty 设备挂在它身上；分配器自己只有我们的管道
             serverPid = { process.children().findFirst().map { it.pid() }.orElse(process.pid()) },
+            resizeTerminal = { rows, cols -> PseudoTerminal.resize(process, rows, cols) },
             info = { ctx.info(it) },
             warn = { ctx.warn(it) },
         )

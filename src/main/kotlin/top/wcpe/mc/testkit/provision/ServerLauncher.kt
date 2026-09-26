@@ -129,25 +129,25 @@ object ServerLauncher {
         provisionClasspathFile(runDirectory, key).takeIf(File::exists)?.delete()
 
         val bare = buildCommand(jar, runDirectory, key, jvmArgs, serverArgs, javaPath, logger)
-        val command = if (pty) PseudoTerminal.wrapperCommand(bare) else bare
+        val process: Process
         if (pty) {
-            logger("按 PTY 启动（附加控制台）：分配器=${command.first()}，服务端将拿到真终端")
-        }
-
-        val processBuilder = ProcessBuilder(command)
-        processBuilder.directory(runDirectory)
-        if (!pty) {
+            logger("按 pty4j 启动（附加控制台）：优先使用 Windows ConPTY，服务端将拿到真终端")
+            val processEnvironment = System.getenv().toMutableMap().apply { putAll(environment) }
+            process = PseudoTerminal.start(
+                command = bare,
+                directory = runDirectory,
+                environment = processEnvironment,
+            )
+        } else {
+            val processBuilder = ProcessBuilder(bare)
+            processBuilder.directory(runDirectory)
             // 先把 stderr 并入 stdout，再把 stdout 追加到日志文件——故进程 stdout + stderr 都落 <key>.log，
             // 子进程崩溃栈也不会丢（两者顺序不可颠倒：redirectErrorStream 使 redirectError 失效，须靠 stdout 落盘）。
-            // PTY 模式下 stdout 不能重定向：它同时要桥给附加控制台，交由调用方消费。
             processBuilder.redirectErrorStream(true)
             processBuilder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
-        } else {
-            processBuilder.redirectErrorStream(true)
+            processBuilder.environment().putAll(environment)
+            process = processBuilder.start()
         }
-        processBuilder.environment().putAll(environment)
-
-        val process = processBuilder.start()
         // pid 落盘失败则进程无法被按 pid 收尾——宁可立即强杀刚起的进程，也不留下无法收尾的孤儿（收尾红线）
         try {
             pidFile.writeText(process.pid().toString())

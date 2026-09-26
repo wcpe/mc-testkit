@@ -1,6 +1,5 @@
 package top.wcpe.mc.testkit.console
 
-import top.wcpe.mc.testkit.provision.PseudoTerminal
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
@@ -31,9 +30,13 @@ private const val HANDSHAKE_TIMEOUT_MILLIS = 5_000
 internal class ServeConsoleHost(
     val token: String,
     private val serverStdin: () -> OutputStream?,
-    private val serverPid: () -> Long?,
+    /** 兼容旧调用方的进程信息参数；尺寸同步不再通过进程查询实现。 */
+    @Suppress("UNUSED_PARAMETER")
+    serverPid: (() -> Long?)? = null,
     private val info: (String) -> Unit,
     private val warn: (String) -> Unit,
+    /** 由调用方提供的 PTY 尺寸回调，参数顺序为行、列。 */
+    private val resizeTerminal: ((rows: Int, cols: Int) -> Boolean)? = null,
 ) {
 
     private val serverSocket = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
@@ -153,13 +156,13 @@ internal class ServeConsoleHost(
         runCatching { socket.close() }
     }
 
-    /** 按 attach 终端的真实尺寸设置 pty 尺寸（best-effort：查不到设备就跳过，不影响字节桥）。 */
+    /** 按 attach 终端的真实尺寸调用 PTY 回调；没有回调时只保留字节桥。 */
     private fun applyTerminalSize(cols: Int, rows: Int) {
         if (cols <= 0 || rows <= 0) return
-        val pid = serverPid() ?: return
-        val device = PseudoTerminal.terminalDeviceOf(pid) ?: return
-        if (!PseudoTerminal.resize(device, rows, cols)) {
-            warn("未能把 pty 尺寸同步为 $cols×$rows（$device）：终端折行可能不准")
+        val resize = resizeTerminal ?: return
+        val resized = runCatching { resize(rows, cols) }.getOrDefault(false)
+        if (!resized) {
+            warn("未能把 pty 尺寸同步为 $cols×$rows：终端折行可能不准")
         }
     }
 

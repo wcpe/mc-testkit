@@ -6,7 +6,7 @@ import java.io.File
  * 拼出**可直接粘贴**的附加控制台 attach 命令（serve 就绪提示里打印）。
  *
  * 客户端随插件 jar 发布，因此类路径要由框架自己算：进程内的 `java.class.path` 不包含插件自身的类路径
- * （插件跑在 Gradle 的插件类加载器里），故按类源（`codeSource`）取——本客户端类所在的 jar + kotlin-stdlib。
+ * （插件跑在 Gradle 的插件类加载器里），故按类源（`codeSource`）取——本客户端、Kotlin、JLine 与 JNA 运行时所在的构件。
  * 消费方不需要自己拼路径，也不需要知道 jar 在哪里。
  */
 internal object AttachCommand {
@@ -25,12 +25,41 @@ internal object AttachCommand {
     }
 
     /** 当前 JVM 的 java 可执行文件绝对路径。 */
-    fun defaultJavaExecutable(): String =
-        File(File(System.getProperty("java.home"), "bin"), "java").absolutePath
+    fun defaultJavaExecutable(): String {
+        val executable = if (System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)) {
+            "java.exe"
+        } else {
+            "java"
+        }
+        return File(File(System.getProperty("java.home"), "bin"), executable).absolutePath
+    }
 
-    /** 客户端运行所需的类路径：本类所在 jar + kotlin-stdlib（去重、只保留能定位到的）。 */
-    fun classpathEntries(): List<File> = listOf(ServeConsoleAttach::class.java, Unit::class.java)
-        .mapNotNull { it.protectionDomain?.codeSource?.location }
-        .map { File(it.toURI()) }
-        .distinctBy { it.absolutePath }
+    /** 客户端运行所需的类路径：客户端、Kotlin、JLine 与 JNA 的代码源。 */
+    fun classpathEntries(): List<File> {
+        val classes = buildList {
+            add(ServeConsoleAttach::class.java)
+            add(Unit::class.java)
+            JLINE_RUNTIME_CLASS_NAMES.mapNotNullTo(this) { loadClass(it) }
+        }
+        return classes
+            .mapNotNull { it.protectionDomain?.codeSource?.location }
+            .map { File(it.toURI()) }
+            .distinctBy { it.absolutePath }
+    }
+
+    /** 从当前插件类加载器可见的代码中定位运行时依赖，不依赖本机缓存路径。 */
+    private fun loadClass(name: String): Class<*>? = sequenceOf(
+        ServeConsoleAttach::class.java.classLoader,
+        Thread.currentThread().contextClassLoader,
+    ).filterNotNull().mapNotNull { loader ->
+        runCatching { Class.forName(name, false, loader) }.getOrNull()
+    }.firstOrNull()
+
+    private val JLINE_RUNTIME_CLASS_NAMES = listOf(
+        "org.jline.terminal.Terminal",
+        "org.jline.terminal.TerminalBuilder",
+        "org.jline.terminal.spi.JnaSupport",
+        "org.jline.terminal.impl.jna.JnaNativePty",
+        "com.sun.jna.Native",
+    )
 }

@@ -21,6 +21,8 @@ Thumbs.db
 
 # 过程性文档与临时文件（不入库）
 /.tmp/
+# AI 助手的本地计划 / 笔记目录（易朽过程稿，见 .claude/rules/git-commit.md §2.2）
+/.narrafork/
 
 # 环境与密钥（不入库）
 .env

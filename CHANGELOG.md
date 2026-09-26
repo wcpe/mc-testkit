@@ -6,6 +6,13 @@
 
 ## [未发布]
 
+### 修复
+- **serve 挂住后可直接在终端敲服务端控制台命令（FR-17）**：此前 `serve<Key>` 只把后端日志流到 Gradle 控制台，**从不接收终端输入**——挂住后敲 `stop`、`say` 毫无反应，只能另开终端跑 `stop<Key>Serve` 或 Ctrl+C 收尾。根因是框架从未把 stdin 接到子进程（`ServerLauncher` 只重定向 stdout/stderr 到日志文件、serve 任务体只 `waitFor()` 加 tail 日志），而 `docs/API.md` §5 早已承诺「stdin 保持打开，可向控制台注入命令」——属文档承诺未兑现。现新增逐行转发的 stdin 通道：**直连单后端转发到后端**、**经代理 / 集群 serve 转发到代理**（serve 阻塞在代理上，真人入口也是代理）。命令即服务端控制台语义（`stop` / `say` / `op`；代理侧 `end` / `glist` / `send`），框架不解析、不拦截、不代答。结束路径一律安静（无终端读到 EOF、目标已退出的写入失败、线程被中断都不报错；仅「目标仍存活却写不进去」才中文告警）。**只 `serve<Key>` 接线**：`e2e*` 自动化任务**不接收**终端输入，保持结果确定性与可复现。就绪提示补了一句「可直接在本终端输入控制台命令」，让能力可发现。见 `docs/API.md` §3.2.1。
+- **发布的插件构件字节码钉到 Java 17，修复 JDK 17 消费方无法解析**：已发布的 0.12.0 构件是 **Java 21 字节码**（class major 65）、Gradle module metadata 标 `org.gradle.jvm.version=21`，JDK 17 的消费方解析直接失败（`only compatible with JVM runtime version 21 or newer`）。根因是 `jvmTarget` 跟随**构建机的 JDK**：用 JDK 21 构建产出 Java 21、用 JDK 17 构建产出 Java 17，同一份源码在不同机器产出互不兼容的构件——既破坏可复现，也与「Kotlin 语言/API 锁 1.9 以兼容 Gradle 8.x/9.x 消费方」（ADR-0005）的同款兼容意图相悖。现显式钉 `jvmTarget` / `source` / `target` 为 17（不取 8：实现用到 `ProcessHandle` / `Process.pid()` 等 Java 9+ API；17 是 CI 与 Gradle 8.9/9.x 的共同基线）。
+
+### 变更
+- **发布流程改为「分支保护 + PR 门禁 + 打 tag 触发 CI 发布」（ADR-0018）**：此前发布全靠手工——`master` 可直推、CI 里没有任何发布步骤、发版 = 本地 `./gradlew publish` + 本地打 tag + 手工建 Release 并手抄 CHANGELOG 正文，导致门禁可绕过（曾出现发布提交本身在 ktlint 上失败、版本处于门禁红状态）、步骤靠人记、发布凭据散在各人本机。现在：**`master` 禁止直接推送**，一切改动（含发版）经 **PR** 合入，合并前必需检查（`构建与测试（插件）`、`静态检查（模板 bot）`）必须全绿；发版在 PR 里 bump 根 `VERSION` 并把 CHANGELOG 未发布段定稿为 `## [X.Y.Z] - YYYY-MM-DD`，合入后**打 `vX.Y.Z` tag**，由新增的 `release.yml` 自动**校验 tag 与 `VERSION` 一致、且 CHANGELOG 有该段** → **重跑一遍验证门**（兜底防 tag 打在门禁未过的提交上）→ 用 `release` environment 的 secrets 发布构件到 **maven.wcpe.top** → 取 CHANGELOG 该段作正文建 **GitHub Release**。**不做「合并即自动发版」**：GitHub 的 `GITHUB_TOKEN` 创建的 tag 不触发其它 workflow（防递归），要全自动就得引入长期 PAT——这里选择零额外凭据的形态，人只决定「何时发、发哪个版本」。发布凭据只存 GitHub environment secret，不再作为本地正式发布路径。详见 `docs/CONTRIBUTING.md` §8、`docs/OPERATIONS.md` §1.2。
+
 ## [0.12.0] - 2026-09-25
 
 ### 新增

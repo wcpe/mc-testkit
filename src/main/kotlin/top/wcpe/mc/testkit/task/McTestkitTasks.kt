@@ -1158,6 +1158,7 @@ object McTestkitTasks {
         var proxyProcess: Process? = null
         var backendProcess: Process? = null
         var logTail: Thread? = null
+        var consolePump: Thread? = null
         val botProcesses = mutableListOf<Process>()
         // Ctrl+C / JVM 退出兜底：收尾 bot + 后端 + 代理（幂等、吞异常，与 finally 双保险）。先注册以覆盖整段生命周期。
         // 注：hook 在执行期创建、不进配置缓存序列化图；即便被序列化，ctx 亦可序列化（不含 Project）。
@@ -1188,6 +1189,7 @@ object McTestkitTasks {
                     (proxy?.let { "（经代理 ${it.name}）" } ?: "（直连后端 ${backend.name}）") +
                     "。停止：本终端 Ctrl+C，或另跑 ./gradlew ${McTestkitTaskNames.stopServe(serveName)}",
             )
+            ctx.info("可直接在本终端输入服务端控制台命令（如 stop / say hello / op <玩家>），回车即发往后端 ${backend.name}。")
             // ⑤ 可选起 bot（serve 人机混场）：把环境驱到某状态（造数据 / 模拟其他玩家），但**不**据结果文件收尾——挂住人机混场。
             //    经代理则协议版本固定为后端版本（环境契约），连端口同真人（connectPort）。
             if (botSpecs.isNotEmpty()) {
@@ -1204,6 +1206,13 @@ object McTestkitTasks {
             }
             // ⑥ 后端日志流到控制台（手测需可见启动 / 玩家活动）
             logTail = startServeLogTail(ctx, File(backendRunDir, "${backend.name}.log"))
+            // ⑥' 终端输入 → 后端控制台 stdin（手测需能敲 stop / say 等命令；只 serve 接，E2E 自动化不接）
+            consolePump = startConsoleCommandPump(
+                source = System.`in`,
+                sink = backendProcess.outputStream,
+                logger = { ctx.warn(it) },
+                targetAlive = { backendProcess.isAlive },
+            )
             // ⑦ 阻塞挂住：等后端进程退出（用户在服务端控制台 stop / kill / Ctrl+C）
             backendProcess.waitFor()
             ctx.info("serve「$serveName」后端已退出，收尾。")
@@ -1211,6 +1220,7 @@ object McTestkitTasks {
             // shutdown hook 收尾后移除（若 JVM 正在退出 removeShutdownHook 会抛，runCatching 吞掉）
             runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
             logTail?.interrupt()
+            consolePump?.interrupt()
             // 三重收尾兜底（即便 shutdown hook 未触发）：bot（自停兜底 + 按 pid）+ 后端 + 代理，删 pid
             botProcesses.forEach { destroyProcessQuietly(ctx, it) }
             if (botSpecs.isNotEmpty()) stopBots(ctx, serveName, botSpecs)
@@ -1348,6 +1358,7 @@ object McTestkitTasks {
         val backendProcesses = LinkedHashMap<String, Process>()
         var proxyProcess: Process? = null
         var logTail: Thread? = null
+        var consolePump: Thread? = null
         val botProcesses = mutableListOf<Process>()
         // Ctrl+C / JVM 退出兜底（执行期创建，不进配置缓存序列化图；ctx 可序列化）
         val shutdownHook = Thread {
@@ -1383,8 +1394,9 @@ object McTestkitTasks {
             ctx.info(
                 "✅ serve「$serveName」集群已就绪：请用 Minecraft ${clusterBackends.first().version} 客户端连接 127.0.0.1:${proxy.port}" +
                     "（经代理 ${proxy.name}），可 /server 切换：${clusterBackends.joinToString(", ") { it.name }}。" +
-                    "停止：本终端 Ctrl+C，或另跑 ./gradlew ${McTestkitTaskNames.stopServe(serveName)}",
+                    "。停止：本终端 Ctrl+C，或另跑 ./gradlew ${McTestkitTaskNames.stopServe(serveName)}",
             )
+            ctx.info("可直接在本终端输入**代理**控制台命令（如 end / glist / send <玩家> <服>），回车即发往代理 ${proxy.name}；切服另用游戏内 /server。")
             // ⑤ 可选起 bot（serve 人机混场）：经代理端口、CLUSTER_BACKENDS 下发 /server 切换目标（每个 bot 都能切），
             //    协议版本固定为后端版本；把环境驱到某状态但**不**据结果文件收尾——挂住人机混场。
             if (botSpecs.isNotEmpty()) {
@@ -1403,12 +1415,20 @@ object McTestkitTasks {
             }
             // ⑥ 代理日志流到控制台（手测看切服 / 转发）
             logTail = startServeLogTail(ctx, File(layout.proxyRunDir, "${proxy.name}.log"))
+            // ⑥' 终端输入 → 代理控制台 stdin（集群 serve 阻塞在代理上，真人的入口也是代理；只 serve 接，E2E 自动化不接）
+            consolePump = startConsoleCommandPump(
+                source = System.`in`,
+                sink = proxyProcess.outputStream,
+                logger = { ctx.warn(it) },
+                targetAlive = { proxyProcess.isAlive },
+            )
             // ⑦ 阻塞挂住：等代理进程退出（代理是真人入口；某后端宕仍挂着便于看崩溃接管 fallback）
             proxyProcess.waitFor()
             ctx.info("serve「$serveName」集群代理已退出，收尾。")
         } finally {
             runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
             logTail?.interrupt()
+            consolePump?.interrupt()
             // 三重收尾兜底：bot（自停兜底 + 按 pid）+ 全部后端 + 代理，删 pid
             botProcesses.forEach { destroyProcessQuietly(ctx, it) }
             if (botSpecs.isNotEmpty()) stopBots(ctx, serveName, botSpecs)

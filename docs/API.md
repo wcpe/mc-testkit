@@ -179,8 +179,8 @@ v1 **不做** `pluginUnderTest` 的坐标形式（解析机制可复用，待真
 | `stop<Key>Cluster` | 停止某集群场景的全部后端与代理（按 pid 收尾）；由 `e2e<Key>Cluster` 经 `finalizedBy` 触发，亦可单独调用 |
 | `e2e<Key>Stress` | 压测跑某场景：N 服 × M bot 钉服持续施压（代理 N-listener 钉服或直连）+ 各服结果聚合判 PASS/FAIL（FR-11） |
 | `stop<Key>Stress` | 停止某压测场景的全部后端、代理与机器人（按 pid 收尾）；由 `e2e<Key>Stress` 经 `finalizedBy` 触发，亦可单独调用 |
-| `serve<Key>` | 持久起服挂住供真人手测（FR-17，ADR-0011）：起后端（声明 `via` 则先起代理）、注入插件、桩空闲不判定，**前台阻塞**到手动停（Ctrl+C / `stop<Key>Serve`）。声明 `backends(...)` 即集群 serve（N 后端 + 代理整套挂起、`/server` 切服，FR-18）；可选 `bot { }` 起 bot 人机混场（FR-19）。`<Key>` = serve 名折 PascalCase |
-| `stop<Key>Serve` | 停止某 serve 的全部后端 + 代理 + 机器人（按 pid 收尾）；供「另一终端停」或「Ctrl+C 没清干净」时兜底 |
+| `serve<Key>` | 持久起服挂住供真人手测（FR-17，ADR-0011）：起后端（声明 `via` 则先起代理）、注入插件、桩空闲不判定，**前台阻塞**到手动停（Ctrl+C / `stop<Key>Serve`）。挂住期间**终端输入即服务端控制台命令**：直连转发到后端、集群 serve 转发到代理（见下条）。声明 `backends(...)` 即集群 serve（N 后端 + 代理整套挂起、`/server` 切服，FR-18）；可选 `bot { }` 起 bot 人机混场（FR-19）。`<Key>` = serve 名折 PascalCase |
+| `stop<Key>Serve` | 停止某 serve 的全部后端 + 代理 + 机器人（按 pid 收尾）；供「另一终端停」或「Ctrl+C 没清干净」时兜底。**注意**：在 `serve<Key>` 所在终端直接敲 `stop` 即可停后端（见控制台命令），本任务用于另一终端兜底 |
 | `e2eMatrix<Key>` | 版本矩阵串行聚合：dependsOn 矩阵全部场景任务 + mustRunAfter 链（versionMatrix） |
 | `e2eMatrix<Key>SmokeOnly` | 版本矩阵仅 smoke 子集串行聚合 |
 
@@ -189,6 +189,23 @@ v1 **不做** `pluginUnderTest` 的坐标形式（解析机制可复用，待真
 > `<Key>` 缺省后端：场景未写 `backend =` 时取首个声明的后端（单后端无需显式指定）。一个声明了 `via` 的场景同时生成直连 `e2e<Key>` 与经代理 `e2e<Key>Via<Proxy>` 两个任务。
 >
 > **Gradle 双缓存兼容**：消费方可同时启用 `--configuration-cache` 与 `--build-cache`。任务动作捕获图不含 `Project`（配置缓存可存储 / 复用）；全部本插件任务为副作用生命周期任务，注册时声明永不 UP-TO-DATE，类型非 `@CacheableTask`，开启构建缓存时仍真实执行（不得 `FROM-CACHE` 假跳过）。此处「构建缓存」与 FR-02 的 jar 下载缓存（`JarCache` / 持久运行库）无关。
+
+#### 3.2.1 serve 的服务端控制台命令（FR-17）
+
+`serve<Key>` 挂住期间，**在该终端输入的内容会作为服务端 / 代理的控制台命令逐行下发**（回车即发）：
+
+| serve 形态 | 命令投递目标 | 典型命令 |
+|---|---|---|
+| 直连单后端 | 后端进程的控制台 | `stop`（停服）、`say <文本>`、`op <玩家>`、`whitelist add <玩家>` |
+| 经代理单后端 / 集群 serve | **代理**进程的控制台（serve 阻塞在代理上，真人的入口也是代理） | `end`（停代理）、`glist`、`send <玩家> <服>`；切服在游戏内用 `/server` |
+
+要点：
+
+- **只 `serve<Key>` 接线**：`e2e*` 等自动化任务**不接收**终端输入——自动化跑的结果不应因人工输入而变（保持确定性与可复现）。
+- **命令即服务端控制台语义**：写的是服务端自己认的命令（Bukkit/Paper 与各家代理的控制台命令），框架不解析、不拦截、不代答。
+- **结束路径安静**：无终端（CI、`< /dev/null`、重定向）时读到 EOF 即停止转发；目标进程退出后不再投递；均不报错、不刷屏。仅当目标仍存活却写不进去时才中文告警。
+- 收尾仍以「进程退出」为准（`stop` / `end` 发完生效后任务自然返回），`Ctrl+C` 与 `stop<Key>Serve` 仍是兜底路径。
+- 用公开 API 自行编排时，`ServerLauncher.launch` 返回的 `Process` 同样保持 stdin 可写（见 §5），可自行向控制台注入命令。
 
 ### 3.3 环境变量约定（前缀已冻结：`MC_TESTKIT_E2E_`）
 
@@ -206,7 +223,7 @@ v1 **不做** `pluginUnderTest` 的坐标形式（解析机制可复用，待真
 - 机器人协议版本（`…BOT_VERSION`）经代理时由编排自动固定为后端版本（环境契约，FR-05）。
 - 代理下载版本缺省取**后端版本**（与 `…BOT_VERSION` 同源）；Waterfall 在 PaperMC 仅按 major.minor 发布，故其缺省与 `…WATERFALL_VERSION` 覆盖均解析为 major.minor（后端 `1.20.1` → Waterfall `1.20`），传完整补丁号版本会 404。
 
-发布凭据走 Gradle 属性（`~/.gradle/gradle.properties`）或同名环境变量 `WCPE_MAVEN_USERNAME` / `WCPE_MAVEN_PASSWORD`（不入库）。
+发布由 CI 完成（打 `vX.Y.Z` tag 触发 `release.yml`，见 `docs/CONTRIBUTING.md` §8 / `docs/OPERATIONS.md` §1.2）；发布凭据仅存 GitHub 仓库的 `release` environment secrets，不入库。本地仅在需要手工试验 `./gradlew publish` 时才提供同名的 `WCPE_MAVEN_USERNAME` / `WCPE_MAVEN_PASSWORD`（Gradle 属性或环境变量）。
 
 ### 3.4 机器人↔桩控制协议（已冻结）
 

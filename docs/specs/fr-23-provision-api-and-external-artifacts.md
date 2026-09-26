@@ -1,6 +1,6 @@
 # 功能规格：开放下载/运行基建为公开 API + 声明式外部制品源
 
-> 状态：开发中　·　关联 PRD：FR-23　·　关联决策：[ADR-0017](../adr/0017-provision-api-and-external-artifact-sources.md)
+> 状态：已交付@v0.12.0　·　关联 PRD：FR-23　·　关联决策：[ADR-0017](../adr/0017-provision-api-and-external-artifact-sources.md)
 
 ## 1. 背景与目标
 

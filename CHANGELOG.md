@@ -6,6 +6,8 @@
 
 ## [未发布]
 
+## [0.13.0] - 2026-09-26
+
 ### 修复
 - **serve 挂住后可直接在终端敲服务端控制台命令（FR-17）**：此前 `serve<Key>` 只把后端日志流到 Gradle 控制台，**从不接收终端输入**——挂住后敲 `stop`、`say` 毫无反应，只能另开终端跑 `stop<Key>Serve` 或 Ctrl+C 收尾。根因是框架从未把 stdin 接到子进程（`ServerLauncher` 只重定向 stdout/stderr 到日志文件、serve 任务体只 `waitFor()` 加 tail 日志），而 `docs/API.md` §5 早已承诺「stdin 保持打开，可向控制台注入命令」——属文档承诺未兑现。现新增逐行转发的 stdin 通道：**直连单后端转发到后端**、**经代理 / 集群 serve 转发到代理**（serve 阻塞在代理上，真人入口也是代理）。命令即服务端控制台语义（`stop` / `say` / `op`；代理侧 `end` / `glist` / `send`），框架不解析、不拦截、不代答。结束路径一律安静（无终端读到 EOF、目标已退出的写入失败、线程被中断都不报错；仅「目标仍存活却写不进去」才中文告警）。**只 `serve<Key>` 接线**：`e2e*` 自动化任务**不接收**终端输入，保持结果确定性与可复现。就绪提示补了一句「可直接在本终端输入控制台命令」，让能力可发现。见 `docs/API.md` §3.2.1。
 - **发布的插件构件字节码钉到 Java 17，修复 JDK 17 消费方无法解析**：已发布的 0.12.0 构件是 **Java 21 字节码**（class major 65）、Gradle module metadata 标 `org.gradle.jvm.version=21`，JDK 17 的消费方解析直接失败（`only compatible with JVM runtime version 21 or newer`）。根因是 `jvmTarget` 跟随**构建机的 JDK**：用 JDK 21 构建产出 Java 21、用 JDK 17 构建产出 Java 17，同一份源码在不同机器产出互不兼容的构件——既破坏可复现，也与「Kotlin 语言/API 锁 1.9 以兼容 Gradle 8.x/9.x 消费方」（ADR-0005）的同款兼容意图相悖。现显式钉 `jvmTarget` / `source` / `target` 为 17（不取 8：实现用到 `ProcessHandle` / `Process.pid()` 等 Java 9+ API；17 是 CI 与 Gradle 8.9/9.x 的共同基线）。

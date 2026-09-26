@@ -24,6 +24,9 @@ import top.wcpe.mc.testkit.config.bungeeProxyConfigYml
 import top.wcpe.mc.testkit.config.bungeeStressProxyConfigYml
 import top.wcpe.mc.testkit.config.velocityForwardingModeForBackend
 import top.wcpe.mc.testkit.config.velocityProxyConfigToml
+import top.wcpe.mc.testkit.console.AttachCommand
+import top.wcpe.mc.testkit.console.ConsoleOutput
+import top.wcpe.mc.testkit.console.ServeConsoleHost
 import top.wcpe.mc.testkit.contract.McTestkitContract
 import top.wcpe.mc.testkit.contract.McTestkitDefaults
 import top.wcpe.mc.testkit.contract.McTestkitEnv
@@ -41,6 +44,7 @@ import top.wcpe.mc.testkit.dsl.VersionMatrixSpec
 import top.wcpe.mc.testkit.provision.JarCache
 import top.wcpe.mc.testkit.provision.JavaRuntimeSelector
 import top.wcpe.mc.testkit.provision.ProvisionPlatform
+import top.wcpe.mc.testkit.provision.PseudoTerminal
 import top.wcpe.mc.testkit.provision.ServerJarProvisioner
 import top.wcpe.mc.testkit.provision.ServerLauncher
 import top.wcpe.mc.testkit.provision.WaterfallModuleProvisioner
@@ -52,6 +56,9 @@ import top.wcpe.mc.testkit.topology.Topology
 import top.wcpe.mc.testkit.topology.TopologyResolver
 import top.wcpe.mc.testkit.verify.ResultReader
 import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
 import java.util.concurrent.TimeUnit
 
 /** Gradle 任务分组名（生成的 e2e 任务都归此组，`./gradlew tasks` 下成组展示）。 */
@@ -70,8 +77,14 @@ private const val BACKEND_WAIT_TIMEOUT_SECONDS = 600L
 private const val BACKEND_SELF_STOP_GRACE_SECONDS = 30L
 
 /** 后端与代理都需关闭 ANSI，消费者节点参数在其后、Java agent 最后追加。 */
-private val FRAMEWORK_JVM_ARGS =
-    listOf("-Dterminal.ansi=false", "-Dnet.kyori.ansi.colorLevel=none", "-Dtaboolib.debug=true")
+private val FRAMEWORK_JVM_ARGS = listOf(
+    "-Dterminal.ansi=false",
+    "-Dnet.kyori.ansi.colorLevel=none",
+    // 钉住服务端 JVM 的默认字符集：不钉的话它会跟随平台 locale（Windows GBK 等），
+    // 中文日志 / 配置读写随之漂移；框架自己按 UTF-8 读日志，两边对齐才稳定（同款取舍见 run-task #60/#61）
+    "-Dfile.encoding=UTF-8",
+    "-Dtaboolib.debug=true",
+)
 
 /**
  * 落盘一个服务端 / 代理进程的收尾凭证：pid 文件（当前一轮的快路径）+ 进程台账（跨轮次的兜底路径）。
@@ -855,6 +868,7 @@ object McTestkitTasks {
         scenario: String? = null,
         resultFile: File? = null,
         sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
+        pty: Boolean = false,
     ): Process {
         val layout = ctx.layout
         val proxyRunDir = layout.proxyRunDir
@@ -889,6 +903,7 @@ object McTestkitTasks {
             ),
             javaPath = resolveProxyJava(ctx, proxy),
             logger = { ctx.info(it) },
+            pty = pty,
         )
         recordProcessedPid(ctx, layout.proxyPidFile(proxy.name), "$LEDGER_KEY_PROXY/${proxy.name}", process, proxy.port)
         ctx.info(
@@ -1438,7 +1453,7 @@ object McTestkitTasks {
             }
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
-                serveForeground(ctx, backend, proxy, serve.name, serve.botSpecs, mavenSources)
+                serveForeground(ctx, backend, proxy, serve.name, serve.botSpecs, mavenSources, serve.attachConsole)
             }
         }
 
@@ -1464,11 +1479,6 @@ object McTestkitTasks {
             )
     }
 
-    /**
-     * serve 任务体（持久手测 serve）：prepare →（via 则起代理）→ 前台起后端（下发哨兵场景使桩空闲）→ 等就绪打印连接信息
-     * → **阻塞挂住**到后端退出 / 手动停 → 双保险收尾。注册 JVM shutdown hook 应对 Ctrl+C / 中断时收尾子进程
-     * （高风险区：进程全灭 / 端口不漏 / 跨平台 pid 收尾，配套 `stop<Key>Serve` 兜底）。
-     */
     private fun serveForeground(
         ctx: TaskExecutionContext,
         backend: ResolvedBackend,
@@ -1476,9 +1486,11 @@ object McTestkitTasks {
         serveName: String,
         botSpecs: List<BotSpec> = emptyList(),
         mavenSources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
+        attachConsole: Boolean = false,
     ) {
         val layout = ctx.layout
         val backendRunDir = layout.backendRunDir(backend.name)
+        val backendLogFile = File(backendRunDir, "${backend.name}.log")
         val runtime = preflightRuntimeForTask(ctx, listOf(backend), proxy?.let(::listOf) ?: emptyList(), mavenSources)
         // ⓪ 端口预检：serve 是「挂住等真人连」的长生命周期形态，端口被上一轮残留进程占住时最易误判
         //    （就绪门报「已就绪」→ 真人连上去连的其实是旧服务端），故起服前先拦住
@@ -1489,6 +1501,8 @@ object McTestkitTasks {
             ),
             stopTaskName = McTestkitTaskNames.stopServe(serveName),
         )
+        // ⓪' 附加控制台（可选）：先探测 PTY 分配器——不可用就退回本终端行级补全，不阻断 serve
+        val attachEnabled = resolveAttachConsole(ctx, attachConsole)
         // ① 准备运行目录（注入被测 + 依赖插件，含桩；桩由哨兵场景置空闲）
         prepareRunDirectory(ctx, backend, backendRunDir, runtime.backends.getValue(backend.name))
 
@@ -1496,12 +1510,14 @@ object McTestkitTasks {
         var backendProcess: Process? = null
         var logTail: Thread? = null
         var consolePump: Thread? = null
+        var attach: ServeAttachConsole? = null
         val botProcesses = mutableListOf<Process>()
         // Ctrl+C / JVM 退出兜底：收尾 bot + 后端 + 代理（幂等、吞异常，与 finally 双保险）。先注册以覆盖整段生命周期。
         // 注：hook 在执行期创建、不进配置缓存序列化图；即便被序列化，ctx 亦可序列化（不含 Project）。
         val shutdownHook = Thread {
+            attach?.stop()
             botProcesses.forEach { destroyProcessQuietly(ctx, it) }
-            backendProcess?.let { destroyProcessQuietly(ctx, it) }
+            backendProcess?.let { destroyProcessTreeQuietly(ctx, it) }
             proxyProcess?.let { destroyProcessQuietly(ctx, it) }
         }
         Runtime.getRuntime().addShutdownHook(shutdownHook)
@@ -1517,7 +1533,11 @@ object McTestkitTasks {
                 awaitPortOpen(ctx, proxy.port, "代理 ${proxy.name}")
             }
             // ③ 前台起后端：下发哨兵场景 id 使桩空闲、不关服（ADR-0011），不下发 RESULT_FILE（serve 不判定）
-            backendProcess = startServeBackend(ctx, backend, backendRunDir, mavenSources)
+            backendProcess = startServeBackend(ctx, backend, backendRunDir, mavenSources, pty = attachEnabled)
+            // ③' PTY 模式：服务端 stdout 是终端流，先接上输出泵（落日志 + 推给附加控制台）再等就绪
+            if (attachEnabled) {
+                attach = startAttachConsole(ctx, backendProcess, backendLogFile)
+            }
             // ④ 等后端端口就绪，打印连接信息
             awaitPortOpen(ctx, backend.port, "后端 ${backend.name}")
             val connectPort = proxy?.port ?: backend.port
@@ -1527,6 +1547,7 @@ object McTestkitTasks {
                     "。停止：本终端 Ctrl+C，或另跑 ./gradlew ${McTestkitTaskNames.stopServe(serveName)}",
             )
             ctx.info("可直接在本终端输入服务端控制台命令（如 stop / say hello / op <玩家>），回车即发往后端 ${backend.name}；Tab 补全命令、↑/↓ 调历史。")
+            attach?.printHint(ctx)
             // ⑤ 可选起 bot（serve 人机混场）：把环境驱到某状态（造数据 / 模拟其他玩家），但**不**据结果文件收尾——挂住人机混场。
             //    经代理则协议版本固定为后端版本（环境契约），连端口同真人（connectPort）。
             if (botSpecs.isNotEmpty()) {
@@ -1546,7 +1567,7 @@ object McTestkitTasks {
             val console = startServeConsole(
                 ctx = ctx,
                 serveName = serveName,
-                logFile = File(backendRunDir, "${backend.name}.log"),
+                logFile = backendLogFile,
                 target = backendProcess,
                 logLabel = backend.name,
             )
@@ -1558,12 +1579,13 @@ object McTestkitTasks {
         } finally {
             // shutdown hook 收尾后移除（若 JVM 正在退出 removeShutdownHook 会抛，runCatching 吞掉）
             runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
+            attach?.stop()
             logTail?.interrupt()
             consolePump?.interrupt()
             // 三重收尾兜底（即便 shutdown hook 未触发）：bot（自停兜底 + 按 pid）+ 后端 + 代理，删 pid
             botProcesses.forEach { destroyProcessQuietly(ctx, it) }
             if (botSpecs.isNotEmpty()) stopBots(ctx, serveName, botSpecs)
-            backendProcess?.let { stopProcessQuietly(ctx, it, provisionPidFile(backendRunDir, backend.name)) }
+            backendProcess?.let { stopProcessTreeQuietly(ctx, it, provisionPidFile(backendRunDir, backend.name)) }
             proxy?.let { p -> proxyProcess?.let { stopProcessQuietly(ctx, it, layout.proxyPidFile(p.name)) } }
         }
     }
@@ -1574,6 +1596,7 @@ object McTestkitTasks {
         backend: ResolvedBackend,
         runDir: File,
         sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
+        pty: Boolean = false,
     ): Process {
         val jar = resolveBackendJar(ctx, backend, sources)
         val process = ServerLauncher.launch(
@@ -1592,6 +1615,7 @@ object McTestkitTasks {
             ),
             javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
+            pty = pty,
         )
         // 单 serve 的 pid 文件由 ServerLauncher 写在运行目录内（`run-<后端>/<后端>.pid`），
         // 而运行目录每轮清理、pid 文件也会被下一轮起服先删——跨轮次逃逸的进程只能靠台账找回，
@@ -1640,7 +1664,8 @@ object McTestkitTasks {
             logFile = logFile,
             from = 0,
             to = snapshot.windowStart,
-            onLine = { ctx.info("[$logLabel] $it") },
+            // 控制台视图经 forView 清洗：PTY 模式下日志里会带 > 提示符残留（服务端真的在终端上跑）
+            onLine = { line -> ConsoleOutput.forView(line)?.let { ctx.info("[$logLabel] $it") } },
             onTruncated = { ctx.warn(it) },
         )
         ctx.info(
@@ -1653,7 +1678,7 @@ object McTestkitTasks {
         val logTail = startServeLogTail(
             logFile = logFile,
             startOffset = snapshot.tailStart,
-            onLine = { ctx.info("[$logLabel] $it") },
+            onLine = { line -> ConsoleOutput.forView(line)?.let { ctx.info("[$logLabel] $it") } },
             onError = { ctx.logger.debug("[mc-testkit] $it") },
         )
         val session = ServeConsoleSession(
@@ -1677,6 +1702,111 @@ object McTestkitTasks {
             target.outputStream.write((line + "\n").toByteArray(Charsets.UTF_8))
             target.outputStream.flush()
         }
+    }
+
+    /**
+     * 附加控制台会话（serve 的 `attachConsole` 用）：PTY 输出泵 + 回环端点。
+     *
+     * 生命周期与 serve 同：起服后建、收尾时停（[stop] 幂等）。
+     */
+    private class ServeAttachConsole(val host: ServeConsoleHost, private val pump: Thread) {
+
+        /** 打印「另开终端 attach」的说明与可直接粘贴的命令。 */
+        fun printHint(ctx: TaskExecutionContext) {
+            ctx.info("附加控制台（原版体验）：在**另一个终端**运行下面这条命令，即可把该终端接到服务端自己的控制台上")
+            ctx.info(AttachCommand.text(host.port, host.token))
+            ctx.info("该终端里 Tab 补全（含参数）/ ↑↓ 历史 / ←→ 行编辑 / 颜色都是服务端原生行为；Ctrl+] 断开附加（服务端继续运行）。")
+        }
+
+        fun stop() {
+            runCatching { host.stop() }
+            pump.interrupt()
+        }
+    }
+
+    /** 附加控制台是否可用（仅在声明了 `attachConsole` 时探测）：不可用时中文说明并退回默认形态，不阻断 serve。 */
+    private fun resolveAttachConsole(ctx: TaskExecutionContext, enabled: Boolean): Boolean {
+        if (!enabled) return false
+        val available = PseudoTerminal.isAvailable(
+            logger = { reason ->
+                ctx.warn("$reason；本次退回本终端的行级补全（附加控制台是增强能力，不影响 serve 正常起服）")
+            },
+        )
+        if (available) {
+            ctx.info("附加控制台：目标进程将运行在伪终端（PTY）中，就绪后会给出 attach 命令")
+        }
+        return available
+    }
+
+    /**
+     * 起附加控制台：把目标进程的**终端流**一边落 `<key>.log`（清洗后可 grep），一边原样推给 attach 的终端，
+     * 并在回环地址上监听连接。
+     */
+    private fun startAttachConsole(ctx: TaskExecutionContext, process: Process, logFile: File): ServeAttachConsole {
+        val host = ServeConsoleHost(
+            token = ServeConsoleHost.randomToken(),
+            serverStdin = { process.outputStream },
+            // 服务端（java）是 PTY 分配器的子进程，pty 设备挂在它身上；分配器自己只有我们的管道
+            serverPid = { process.children().findFirst().map { it.pid() }.orElse(process.pid()) },
+            info = { ctx.info(it) },
+            warn = { ctx.warn(it) },
+        )
+        val pump = startPtyOutputPump(ctx, process, logFile, host)
+        host.start()
+        return ServeAttachConsole(host, pump)
+    }
+
+    /**
+     * PTY 输出泵：服务端 stdout 是**终端流**（JLine 的转义、颜色与提示符重绘都在里面）。
+     *
+     * 两个去处都必要：attach 的终端要**原样**字节（否则它看到的就不是服务端的真实渲染）；运行目录日志要
+     * 清洗过的文本（否则日志里全是转义字节，没法 grep）。**按块读而不是按行读**：JLine 的提示符不带换行，
+     * 按行读会让 attach 端等到下一个换行才看到内容，实时性就没了。
+     */
+    private fun startPtyOutputPump(
+        ctx: TaskExecutionContext,
+        process: Process,
+        logFile: File,
+        host: ServeConsoleHost,
+    ): Thread {
+        val thread = Thread {
+            try {
+                logFile.parentFile?.mkdirs()
+                FileOutputStream(logFile, true).use { sink ->
+                    val writer = OutputStreamWriter(sink, Charsets.UTF_8)
+                    val reader = InputStreamReader(process.inputStream, Charsets.UTF_8)
+                    val chars = CharArray(4096)
+                    while (!Thread.currentThread().isInterrupted) {
+                        val read = reader.read(chars)
+                        if (read <= 0) break
+                        val text = String(chars, 0, read)
+                        host.pushServerOutput(text.toByteArray(Charsets.UTF_8))
+                        writer.write(ConsoleOutput.forLog(text))
+                        writer.flush()
+                    }
+                }
+            } catch (ex: Exception) {
+                if (process.isAlive) {
+                    ctx.warn("读取服务端终端流失败：${ex.message ?: ex.javaClass.simpleName}")
+                }
+            }
+        }
+        thread.isDaemon = true
+        thread.name = "mc-testkit-pty-output"
+        thread.start()
+        return thread
+    }
+
+    /** 收尾一个进程及其后代（PTY 模式下服务端是分配器的子进程：先杀后代再杀分配器更稳）。 */
+    private fun stopProcessTreeQuietly(ctx: TaskExecutionContext, process: Process, pidFile: File) {
+        runCatching { process.descendants().forEach { runCatching { it.destroy() } } }
+        stopProcessQuietly(ctx, process, pidFile)
+    }
+
+    /** 只收尾进程树、不碰 pid 文件（shutdown hook 用；pid 文件由 finally 的收尾路径清理）。 */
+    private fun destroyProcessTreeQuietly(ctx: TaskExecutionContext, process: Process) {
+        runCatching { process.descendants().forEach { runCatching { it.destroy() } } }
+        destroyProcessQuietly(ctx, process)
     }
 
     /**
@@ -1730,7 +1860,7 @@ object McTestkitTasks {
             }
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
-                serveClusterForeground(ctx, clusterBackends, proxy, serve.name, serve.botSpecs, mavenSources)
+                serveClusterForeground(ctx, clusterBackends, proxy, serve.name, serve.botSpecs, mavenSources, serve.attachConsole)
             }
         }
     }
@@ -1746,19 +1876,23 @@ object McTestkitTasks {
         serveName: String,
         botSpecs: List<BotSpec> = emptyList(),
         mavenSources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
+        attachConsole: Boolean = false,
     ) {
         val layout = ctx.layout
+        val proxyLogFile = File(layout.proxyRunDir, "${proxy.name}.log")
         val runtime = preflightRuntimeForTask(ctx, clusterBackends, listOf(proxy), mavenSources)
         val backendProcesses = LinkedHashMap<String, Process>()
         var proxyProcess: Process? = null
         var logTail: Thread? = null
         var consolePump: Thread? = null
+        var attach: ServeAttachConsole? = null
         val botProcesses = mutableListOf<Process>()
         // Ctrl+C / JVM 退出兜底（执行期创建，不进配置缓存序列化图；ctx 可序列化）
         val shutdownHook = Thread {
+            attach?.stop()
             botProcesses.forEach { destroyProcessQuietly(ctx, it) }
             backendProcesses.values.forEach { destroyProcessQuietly(ctx, it) }
-            proxyProcess?.let { destroyProcessQuietly(ctx, it) }
+            proxyProcess?.let { destroyProcessTreeQuietly(ctx, it) }
         }
         Runtime.getRuntime().addShutdownHook(shutdownHook)
         try {
@@ -1769,6 +1903,8 @@ object McTestkitTasks {
                     PortTarget(proxy.port, "集群代理 ${proxy.name}"),
                 stopTaskName = McTestkitTaskNames.stopServe(serveName),
             )
+            // ⓪' 附加控制台（可选）：目标进程是**代理**（集群 serve 的真人入口与命令落点都是代理）
+            val attachEnabled = resolveAttachConsole(ctx, attachConsole)
             // ① 每后端独立运行目录 prepare + 代理模式配置 + 后台起（哨兵场景使桩空闲）
             clusterBackends.forEach { backend ->
                 val runDir = layout.clusterBackendRunDir(backend.name)
@@ -1787,7 +1923,12 @@ object McTestkitTasks {
                 clusterBackends,
                 runtime.proxies.getValue(proxy.name),
                 sources = mavenSources,
+                pty = attachEnabled,
             )
+            // ②' PTY 模式：代理 stdout 是终端流，先接上输出泵（落日志 + 推给附加控制台）再等就绪
+            if (attachEnabled) {
+                attach = startAttachConsole(ctx, proxyProcess, proxyLogFile)
+            }
             // ③ 就绪门：等全部后端 + 代理端口可连
             clusterBackends.forEach { awaitPortOpen(ctx, it.port, "集群后端 ${it.name}") }
             awaitPortOpen(ctx, proxy.port, "集群代理 ${proxy.name}")
@@ -1798,6 +1939,7 @@ object McTestkitTasks {
                     "。停止：本终端 Ctrl+C，或另跑 ./gradlew ${McTestkitTaskNames.stopServe(serveName)}",
             )
             ctx.info("可直接在本终端输入**代理**控制台命令（如 end / glist / send <玩家> <服>），回车即发往代理 ${proxy.name}；切服另用游戏内 /server；Tab 补全命令、↑/↓ 调历史。")
+            attach?.printHint(ctx)
             // ⑤ 可选起 bot（serve 人机混场）：经代理端口、CLUSTER_BACKENDS 下发 /server 切换目标（每个 bot 都能切），
             //    协议版本固定为后端版本；把环境驱到某状态但**不**据结果文件收尾——挂住人机混场。
             if (botSpecs.isNotEmpty()) {
@@ -1819,7 +1961,7 @@ object McTestkitTasks {
             val console = startServeConsole(
                 ctx = ctx,
                 serveName = serveName,
-                logFile = File(layout.proxyRunDir, "${proxy.name}.log"),
+                logFile = proxyLogFile,
                 target = proxyProcess,
                 logLabel = proxy.name,
             )
@@ -1830,13 +1972,14 @@ object McTestkitTasks {
             ctx.info("serve「$serveName」集群代理已退出，收尾。")
         } finally {
             runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
+            attach?.stop()
             logTail?.interrupt()
             consolePump?.interrupt()
             // 三重收尾兜底：bot（自停兜底 + 按 pid）+ 全部后端 + 代理，删 pid
             botProcesses.forEach { destroyProcessQuietly(ctx, it) }
             if (botSpecs.isNotEmpty()) stopBots(ctx, serveName, botSpecs)
             backendProcesses.forEach { (name, proc) -> stopProcessQuietly(ctx, proc, layout.clusterBackendPidFile(name)) }
-            proxyProcess?.let { stopProcessQuietly(ctx, it, layout.proxyPidFile(proxy.name)) }
+            proxyProcess?.let { stopProcessTreeQuietly(ctx, it, layout.proxyPidFile(proxy.name)) }
         }
     }
 

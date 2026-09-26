@@ -218,6 +218,34 @@ v1 **不做** `pluginUnderTest` 的坐标形式（解析机制可复用，待真
 - **↑/↓ 历史**：调出并下发（本终端无法把历史塞回编辑缓冲，故取 shell 语义「↑ + 回车 = 重跑上一条」，并打印调出的条目）；连按 `↑` 更早、`↓` 更晚。历史跨轮次保存在 `<结果目录>/serve-console-history-<serve>.txt`（可安全删除，删掉只失去历史）。
 - **本终端做不到**：左右键 / Home / End / Delete 的行内编辑与光标移动（Gradle 控制台按行转发、不做行内编辑）。这些键会作为转义字节落进整行，框架**不下发**并中文说明——避免把转义字节当命令发给服务端报未知命令。改已敲的内容请用退格，或 `Ctrl+U` 清行后重输。
 
+#### 3.2.2 serve 的附加控制台（原版控制台体验，FR-25）
+
+`serve("dev") { attachConsole = true }` 后，`serve<Key>` 把目标进程放进**伪终端（PTY）**启动，并在就绪时打印一条**可直接粘贴**的命令（路径由框架按自身构件推导，消费方不必自己拼）：
+
+```
+[mc-testkit] 附加控制台（原版体验）：在**另一个终端**运行下面这条命令，即可把该终端接到服务端自己的控制台上
+[mc-testkit] java -cp "<插件 jar>:<kotlin-stdlib jar>" top.wcpe.mc.testkit.console.ServeConsoleAttach --host 127.0.0.1 --port <端口> --token <令牌>
+```
+
+在另一个终端运行它之后，**那个终端就是服务端自己的控制台**：
+
+| 能力 | 由谁提供 |
+|---|---|
+| Tab 补全（命令名 + **参数**，如 `whitelist add <Tab>`） | 服务端 JLine（命令树来自服务端自己） |
+| ↑↓ 历史、←→ 行编辑、Home/End、颜色 | 服务端 JLine |
+| Ctrl+C 停服 | 服务端（与原版一致） |
+| `Ctrl+]` 断开附加 | 客户端（只断开附加，服务端继续运行；退出时恢复终端设置） |
+
+要点：
+
+- **默认关闭**：不声明 `attachConsole` 时，行为与本功能引入前完全一致（管道 stdin + 框架侧行级补全 + 纯文本日志）。
+- **平台**：依赖 POSIX 的 `script` 作为 PTY 分配器（Linux util-linux / macOS 自带）；**Windows 或缺失 `script` 时不阻断 serve**——中文说明原因并退回默认形态（行级补全仍可用）。
+- **日志语义（仅开启时）**：运行目录 `<key>.log` 记的是服务端的**终端流**（含 JLine 转义与提示符重绘，已去 ANSI 与 `\r`）——这是「服务端真的拿到终端」的必然结果；Gradle 控制台视图会再去掉提示符残留，保持可读。
+- **端点安全与收敛**：只绑 `127.0.0.1`，随机端口 + 随机令牌；同一时刻只服务**一个** attach 会话（两个终端抢同一个 pty 只会互相踩）。attach 时会把 pty 尺寸同步为该终端的真实尺寸（best-effort；之后改窗口大小需重新 attach）。
+- **原终端仍可用**：attach 期间，原来那个 Gradle 终端的行级补全 / 历史 / 命令透传照样有效（两处同时输入会交错，通常只用一处）。
+- **收尾不变**：Ctrl+C / `stop<Key>Serve` / JVM shutdown hook 三路都收尾目标进程（PTY 模式下先收尾其后代），端口不漏、无残留。
+- **集群 serve 同样支持**：attach 的目标是**代理**（集群 serve 的命令落点与真人入口都是代理）。
+
 ### 3.3 环境变量约定（前缀已冻结：`MC_TESTKIT_E2E_`）
 
 用于覆盖默认值、提供 jar / 模板路径、调节规模与超时（须可移植、不写死本机绝对路径）。前缀固定 `MC_TESTKIT_E2E_`（ADR-0006，本期不做 DSL 可配）。已冻结的核心名（**全集随 FR-02/04/06 补全，前缀与风格不变**）：
@@ -358,6 +386,11 @@ WaterfallModuleProvisioner().provision("1.20", proxyRunDir)
 
 // 起服（返回 Process；stdin 保持打开，可向控制台注入命令）
 val process = ServerLauncher.launch(paper, runDir, "s1", jvmArgs = listOf("-Xmx1G"))
+
+// 可选：让服务端拿到**真终端**（PTY，附加控制台用；平台需有 POSIX script，否则抛中文异常）
+// PTY 模式下列为「输出不重定向」——process.inputStream 是服务端终端流，由调用方消费并落盘，
+// 否则管道写满会阻塞服务端；pid 文件记的是 PTY 分配器的 pid（杀它，服务端随 pty 关闭退出）。
+val tty = ServerLauncher.launch(paper, runDir, "s1", jvmArgs = listOf("-Xmx1G"), pty = true)
 
 // 其它：Java 运行时选择 / 服务端属性 / 完整性校验
 JavaRuntimeSelector.executable("1.20.1") { System.getenv(it) }

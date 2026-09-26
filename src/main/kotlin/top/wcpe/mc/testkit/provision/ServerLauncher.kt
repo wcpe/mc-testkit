@@ -100,6 +100,11 @@ object ServerLauncher {
      * @param environment 追加 / 覆盖的环境变量。
      * @param javaPath 指定 `java` 可执行路径（多版本服务端拉起 多版本 Java 选择）；null 时用当前 JVM（[javaExecutable]）。
      * @param logger 中文分级日志输出（默认 no-op；任务侧可传 `project.logger.lifecycle`）。
+     * @param pty 是否把服务端放进**伪终端**启动（serve 的附加控制台用）：服务端因此拿到真终端，它自己的
+     *   控制台（补全 / 历史 / 行编辑 / 颜色）会启用。**此时 stdout 不再重定向到文件**——返回的 [Process]
+     *   的 `inputStream` 是服务端的**终端流**，由调用方消费（落盘 + 供 attach 桥接），否则管道会被写满；
+     *   平台没有 PTY 分配器时抛 [IllegalStateException]（调用方应先经 [PseudoTerminal.isAvailable] 探测）。
+     *   pid 文件记录的是**分配器进程**的 pid：杀掉它，服务端随 pty 关闭一并退出。
      * @return 已启动的 [Process]。
      */
     fun launch(
@@ -111,6 +116,7 @@ object ServerLauncher {
         environment: Map<String, String> = emptyMap(),
         javaPath: String? = null,
         logger: (String) -> Unit = {},
+        pty: Boolean = false,
     ): Process {
         require(jar.isFile) { "要运行的 jar 不存在：${jar.absolutePath}。" }
         runDirectory.mkdirs()
@@ -122,14 +128,23 @@ object ServerLauncher {
         if (pidFile.exists()) pidFile.delete()
         provisionClasspathFile(runDirectory, key).takeIf(File::exists)?.delete()
 
-        val command = buildCommand(jar, runDirectory, key, jvmArgs, serverArgs, javaPath, logger)
+        val bare = buildCommand(jar, runDirectory, key, jvmArgs, serverArgs, javaPath, logger)
+        val command = if (pty) PseudoTerminal.wrapperCommand(bare) else bare
+        if (pty) {
+            logger("按 PTY 启动（附加控制台）：分配器=${command.first()}，服务端将拿到真终端")
+        }
 
         val processBuilder = ProcessBuilder(command)
         processBuilder.directory(runDirectory)
-        // 先把 stderr 并入 stdout，再把 stdout 追加到日志文件——故进程 stdout + stderr 都落 <key>.log，
-        // 子进程崩溃栈也不会丢（两者顺序不可颠倒：redirectErrorStream 使 redirectError 失效，须靠 stdout 落盘）。
-        processBuilder.redirectErrorStream(true)
-        processBuilder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
+        if (!pty) {
+            // 先把 stderr 并入 stdout，再把 stdout 追加到日志文件——故进程 stdout + stderr 都落 <key>.log，
+            // 子进程崩溃栈也不会丢（两者顺序不可颠倒：redirectErrorStream 使 redirectError 失效，须靠 stdout 落盘）。
+            // PTY 模式下 stdout 不能重定向：它同时要桥给附加控制台，交由调用方消费。
+            processBuilder.redirectErrorStream(true)
+            processBuilder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
+        } else {
+            processBuilder.redirectErrorStream(true)
+        }
         processBuilder.environment().putAll(environment)
 
         val process = processBuilder.start()

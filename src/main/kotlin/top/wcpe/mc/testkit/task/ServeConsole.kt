@@ -33,6 +33,9 @@ internal const val CONSOLE_DUMP_QUIET_MILLIS = 200L
 /** 抓取命令表时单页的最长等待。 */
 internal const val CONSOLE_DUMP_TIMEOUT_MILLIS = 3_000L
 
+/** 隐藏窗口自愈的最多轮次：静默点之后又冒出命令表时，继续往后吃（有界，防异常输出把等待拖长）。 */
+internal const val CONSOLE_DUMP_ABSORB_ROUNDS = 4
+
 /** 抓取命令表用的控制台命令（分页时补页码）。 */
 private const val CONSOLE_HELP_COMMAND = "help"
 
@@ -293,7 +296,20 @@ internal fun captureServerCommands(
         // 该页没有命令条目（平台没有 help 命令）或没带来新命令（已列全）→ 收工
         if (pageNames.isEmpty() || names.size == before) break
     }
-    return ServeCommandSnapshot(names.toList(), windowStart, alignToLineStart(logFile, offset, windowStart))
+    // 收尾再等一次「静默」：负载高的机器上，最后一页的输出可能在单页超时之后才写完——若不补等，
+    // 跟随起点会落在窗口中间，剩下的 help 行就会漏进控制台（实测出现过）。
+    var windowEnd = awaitLogQuiet(logFile, offset, quietMillis, timeoutMillis)
+    // 自愈：即使等过静默，dump 也可能**断续**写入（Paper 的异步日志 + 负载），静默点之后又冒出几行命令表。
+    // 故再检查静默点之后是否还有命令表形态的行，有就把窗口继续往后吃（有界轮次），避免漏表刷进控制台。
+    var round = 0
+    while (round < CONSOLE_DUMP_ABSORB_ROUNDS) {
+        val length = if (logFile.exists()) logFile.length() else windowEnd
+        val extra = readLogRegion(logFile, windowEnd, length)
+        if (extra.isBlank() || parseServerCommandNames(extra).isEmpty()) break
+        windowEnd = awaitLogQuiet(logFile, windowEnd, quietMillis, timeoutMillis)
+        round++
+    }
+    return ServeCommandSnapshot(names.toList(), windowStart, alignToLineStart(logFile, windowEnd, windowStart))
 }
 
 /** 等日志「静下来」：长度在 [quietMillis] 内不再增长即认为本次输出写完（或到 [timeoutMillis] 超时）。 */

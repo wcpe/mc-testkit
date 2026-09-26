@@ -369,6 +369,17 @@ class ServeSpec(val name: String) : java.io.Serializable {
     /** 经哪个代理（按 [ProxySpec.name] 引用；null = 直连后端）。设了则该代理须 routesTo 目标后端。 */
     var via: String? = null
 
+    /**
+     * 是否提供**附加控制台**（原版控制台体验）：为 true 时 serve 把目标进程放进**伪终端**启动，并在就绪时
+     * 打印一条 attach 命令——在另一个终端运行它，该终端就成为服务端自己的控制台（Tab 补全**含参数**、
+     * ↑↓ 历史、←→ 行编辑、颜色、Ctrl+C 停服），因为服务端这次真的站在一台终端前。
+     *
+     * 依赖平台的 PTY 分配器（POSIX 的 `script`，Linux / macOS 自带）：不可用时**不阻断** serve，只中文说明
+     * 并退回默认形态（本终端行级补全 + 纯文本日志）。注意：开启后运行目录日志 `<key>.log` 记的是服务端的
+     * **终端流**（含 JLine 转义与提示符重绘）——这是「服务端真的拿到终端」的必然结果（见 ADR-0022）。
+     */
+    var attachConsole: Boolean = false
+
     private val mutableBackends = mutableListOf<String>()
 
     /**

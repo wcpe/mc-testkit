@@ -331,6 +331,39 @@ class ServeConsoleTest {
     }
 
     @Test
+    @DisplayName("抓取命令表：dump 断续写入（负载高）时隐藏窗口应自愈，不漏表进控制台")
+    @Timeout(60)
+    fun captureAbsorbsTricklingDump() {
+        val logFile = tempFile("trickle.log")
+        logFile.writeText("[00:00:00 INFO]: boot\n")
+        val windowStart = logFile.length()
+
+        val snapshot = captureServerCommands(
+            logFile = logFile,
+            fromOffset = windowStart,
+            writeCommand = {
+                // 第一段：立刻写一半
+                logFile.appendText("[00:00:01 INFO]: /advancement: A Mojang provided command.\n")
+                // 第二段：隔得比静默窗口更久才写——单靠「等静默」会在这里提前收手，剩下的一半就会漏进控制台
+                Thread.sleep(300)
+                logFile.appendText("[00:00:02 INFO]: /xp: A Mojang provided command.\n")
+            },
+            quietMillis = 80,
+            timeoutMillis = 2_000,
+        )
+
+        val hidden = readLogRegion(logFile, windowStart, snapshot.tailStart)
+        assertTrue(hidden.contains("/advancement:"), "第一段应在隐藏窗口内：$hidden")
+        assertTrue(hidden.contains("/xp:"), "断续写入的第二段也应被吸收进隐藏窗口：$hidden")
+        assertEquals(
+            "",
+            parseServerCommandNames(readLogRegion(logFile, snapshot.tailStart, logFile.length())).joinToString(),
+            "跟随起点之后不该再有命令表内容（否则会刷进控制台）",
+        )
+        assertEquals(listOf("advancement", "xp"), snapshot.commands)
+    }
+
+    @Test
     @DisplayName("会话应把反馈打印出去、把下发命令记入历史、多候选时拦下不下发")
     @Timeout(30)
     fun sessionPrintsFeedbackAndRecordsHistory() {

@@ -1526,7 +1526,7 @@ object McTestkitTasks {
                     (proxy?.let { "（经代理 ${it.name}）" } ?: "（直连后端 ${backend.name}）") +
                     "。停止：本终端 Ctrl+C，或另跑 ./gradlew ${McTestkitTaskNames.stopServe(serveName)}",
             )
-            ctx.info("可直接在本终端输入服务端控制台命令（如 stop / say hello / op <玩家>），回车即发往后端 ${backend.name}。")
+            ctx.info("可直接在本终端输入服务端控制台命令（如 stop / say hello / op <玩家>），回车即发往后端 ${backend.name}；Tab 补全命令、↑/↓ 调历史。")
             // ⑤ 可选起 bot（serve 人机混场）：把环境驱到某状态（造数据 / 模拟其他玩家），但**不**据结果文件收尾——挂住人机混场。
             //    经代理则协议版本固定为后端版本（环境契约），连端口同真人（connectPort）。
             if (botSpecs.isNotEmpty()) {
@@ -1541,15 +1541,17 @@ object McTestkitTasks {
                 )
                 ctx.info("serve「$serveName」已起 ${botProcesses.size} 个 bot（人机混场，不判定）")
             }
-            // ⑥ 后端日志流到控制台（手测需可见启动 / 玩家活动）
-            logTail = startServeLogTail(ctx, File(backendRunDir, "${backend.name}.log"))
-            // ⑥' 终端输入 → 后端控制台 stdin（手测需能敲 stop / say 等命令；只 serve 接，E2E 自动化不接）
-            consolePump = startConsoleCommandPump(
-                source = System.`in`,
-                sink = backendProcess.outputStream,
-                logger = { ctx.warn(it) },
-                targetAlive = { backendProcess.isAlive },
+            // ⑥ 控制台接线：抓服务端命令表（供 Tab 补全 / ↑↓ 历史）→ 回放起服日志 → 跟随新日志 → 收终端输入
+            //    （只 serve 接，E2E 自动化任务不接，保持结果确定性）
+            val console = startServeConsole(
+                ctx = ctx,
+                serveName = serveName,
+                logFile = File(backendRunDir, "${backend.name}.log"),
+                target = backendProcess,
+                logLabel = backend.name,
             )
+            logTail = console.logTail
+            consolePump = console.consolePump
             // ⑦ 阻塞挂住：等后端进程退出（用户在服务端控制台 stop / kill / Ctrl+C）
             backendProcess.waitFor()
             ctx.info("serve「$serveName」后端已退出，收尾。")
@@ -1605,40 +1607,76 @@ object McTestkitTasks {
         return process
     }
 
+    /** serve 控制台的两个后台线程（日志跟随 + 终端命令转发），收尾时逐个 interrupt。 */
+    private class ServeConsoleThreads(val logTail: Thread, val consolePump: Thread)
+
     /**
-     * 起后台守护线程把 serve 后端日志文件 `tail` 到 Gradle 控制台（手测需可见服务端启动 / 玩家活动）。
-     * daemon 线程（不阻塞 JVM 退出）、可被 interrupt 终止；日志文件迟迟不出现则放弃（不致命）。
+     * 接线 serve 控制台（单后端与集群 serve 共用，差别只在目标进程与日志标签）：
+     * ① 抓服务端命令表（`help` 输出落日志的「隐藏窗口」，不刷控制台）；② 回放窗口之前的起服日志；
+     * ③ 从窗口之后跟随日志；④ 起终端命令转发（带 Tab 补全与 ↑↓ 历史）。
+     *
+     * 抓取失败（平台控制台没有 `help`，如 BungeeCord / Velocity）不阻断 serve：候选退化为只用历史命令。
      */
-    private fun startServeLogTail(ctx: TaskExecutionContext, logFile: File): Thread {
-        val thread = Thread {
-            try {
-                var waited = 0
-                while (!logFile.exists() && waited < 50 && !Thread.currentThread().isInterrupted) {
-                    Thread.sleep(200)
-                    waited++
-                }
-                if (!logFile.exists()) return@Thread
-                // 后端日志按 UTF-8 读（Paper 写 UTF-8）；用平台默认字符集会把中文等非 ASCII 读乱码（实测 Windows GBK 控制台）
-                logFile.bufferedReader(Charsets.UTF_8).use { reader ->
-                    while (!Thread.currentThread().isInterrupted) {
-                        val line = reader.readLine()
-                        if (line == null) {
-                            Thread.sleep(300)
-                        } else {
-                            ctx.info("[后端] $line")
-                        }
-                    }
-                }
-            } catch (ex: InterruptedException) {
-                Thread.currentThread().interrupt()
-            } catch (ex: Exception) {
-                ctx.logger.debug("[mc-testkit] serve 日志 tail 结束：${ex.message}")
-            }
+    private fun startServeConsole(
+        ctx: TaskExecutionContext,
+        serveName: String,
+        logFile: File,
+        target: Process,
+        logLabel: String,
+    ): ServeConsoleThreads {
+        val startupEnd = logFile.length()
+        val snapshot = runCatching {
+            captureServerCommands(
+                logFile = logFile,
+                fromOffset = startupEnd,
+                writeCommand = { line -> writeTargetConsole(target, line) },
+            )
+        }.getOrElse { ex ->
+            // 抓取本身的异常（磁盘 / 进程异常）同样不阻断 serve：退化为「没有命令候选」
+            ctx.logger.debug("[mc-testkit] 抓取服务端命令表失败：${ex.message ?: ex.javaClass.simpleName}")
+            ServeCommandSnapshot(emptyList(), startupEnd, startupEnd)
         }
-        thread.isDaemon = true
-        thread.name = "mc-testkit-serve-log-tail"
-        thread.start()
-        return thread
+        printLogRegion(
+            logFile = logFile,
+            from = 0,
+            to = snapshot.windowStart,
+            onLine = { ctx.info("[$logLabel] $it") },
+            onTruncated = { ctx.warn(it) },
+        )
+        ctx.info(
+            if (snapshot.commands.isEmpty()) {
+                "未取到服务端命令表（该平台控制台可能没有 help 命令），Tab 补全只用本控制台的历史命令。"
+            } else {
+                "Tab 补全已就绪：候选取自服务端命令表（${snapshot.commands.size} 条，含别名）与本控制台历史。"
+            },
+        )
+        val logTail = startServeLogTail(
+            logFile = logFile,
+            startOffset = snapshot.tailStart,
+            onLine = { ctx.info("[$logLabel] $it") },
+            onError = { ctx.logger.debug("[mc-testkit] $it") },
+        )
+        val session = ServeConsoleSession(
+            commands = snapshot.commands,
+            history = ServeConsoleHistory.fileFor(ctx.layout.resultsDir, serveName).let { ServeConsoleHistory(it).load() },
+            feedback = { ctx.info(it) },
+        )
+        val consolePump = startConsoleCommandPump(
+            source = System.`in`,
+            sink = target.outputStream,
+            logger = { ctx.warn(it) },
+            targetAlive = { target.isAlive },
+            handler = session,
+        )
+        return ServeConsoleThreads(logTail, consolePump)
+    }
+
+    /** 往子进程控制台写一行命令并 flush（抓取命令表用；挂住期间由转发线程写同一个 stdin）。 */
+    private fun writeTargetConsole(target: Process, line: String) {
+        runCatching {
+            target.outputStream.write((line + "\n").toByteArray(Charsets.UTF_8))
+            target.outputStream.flush()
+        }
     }
 
     /**
@@ -1759,7 +1797,7 @@ object McTestkitTasks {
                     "（经代理 ${proxy.name}），可 /server 切换：${clusterBackends.joinToString(", ") { it.name }}。" +
                     "。停止：本终端 Ctrl+C，或另跑 ./gradlew ${McTestkitTaskNames.stopServe(serveName)}",
             )
-            ctx.info("可直接在本终端输入**代理**控制台命令（如 end / glist / send <玩家> <服>），回车即发往代理 ${proxy.name}；切服另用游戏内 /server。")
+            ctx.info("可直接在本终端输入**代理**控制台命令（如 end / glist / send <玩家> <服>），回车即发往代理 ${proxy.name}；切服另用游戏内 /server；Tab 补全命令、↑/↓ 调历史。")
             // ⑤ 可选起 bot（serve 人机混场）：经代理端口、CLUSTER_BACKENDS 下发 /server 切换目标（每个 bot 都能切），
             //    协议版本固定为后端版本；把环境驱到某状态但**不**据结果文件收尾——挂住人机混场。
             if (botSpecs.isNotEmpty()) {
@@ -1776,15 +1814,17 @@ object McTestkitTasks {
                 )
                 ctx.info("集群 serve「$serveName」已起 ${botProcesses.size} 个 bot（人机混场，不判定）")
             }
-            // ⑥ 代理日志流到控制台（手测看切服 / 转发）
-            logTail = startServeLogTail(ctx, File(layout.proxyRunDir, "${proxy.name}.log"))
-            // ⑥' 终端输入 → 代理控制台 stdin（集群 serve 阻塞在代理上，真人的入口也是代理；只 serve 接，E2E 自动化不接）
-            consolePump = startConsoleCommandPump(
-                source = System.`in`,
-                sink = proxyProcess.outputStream,
-                logger = { ctx.warn(it) },
-                targetAlive = { proxyProcess.isAlive },
+            // ⑥ 控制台接线：抓代理命令表（BungeeCord / Velocity 的控制台没有 help，会如实退化为只用历史）
+            //    → 回放起服日志 → 跟随新日志 → 收终端输入（只 serve 接，E2E 自动化不接）
+            val console = startServeConsole(
+                ctx = ctx,
+                serveName = serveName,
+                logFile = File(layout.proxyRunDir, "${proxy.name}.log"),
+                target = proxyProcess,
+                logLabel = proxy.name,
             )
+            logTail = console.logTail
+            consolePump = console.consolePump
             // ⑦ 阻塞挂住：等代理进程退出（代理是真人入口；某后端宕仍挂着便于看崩溃接管 fallback）
             proxyProcess.waitFor()
             ctx.info("serve「$serveName」集群代理已退出，收尾。")

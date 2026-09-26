@@ -11,8 +11,22 @@ import java.nio.charset.StandardCharsets
 internal const val CONSOLE_PUMP_THREAD_NAME = "mc-testkit-console-pump"
 
 /**
+ * 终端一行的处理器：把这一行变成「要下发什么」（`null` = 只打印、不下发）。
+ *
+ * 默认（不传）行为是**原样下发**；serve 传入 [ServeConsoleSession] 以支持 Tab 补全与历史——
+ * 它可能**改写**要下发的命令（补全命中）、也可能**拦下**这一行（多候选 / 不支持的控制序列）。
+ */
+internal fun interface ConsoleLineHandler {
+    fun onLine(line: String): String?
+}
+
+/**
  * 把 [source] 的输入**逐行**转发到 [sink]（保持输入顺序），用于把开发者在 Gradle 终端敲的
  * 控制台命令投给前台被 `serve` 挂住的服务端 / 代理进程的 stdin。
+ *
+ * serve 会传入 [handler]（[ServeConsoleSession]）以便在这一层做 Tab 补全与历史：用户按下的 Tab 会
+ * 作为 `\t` 落在整行里，处理器据此改写或拦下这一行（详见 [planConsoleLine] 与 ADR-0021）。
+ * 不传处理器时行为是纯转发。
  *
  * 之所以需要它：`ProcessBuilder` 只把子进程 stdout/stderr 接到日志文件，**stdin 没有任何接线**，
  * 终端输入不会自己到达服务端控制台——serve 挂住后敲 `stop` / `say` 全无反应，只能另开终端跑
@@ -32,6 +46,7 @@ internal const val CONSOLE_PUMP_THREAD_NAME = "mc-testkit-console-pump"
  * @param threadName 线程名。
  * @param logger 中文告警输出（真实错误才调用）。
  * @param targetAlive 目标是否仍存活（决定 IO 失败是"正常收尾"还是"真问题"）。
+ * @param handler 行处理器（默认原样下发；serve 传补全 / 历史处理器）。
  * @return 已启动的守护线程（调用方在收尾时 interrupt）。
  */
 internal fun startConsoleCommandPump(
@@ -40,6 +55,7 @@ internal fun startConsoleCommandPump(
     threadName: String = CONSOLE_PUMP_THREAD_NAME,
     logger: (String) -> Unit = {},
     targetAlive: () -> Boolean = { true },
+    handler: ConsoleLineHandler = ConsoleLineHandler { it },
 ): Thread {
     val thread = Thread {
         val writer = OutputStreamWriter(sink, StandardCharsets.UTF_8)
@@ -49,8 +65,10 @@ internal fun startConsoleCommandPump(
                 // EOF：无终端 / 输入结束——正常结束（不视为错误）
                 val line = reader.readLine() ?: break
                 if (!targetAlive()) break
+                // 处理器可改写（补全）或拦下（只打印）这一行；拦下时不下发
+                val command = handler.onLine(line) ?: continue
                 // 逐行落盘并 flush：控制台命令须即时到达，不能攒在缓冲里
-                writer.write(line)
+                writer.write(command)
                 writer.write("\n")
                 writer.flush()
             }

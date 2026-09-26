@@ -186,6 +186,33 @@ class ConsoleCommandPumpTest {
     }
 
     @Test
+    @DisplayName("行处理器可改写或拦下一行（serve 的 Tab 补全 / 历史 / 不支持序列靠它）")
+    @Timeout(30)
+    fun applyLineHandlerToDecideWhatIsDelivered() {
+        val sink = ByteArrayOutputStream()
+        val handled = mutableListOf<String>()
+
+        val pump = startConsoleCommandPump(
+            source = ByteArrayInputStream("whi\t\nstop\nignored\n".toByteArray(StandardCharsets.UTF_8)),
+            sink = sink,
+            handler = ConsoleLineHandler { line ->
+                handled += line
+                when {
+                    // 补全命中：改写下发给服务端的内容
+                    line.contains('\t') -> "whitelist"
+                    // 拦下：不下发
+                    line == "ignored" -> null
+                    else -> line
+                }
+            },
+        )
+        awaitPump(pump)
+
+        assertEquals(listOf("whi\t", "stop", "ignored"), handled, "每一行都应交给处理器（含被拦下的）")
+        assertEquals("whitelist\nstop\n", sink.toString(StandardCharsets.UTF_8.name()))
+    }
+
+    @Test
     @DisplayName("多行命令应原样保序投递，含中文与空格参数")
     @Timeout(30)
     fun preserveCommandContentIncludingChineseAndSpaces() {

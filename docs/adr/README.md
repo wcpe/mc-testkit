@@ -23,6 +23,7 @@
 | [0018](0018-ci-release-and-pr-gating.md) | 发布流程改为「分支保护 + PR 门禁 + 打 tag 触发 CI 发布」 | 已接受 |
 | [0019](0019-release-notes-from-prs.md) | Release 正文改为「GitHub 从 PR 自动生成」（补充 0018） | 已接受 |
 | [0020](0020-scenario-lifecycle-hooks.md) | 场景生命周期钩子：beforeScenario / readyScenario / afterScenario 三个时序点，含失败路径收尾保障 | 已接受 |
+| [0021](0021-serve-console-line-completion.md) | serve 控制台采用「框架侧行级补全 + 历史」，不引入 PTY（补充 0011） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

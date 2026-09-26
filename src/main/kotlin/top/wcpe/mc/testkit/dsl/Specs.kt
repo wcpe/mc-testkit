@@ -301,6 +301,55 @@ class ScenarioSpec(val name: String) : java.io.Serializable {
     fun stress(configure: StressSpec.() -> Unit) {
         mutableStress = StressSpec().apply(configure)
     }
+
+    private val mutableBeforeHooks = mutableListOf<ScenarioHook>()
+    private val mutableReadyHooks = mutableListOf<ScenarioHook>()
+    private val mutableAfterHooks = mutableListOf<ScenarioHook>()
+
+    /** 该场景的「场景前」钩子（按声明顺序执行；空表示无）。 */
+    val beforeHooks: List<ScenarioHook> get() = mutableBeforeHooks.toList()
+
+    /** 该场景的「节点就绪后」钩子（按声明顺序执行；空表示无）。 */
+    val readyHooks: List<ScenarioHook> get() = mutableReadyHooks.toList()
+
+    /** 该场景的「场景后」钩子（按声明顺序执行；空表示无）。 */
+    val afterHooks: List<ScenarioHook> get() = mutableAfterHooks.toList()
+
+    /**
+     * 声明一个「场景前」钩子：在**运行目录准备完成之后、服务端 / 代理启动之前**执行。
+     *
+     * 典型用途：拉起被测系统依赖的**外部进程**（独立控制面、外部服务），并等它就绪——
+     * 必须先于服务端启动，否则服务端内的 agent 会因连不上依赖而注册失败（虽会退避重试，但拖慢且不稳）。
+     *
+     * 钩子抛异常即判该场景失败——但 [afterScenario] 声明的钩子**仍会执行**（收尾不被跳过）。
+     */
+    fun beforeScenario(hook: ScenarioHook) {
+        mutableBeforeHooks += hook
+    }
+
+    /**
+     * 声明一个「节点就绪后」钩子：在**全部服务端 / 代理端口可连之后、机器人启动之前**执行。
+     *
+     * 与 [beforeScenario] 的区别在时序：
+     * - [beforeScenario] 时服务端**尚未启动**（用于起外部依赖）
+     * - 本钩子时服务端**已启动并就绪**（用于依赖服务端的初始化：注册审批、造数、下发配置）
+     *
+     * 仅在集群场景与直连场景生效（这两条路径有明确的「节点就绪」时刻）；经代理与压测场景不支持，
+     * 声明了会在配置期报错，不静默忽略。
+     */
+    fun readyScenario(hook: ScenarioHook) {
+        mutableReadyHooks += hook
+    }
+
+    /**
+     * 声明一个「场景后」钩子：在场景判定完成后执行，**正常 / 失败 / 中断三路径都会执行**
+     * （编排侧用 `finalizedBy` + 任务体内 `try/finally` 双保险，与既有收尾语义一致）。
+     *
+     * 典型用途：按 pid 收尾 [beforeScenario] 起的外部进程、清理临时资源。
+     */
+    fun afterScenario(hook: ScenarioHook) {
+        mutableAfterHooks += hook
+    }
 }
 
 /**

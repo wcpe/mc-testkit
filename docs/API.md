@@ -236,7 +236,74 @@ v1 **不做** `pluginUnderTest` 的坐标形式（解析机制可复用，待真
 
 > 以上 4 条为**冻结的框架核心协议**。集群 / 崩溃接管等场景的桩↔bot 还可约定**场景特定标记**——如 `template/harness` 里 bot 到达 / 落到目标后端后发的「到达确认」标记 `E2E_CLUSTER_ARRIVED`，及崩溃接管（FR-15）示例里 bot 触发默认后端模拟宕机的 `E2E_TRIGGER_CRASH`（桩收到即 `Runtime.halt`）——均属 template / 消费方约定、**不进**冻结协议；真实跨服一致性 / 接管判定由消费方桩按业务替换。
 
-### 3.5 结果文件（测试结论真源，已冻结）
+### 3.5 场景生命周期钩子（FR-24，ADR-0020）
+
+被测系统依赖**外部控制面**时（被测插件内的 agent 需连上一个独立进程，由它下发配置 / 审批身份），
+框架的既有接缝不够用：就绪门只有「TCP 可连」与「结果文件」两种，且消费方无法挂载自己的收尾。
+`scenario` 提供三个时序点的钩子来插入这类动作：
+
+```kotlin
+scenario("full") {
+    backends("paper1", "paper2"); via = "wf"
+    // ① 服务端启动前：起外部控制面并等它就绪（否则服务端内 agent 注册失败）
+    beforeScenario(
+        ExecHook(
+            command = listOf("/opt/beacon/beacon"),
+            env = mapOf("BEACON_DB_DRIVER" to "sqlite"),
+            readyPort = 8848,
+            readyLogPattern = "控制面启动中",
+        ),
+    )
+    // ② 全部节点就绪后、bot 启动前：依赖服务端的初始化（审批身份 / 造数 / 下发配置）
+    readyScenario(
+        HookChain(
+            listOf(
+                HttpHook("POST", "http://127.0.0.1:8848/admin/v1/auth/login", body = """{"username":"admin"}"""),
+                SleepHook(3_000, "等 agent 注册"),
+            ),
+        ),
+    )
+    // ③ 场景结束后：收尾（正常 / 失败 / 中断三路径都执行）
+    afterScenario(StopPidHook("hook-full.pid"))
+    bot { username = "Admin"; action = "full" }
+}
+```
+
+**三个时序点**：
+
+| 钩子 | 时刻 | 用途 |
+|---|---|---|
+| `beforeScenario` | 运行目录就绪后、**服务端启动前** | 起外部依赖、等它就绪 |
+| `readyScenario` | **全部节点端口就绪后**、bot 启动前 | 依赖服务端的初始化 |
+| `afterScenario` | 场景判定之后 | 按 pid 收尾、清理 |
+
+> **为什么不是单个 beforeScenario**：外部控制面天然有「起进程 → 服务端注册 → 审批」三段时序。
+> 压缩成一段会导致要么审批在服务端起来前做（失败），要么控制面在服务端起来后才起（注册失败且拖慢）。
+
+**失败语义刻意不对称**：前置钩子（`beforeScenario` / `readyScenario`）失败即**抛出**，场景判失败——
+初始化没成功时后续跑下去只会得到误导性结果；收尾钩子（`afterScenario`）失败**只记 warn 并继续**，
+不阻断其余清理、不掩盖场景本身的判定失败。
+
+**收尾保障**：`afterScenario` 挂 `finalizedBy` 并与框架既有 `stop*` 同层，正常 / 失败 / 中断三路径都执行。
+
+**`readyScenario` 仅集群场景**：直连场景与经代理场景的后端是**前台自停**进程（ADR-0004），
+bot 先起、后端后起，不存在「全部节点已就绪」的时刻。在这些形态声明会在**配置期**抛中文异常——
+不静默忽略（静默忽略会让消费方以为初始化生效了，实际没跑）。
+
+**内置钩子实现**（均为 `Serializable`，满足配置缓存对动作捕获图的要求）：
+
+| 实现 | 作用 |
+|---|---|
+| `ExecHook` | 起后台进程（支持 TCP / 日志双就绪门），pid 落 `resultsDir/hook-<场景>.pid` |
+| `StopPidHook` | 按 pid 收尾（进程已退出则静默跳过），与框架既有收尾语义一致 |
+| `HttpHook` | 发 HTTP 请求（用 `HttpURLConnection`，不抬高最低运行 JDK） |
+| `SleepHook` | 沉降等待（等异步模块就绪等） |
+| `HookChain` | 按序串联多个钩子，任一步失败即中断 |
+
+**自动任务**：`before<Key>Scenario`（`dependsOn(prepare)`）、`after<Key>Scenario`（由场景任务 `finalizedBy`）；
+仅当场景声明了对应钩子时注册。
+
+### 3.6 结果文件（测试结论真源，已冻结）
 
 桩写出 `<scenario>.properties`，编排 verify 任务**只认此文件**判定（不靠日志猜测，架构不变量真源）：
 

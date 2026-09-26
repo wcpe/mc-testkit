@@ -32,6 +32,20 @@ object McTestkitTaskNames {
     /** 一键「启动机器人 + 验证」任务：`e2e<Key>WithBot`。 */
     fun withBot(scenario: String): String = verify(scenario) + "WithBot"
 
+    /**
+     * 场景前钩子任务：`before<Key>Scenario`（仅当场景声明了 `beforeScenario` 时注册）。
+     *
+     * 置于 prepare 之后、任何场景活动之前，保证外部依赖就绪后才起服务端 / 机器人。
+     */
+    fun beforeScenario(scenario: String): String = "before" + scenario.toTaskKey() + "Scenario"
+
+    /**
+     * 场景后钩子任务：`after<Key>Scenario`（仅当场景声明了 `afterScenario` 时注册）。
+     *
+     * 由各场景任务 `finalizedBy`，正常 / 失败 / 中断三路径都执行，用于收尾外部依赖。
+     */
+    fun afterScenario(scenario: String): String = "after" + scenario.toTaskKey() + "Scenario"
+
     /** 集群验证任务（多后端 + 代理 + 切换机器人）：`e2e<Key>Cluster`（集群编排，ADR-0008）。 */
     fun cluster(scenario: String): String = verify(scenario) + "Cluster"
 

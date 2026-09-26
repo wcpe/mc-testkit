@@ -5,6 +5,7 @@ import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -59,7 +60,7 @@ class ProcessReaperTest {
         assertFalse(pidFile.exists())
 
         // 不应抛异常
-        stopProcessByPidFile(pidFile)
+        assertEquals(PidFileStopResult.NO_PID_FILE, stopProcessByPidFile(pidFile))
 
         assertFalse(pidFile.exists(), "缺失的 pid 文件不应被创建")
     }
@@ -71,7 +72,7 @@ class ProcessReaperTest {
         val pidFile = File(dir, "garbage.pid")
         pidFile.writeText("not-a-number\n")
 
-        stopProcessByPidFile(pidFile)
+        assertEquals(PidFileStopResult.INVALID_PID_FILE, stopProcessByPidFile(pidFile))
 
         assertFalse(pidFile.exists(), "非法内容的 pid 文件应被清理")
     }
@@ -88,7 +89,7 @@ class ProcessReaperTest {
         }
         pidFile.writeText(unlikelyPid.toString())
 
-        stopProcessByPidFile(pidFile)
+        assertEquals(PidFileStopResult.PROCESS_GONE, stopProcessByPidFile(pidFile))
 
         assertFalse(pidFile.exists(), "陈旧 pid 文件应被清理")
     }
@@ -103,7 +104,7 @@ class ProcessReaperTest {
             pidFile.writeText(child.pid().toString())
             assertTrue(child.isAlive, "子进程启动后应存活")
 
-            stopProcessByPidFile(pidFile)
+            assertEquals(PidFileStopResult.STOPPED, stopProcessByPidFile(pidFile))
 
             // 收尾后子进程应在合理时间内结束
             val exited = child.waitFor(20, TimeUnit.SECONDS)

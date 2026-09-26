@@ -72,6 +72,30 @@ private val FRAMEWORK_JVM_ARGS =
     listOf("-Dterminal.ansi=false", "-Dnet.kyori.ansi.colorLevel=none", "-Dtaboolib.debug=true")
 
 /**
+ * 落盘一个服务端 / 代理进程的收尾凭证：pid 文件（当前一轮的快路径）+ 进程台账（跨轮次的兜底路径）。
+ *
+ * 两处都写是有意的冗余，各管一段生命周期，缺一不可（见 [ProcessLedger] 与 [stopTrackedProcesses]）：
+ * - **pid 文件**是当前一轮的凭证，被停任务优先读取；但它会被下一轮起服覆盖、随运行目录清理消失。
+ * - **台账**落结果目录（无任何清理点，随 `build/` 走），故上一轮被强杀留下的进程仍能被找回来。
+ *
+ * @param ctx 任务执行上下文（提供结果目录）。
+ * @param pidFile 本轮的 pid 文件（位置随调用方，集群 / 代理落结果目录、单 serve 落运行目录）。
+ * @param ledgerKey 台账 key（`backend/<名>` 等，同一逻辑进程重复登记即覆盖为最新一轮）。
+ * @param process 刚起的进程。
+ * @param port 监听端口（进台账，供收尾后复验端口是否真的释放）。
+ */
+private fun recordProcessedPid(
+    ctx: TaskExecutionContext,
+    pidFile: File,
+    ledgerKey: String,
+    process: Process,
+    port: Int,
+) {
+    pidFile.apply { parentFile?.mkdirs() }.writeText(process.pid().toString())
+    ProcessLedger.record(ctx.layout.resultsDir, ledgerKey, process.pid(), port)
+}
+
+/**
  * 起 bot 前等后端 / 代理端口可连的就绪门上限（秒）。
  *
  * 这是**确定性就绪门**而非定时等待：等多久取决于进程何时真正接受连接（快环境几秒、慢 CI 久些），
@@ -461,7 +485,13 @@ object McTestkitTasks {
                 task.description = "停止代理 ${proxy.name}（按 pid 收尾）"
                 task.doLast {
                     // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
-                    stopProcessByPidFile(proxyPidFile) { ctx.info(it) }
+                    val summary = stopTrackedProcesses(ctx.layout.resultsDir, listOf(proxyPidFile), ctx::info)
+                    reportStopOutcome(
+                        ctx,
+                        summary,
+                        listOf(proxy.port),
+                        "上一轮残留代理进程仍占端口（pid 记录可能已随运行目录清理丢失）",
+                    )
                 }
             }
         }
@@ -478,6 +508,14 @@ object McTestkitTasks {
                 try {
                     // 代理资源由本任务自足预检（与 prepare 不共享可变状态，兼容配置缓存）
                     val runtime = preflightRuntimeForTask(ctx, listOf(backend), listOf(proxy), mavenSources)
+                    // ⓪ 端口预检：代理与后端端口被占即中文失败（见 requirePortsAvailable 的说明）
+                    requirePortsAvailable(
+                        listOf(
+                            PortTarget(proxy.port, "代理 ${proxy.name}"),
+                            PortTarget(backend.port, "后端 ${backend.name}"),
+                        ),
+                        stopTaskName = stopProxyName,
+                    )
                     // ① 后端切到代理模式：BungeeCord 系走三件套，Velocity 走 modern forwarding 两件套（含共享 secret）
                     val backendRunDir = layout.backendRunDir(backend.name)
                     if (isBungeeMode) {
@@ -538,14 +576,21 @@ object McTestkitTasks {
             task.group = TASK_GROUP
             task.description = "停止集群场景 ${scenario.name} 的全部后端、代理与机器人（按 pid 收尾）"
             task.doLast {
-                // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
-                clusterBackends.forEach { backend ->
-                    stopProcessByPidFile(layout.clusterBackendPidFile(backend.name)) { ctx.info(it) }
-                }
-                stopProcessByPidFile(layout.proxyPidFile(proxy.name)) { ctx.info(it) }
-                botKeys.forEach { key ->
-                    stopProcessByPidFile(botPidFile(layout.resultsDir, key)) { ctx.info(it) }
-                }
+                // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容配置缓存
+                val summary = stopTrackedProcesses(
+                    layout.resultsDir,
+                    clusterBackends.map { layout.clusterBackendPidFile(it.name) } +
+                        layout.proxyPidFile(proxy.name) +
+                        botKeys.map { botPidFile(layout.resultsDir, it) },
+                    ctx::info,
+                )
+                reportStopOutcome(
+                    ctx,
+                    summary,
+                    clusterBackends.map { it.port } + proxy.port,
+                    "上一轮残留进程仍占端口" +
+                        "（多为前一次构建被强杀、pid 记录已随运行目录清理丢失）",
+                )
             }
         }
 
@@ -568,6 +613,14 @@ object McTestkitTasks {
                     layout.resultsDir.mkdirs()
                     val resultFile = File(layout.resultsDir, McTestkitResultFile.fileName(scenario.name))
                     if (resultFile.exists()) resultFile.delete() // 清上轮结果，避免误判
+
+                    // ⓪ 端口预检：任一后端 / 代理端口被占即中文失败，避免「就绪门被上一轮残留进程误判为已就绪
+                    //    → 新进程 bind 失败」白等一轮（进程生命周期与收尾 高风险区）
+                    requirePortsAvailable(
+                        clusterBackends.map { PortTarget(it.port, "集群后端 ${it.name}") } +
+                            PortTarget(proxy.port, "集群代理 ${proxy.name}"),
+                        stopTaskName = stopName,
+                    )
 
                     // ① 每后端独立运行目录 prepare + BungeeCord 模式 + 后台起（同 SCENARIO / RESULT_FILE）
                     val sameVersionPredecessors = sameVersionStartupPredecessors(
@@ -661,8 +714,13 @@ object McTestkitTasks {
             javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
         )
-        layout.clusterBackendPidFile(backend.name).apply { parentFile?.mkdirs() }
-            .writeText(process.pid().toString())
+        recordProcessedPid(
+            ctx,
+            layout.clusterBackendPidFile(backend.name),
+            "$LEDGER_KEY_BACKEND/${backend.name}",
+            process,
+            backend.port,
+        )
         ctx.info("已后台启动集群后端 ${backend.name} pid=${process.pid()} 端口=${backend.port}")
         return process
     }
@@ -711,7 +769,7 @@ object McTestkitTasks {
             javaPath = resolveProxyJava(ctx, proxy),
             logger = { ctx.info(it) },
         )
-        layout.proxyPidFile(proxy.name).apply { parentFile?.mkdirs() }.writeText(process.pid().toString())
+        recordProcessedPid(ctx, layout.proxyPidFile(proxy.name), "$LEDGER_KEY_PROXY/${proxy.name}", process, proxy.port)
         ctx.info(
             "已启动集群代理 ${proxy.name} pid=${process.pid()} 监听端口=${proxy.port}" +
                 "（servers: ${clusterBackends.joinToString(",") { it.name }}）",
@@ -793,13 +851,21 @@ object McTestkitTasks {
             task.description = "停止压测场景 ${scenario.name} 的全部后端、代理与机器人（按 pid 收尾）"
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
-                stressBackends.forEach { backend ->
-                    stopProcessByPidFile(layout.clusterBackendPidFile(backend.name)) { ctx.info(it) }
-                }
-                proxy?.let { stopProcessByPidFile(layout.proxyPidFile(it.name)) { ctx.info(it) } }
-                botKeys.forEach { key ->
-                    stopProcessByPidFile(botPidFile(layout.resultsDir, key)) { ctx.info(it) }
-                }
+                val summary = stopTrackedProcesses(
+                    layout.resultsDir,
+                    stressBackends.map { layout.clusterBackendPidFile(it.name) } +
+                        (proxy?.let { listOf(layout.proxyPidFile(it.name)) } ?: emptyList()) +
+                        botKeys.map { botPidFile(layout.resultsDir, it) },
+                    ctx::info,
+                )
+                val stressPorts = stressBackends.map { it.port } +
+                    (proxy?.let { p -> stressBackends.indices.map { index -> p.port + index } } ?: emptyList())
+                reportStopOutcome(
+                    ctx,
+                    summary,
+                    stressPorts,
+                    "上一轮残留进程仍占端口（多为前一次构建被强杀、pid 记录已随运行目录清理丢失）",
+                )
             }
         }
 
@@ -830,6 +896,19 @@ object McTestkitTasks {
                     stressBackends.forEach { backend ->
                         stressResultFile(layout, scenario.name, backend.name).takeIf { it.exists() }?.delete()
                     }
+
+                    // ⓪ 端口预检：后端端口 + 代理各 listener 端口（后者按基数 + 序号推导）被占即中文失败
+                    requirePortsAvailable(
+                        stressBackends.map { PortTarget(it.port, "压测后端 ${it.name}") } +
+                            if (proxy != null) {
+                                stressBackends.mapIndexed { index, backend ->
+                                    PortTarget(proxy.port + index, "压测代理 listener->${backend.name}")
+                                }
+                            } else {
+                                emptyList()
+                            },
+                        stopTaskName = stopName,
+                    )
 
                     // ① 每后端独立运行目录 prepare（+ BungeeCord 模式 if via）+ 后台起（同 SCENARIO、各自 per-server RESULT_FILE）
                     stressBackends.forEach { backend ->
@@ -933,7 +1012,7 @@ object McTestkitTasks {
             javaPath = resolveProxyJava(ctx, proxy),
             logger = { ctx.info(it) },
         )
-        layout.proxyPidFile(proxy.name).apply { parentFile?.mkdirs() }.writeText(process.pid().toString())
+        recordProcessedPid(ctx, layout.proxyPidFile(proxy.name), "$LEDGER_KEY_PROXY/${proxy.name}", process, proxy.port)
         ctx.info(
             "已启动压测代理 ${proxy.name} pid=${process.pid()} " +
                 "listeners=${bindings.joinToString(",") { "${it.listenPort}->${it.backendName}" }}",
@@ -1038,6 +1117,55 @@ object McTestkitTasks {
         File(layout.resultsDir, McTestkitResultFile.fileName("$scenario-$backendName"))
 
     /** 温和销毁一个进程（压测 bot 收尾双保险；pid 文件由停任务按 pid 清理，这里只灭进程）。 */
+    /**
+     * 打印一次停任务收尾的结果，并在「声明过的端口仍被占用」时给出可操作提示。
+     *
+     * **为什么必须说话**：收尾此前一律静默成功，用户无法区分「本来就没起 / 已干净收尾」与
+     * 「pid 记录丢失、进程逃逸到上一轮」——后者会让下一轮起服以 `bind(..) failed` 失败，
+     * 而用户在上一步看不到任何线索（本函数正是为此存在）。收尾仍**不因此判失败**：
+     * 端口可能是用户自己手工起的服务端，任务无权替用户下结论。
+     *
+     * @param ctx 任务执行上下文。
+     * @param summary [stopTrackedProcesses] 的收尾摘要。
+     * @param declaredPorts 本任务声明过的端口（收尾后复验是否真的释放）。
+     * @param escapeHint 端口仍未释放时的补充说明（各任务按自身语义给出）。
+     */
+    private fun reportStopOutcome(
+        ctx: TaskExecutionContext,
+        summary: StopSummary,
+        declaredPorts: List<Int>,
+        escapeHint: String,
+    ) {
+        ctx.info("收尾完成：结束 ${summary.stopped} 个进程（其中台账兜底 ${summary.ledgerStopped} 个）")
+        if (summary.ledgerStopped > 0) {
+            ctx.info(
+                "注意：本次收尾了 ${summary.ledgerStopped} 个**上一轮**残留的进程——" +
+                    "前一次构建应是被强制中断、未走到收尾（否则不会留到本轮）。",
+            )
+        }
+        if (summary.ledgerSkipped > 0) {
+            ctx.warn(
+                "跳过 ${summary.ledgerSkipped} 条台账记录：其 pid 已被其它进程占用（命令行与登记特征不符）。" +
+                    "已清理这些陈旧记录以免误杀；若仍有残留，请按端口手工排查。",
+            )
+        }
+        val remaining = portsStillOccupied(declaredPorts.distinct())
+        if (remaining.isEmpty()) {
+            return
+        }
+        ctx.warn(
+            "收尾后以下端口仍被占用：${remaining.joinToString(", ")}。$escapeHint。" +
+                "请按端口查明占用进程（Windows：netstat -ano | findstr :<端口>；" +
+                "Linux：ss -ltnp | grep :<端口>）后手工结束。",
+        )
+        if (summary.pidFileMissing > 0) {
+            ctx.warn(
+                "本次有 ${summary.pidFileMissing} 个节点没有 pid 文件：可能是该节点没起来（正常），" +
+                    "也可能是它的进程逃逸到上一轮且台账已丢失（那时只能按上面的端口命令手工清理）。",
+            )
+        }
+    }
+
     private fun destroyProcessQuietly(ctx: TaskExecutionContext, process: Process) {
         try {
             if (process.isAlive) {
@@ -1093,9 +1221,20 @@ object McTestkitTasks {
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val layout = ctx.layout
-                stopProcessByPidFile(provisionPidFile(layout.backendRunDir(backend.name), backend.name)) { ctx.info(it) }
-                proxy?.let { stopProcessByPidFile(layout.proxyPidFile(it.name)) { ctx.info(it) } }
-                botKeys.forEach { key -> stopProcessByPidFile(botPidFile(layout.resultsDir, key)) { ctx.info(it) } }
+                val summary = stopTrackedProcesses(
+                    layout.resultsDir,
+                    listOf(provisionPidFile(layout.backendRunDir(backend.name), backend.name)) +
+                        (proxy?.let { listOf(layout.proxyPidFile(it.name)) } ?: emptyList()) +
+                        botKeys.map { botPidFile(layout.resultsDir, it) },
+                    ctx::info,
+                )
+                reportStopOutcome(
+                    ctx,
+                    summary,
+                    listOfNotNull(backend.port, proxy?.port),
+                    "上一轮残留进程仍占端口。serve 挂住期间最易被强杀（关终端 / 杀 daemon），" +
+                        "那时它的 pid 文件会随运行目录清理丢失，只能按端口手工清理",
+                )
             }
         }
 
@@ -1152,6 +1291,15 @@ object McTestkitTasks {
         val layout = ctx.layout
         val backendRunDir = layout.backendRunDir(backend.name)
         val runtime = preflightRuntimeForTask(ctx, listOf(backend), proxy?.let(::listOf) ?: emptyList(), mavenSources)
+        // ⓪ 端口预检：serve 是「挂住等真人连」的长生命周期形态，端口被上一轮残留进程占住时最易误判
+        //    （就绪门报「已就绪」→ 真人连上去连的其实是旧服务端），故起服前先拦住
+        requirePortsAvailable(
+            listOfNotNull(
+                proxy?.let { PortTarget(it.port, "代理 ${it.name}") },
+                PortTarget(backend.port, "后端 ${backend.name}"),
+            ),
+            stopTaskName = McTestkitTaskNames.stopServe(serveName),
+        )
         // ① 准备运行目录（注入被测 + 依赖插件，含桩；桩由哨兵场景置空闲）
         prepareRunDirectory(ctx, backend, backendRunDir, runtime.backends.getValue(backend.name))
 
@@ -1254,6 +1402,16 @@ object McTestkitTasks {
             javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
         )
+        // 单 serve 的 pid 文件由 ServerLauncher 写在运行目录内（`run-<后端>/<后端>.pid`），
+        // 而运行目录每轮清理、pid 文件也会被下一轮起服先删——跨轮次逃逸的进程只能靠台账找回，
+        // 故此处必须同时登记台账（集群 / 代理路径同理，见 recordProcessedPid）。
+        recordProcessedPid(
+            ctx,
+            provisionPidFile(runDir, backend.name),
+            "$LEDGER_KEY_BACKEND/${backend.name}",
+            process,
+            backend.port,
+        )
         ctx.info("已起 serve 后端 ${backend.name} pid=${process.pid()} 端口=${backend.port}（桩空闲、不判定）")
         return process
     }
@@ -1318,11 +1476,20 @@ object McTestkitTasks {
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val layout = ctx.layout
-                clusterBackends.forEach { backend ->
-                    stopProcessByPidFile(layout.clusterBackendPidFile(backend.name)) { ctx.info(it) }
-                }
-                stopProcessByPidFile(layout.proxyPidFile(proxy.name)) { ctx.info(it) }
-                botKeys.forEach { key -> stopProcessByPidFile(botPidFile(layout.resultsDir, key)) { ctx.info(it) } }
+                val summary = stopTrackedProcesses(
+                    layout.resultsDir,
+                    clusterBackends.map { layout.clusterBackendPidFile(it.name) } +
+                        layout.proxyPidFile(proxy.name) +
+                        botKeys.map { botPidFile(layout.resultsDir, it) },
+                    ctx::info,
+                )
+                reportStopOutcome(
+                    ctx,
+                    summary,
+                    clusterBackends.map { it.port } + proxy.port,
+                    "上一轮残留进程仍占端口。serve 挂住期间最易被强杀（关终端 / 杀 daemon），" +
+                        "那时它的 pid 文件会随运行目录清理丢失，只能按端口手工清理",
+                )
             }
         }
 
@@ -1368,6 +1535,13 @@ object McTestkitTasks {
         }
         Runtime.getRuntime().addShutdownHook(shutdownHook)
         try {
+            // ⓪ 端口预检：同一轮内后端与代理端口撞车由拓扑解析期拦截，此处拦的是**跨轮次残留进程**占端口
+            //    （持久 serve 挂住时间最长，最易留下未收尾进程；见 requirePortsAvailable）
+            requirePortsAvailable(
+                clusterBackends.map { PortTarget(it.port, "集群后端 ${it.name}") } +
+                    PortTarget(proxy.port, "集群代理 ${proxy.name}"),
+                stopTaskName = McTestkitTaskNames.stopServe(serveName),
+            )
             // ① 每后端独立运行目录 prepare + 代理模式配置 + 后台起（哨兵场景使桩空闲）
             clusterBackends.forEach { backend ->
                 val runDir = layout.clusterBackendRunDir(backend.name)
@@ -1462,7 +1636,13 @@ object McTestkitTasks {
             javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
         )
-        layout.clusterBackendPidFile(backend.name).apply { parentFile?.mkdirs() }.writeText(process.pid().toString())
+        recordProcessedPid(
+            ctx,
+            layout.clusterBackendPidFile(backend.name),
+            "$LEDGER_KEY_BACKEND/${backend.name}",
+            process,
+            backend.port,
+        )
         ctx.info("已起集群 serve 后端 ${backend.name} pid=${process.pid()} 端口=${backend.port}（桩空闲、不判定）")
         return process
     }
@@ -1485,15 +1665,22 @@ object McTestkitTasks {
      *
      * 后端 BungeeCord 模式配置（经代理必需）由调用方在起后端前另行 [BackendBungeeCordConfig.apply]，
      * 本函数只负责"起后端 + 等自停"，不掺配置逻辑。
+     *
+     * 起服前做端口预检（见 [requirePortsAvailable]）：本函数是「前台起后端」的唯一入口，在此设闸可让
+     * 所有调用方（直连 e2e / 经代理）自动获得保护，不必各自复制。
+     *
+     * @param stopTaskName 报错文案里建议执行的收尾任务名；直连 e2e 无配套停任务故为 null。
      */
     private fun runBackendForeground(
         ctx: TaskExecutionContext,
         backend: ResolvedBackend,
         scenario: String,
         sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
+        stopTaskName: String? = null,
     ) {
         val layout = ctx.layout
         val runDir = layout.backendRunDir(backend.name)
+        requirePortsAvailable(listOf(PortTarget(backend.port, "后端 ${backend.name}")), stopTaskName = stopTaskName)
         val jar = resolveBackendJar(ctx, backend, sources)
         // 桩↔编排交接：下发场景与结果文件绝对路径（= verify 读取处），桩据此选场景并写到对齐位置
         val resultFilePath = File(layout.resultsDir, McTestkitResultFile.fileName(scenario)).absolutePath

@@ -1,9 +1,10 @@
 <!--
 master 受分支保护、禁止直接推送：一切改动（含发版）都经本 PR 合入（见 docs/CONTRIBUTING.md §8）。
-CI（`.github/workflows/ci.yml`）必须全绿方可合并；发版另经打 `vX.Y.Z` tag 触发 release.yml。
+CI（`.github/workflows/ci.yml`）必须全绿方可合并；**合并只用 squash**（仓库已禁用 merge 与 rebase
+合并，并开启 required linear history）；发版另经打 `vX.Y.Z` tag 触发 release.yml。
 
-本 PR 的标题与描述会经 GitHub 自动汇总进下次发布的 Release 正文（ADR-0019），
-故标题请写清改了什么（照仓库的中文 Conventional Commits 约定即可）。
+本 PR 的标题（即 squash 后的提交标题）与描述会经 GitHub 自动汇总进下次发布的 Release 正文
+（ADR-0019），故标题请写清改了什么（照仓库的中文 Conventional Commits 约定即可）。
 -->
 
 ## 变更说明

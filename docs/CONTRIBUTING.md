@@ -82,11 +82,14 @@
 
 - **`master`（默认分支，受保护）**：**禁止直接推送**——一切改动（功能、修复、重构、文档、发版）都必须经 PR 合入。
   - 分支保护要求 **PR + 必需状态检查全绿**：`构建与测试（插件）`、`静态检查（模板 bot）`（即 `.github/workflows/ci.yml` 的两个 job）。
-  - 强制线性的合入方式由仓库设置决定；无论哪种，合并前检查必须为绿。
+  - **合并必须用 squash（压制合并），禁止 merge（合并提交）与 rebase 合并**。仓库已把 `allow_merge_commit` / `allow_rebase_merge` 关掉（PR 上只留 Squash and merge），并开启分支保护的 **required linear history**——两道锁叠加，让 `master` 保持线性、每个 PR 恰好落成一条提交。
+  - **squash 的提交标题即 Release 条目**：GitHub 自动生成的 Release 正文按提交/PR 标题罗列（ADR-0019），故合并时标题须写清改了什么、并带 PR 编号（`gh pr merge --squash --subject "..." --body "..."`，或网页端确认默认标题）。
   - 例外只有仓库管理员在紧急情况下显式绕过保护，事后须在 PR / Issue 记录原因。
-- **`feature/*`、`fix/*`、`refactor/*`、`docs/*`、`ci/*`**：短生命周期分支，做完发 PR 回 `master`。
+- **`feature/*`、`fix/*`、`refactor/*`、`docs/*`、`ci/*`、`chore/*`**：短生命周期分支，做完发 PR 回 `master`。
 - **回滚**优先 `git revert`（同样走 PR），不重写已 push 历史。
 - **`hotfix/*`**：从出问题的发布 tag 切分支紧急修，出补丁版后**回流 `master`**。
+
+> **为什么只允许 squash**：`master` 保持线性后，「一个 PR = 一条提交」使历史可读、`git bisect` 与 `git revert` 的粒度精确到变更单元；而 merge 提交会产生「分支提交 + 合并提交」两条同标题记录（实测 PR #2 即如此），rebase 合并则改写提交哈希、丢失「何时经 PR 合入」这一信息。代价是丢掉分支内的分提交历史——分提交的价值在 PR 评审时（diff 与逐条 commit view）已经兑现。
 
 ### 8.1 发版：打 tag 触发 CI，本地不再手工发布
 

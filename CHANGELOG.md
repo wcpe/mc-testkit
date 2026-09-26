@@ -8,6 +8,7 @@
 
 ### 变更
 - **Release 正文改为「GitHub 从 PR 自动生成」（ADR-0019）**：发布流程（ADR-0018）原先取 `CHANGELOG` 该版本段作为 Release 正文——同一份改动说明有两处表述，会随手工编辑逐渐漂移；且 `CHANGELOG` 缺该段时**直接失败**，而 tag 一旦推送就不能「改完重推」（Maven 构件不可覆盖），为一个文档段落阻断发布不成比例。现改为 `gh release create --generate-notes`：GitHub 按 tag 区间汇总该区间内合并的 PR 与贡献者、并自动识别上一个 tag 作比较基准；同时删除随之废弃的 `CHANGELOG` 抽取脚本，并把「`CHANGELOG` 缺该版本段」由失败降为**告警**（定稿仍属发版流程要求，把关位置移到发版 PR 的模板勾选与评审）。`CHANGELOG.md` 继续作为仓库内手写的活文档（写明「为什么改」），与 Release 正文分工不重叠。
+- **合并方式限定为 squash（禁止 merge 与 rebase 合并）**：`master` 此前允许 merge 提交，导致一个 PR 落成两条同标题记录——「分支上的提交 + GitHub 的合并提交」（实测 PR #2 即 `f730c35` 与 `1c12420` 两条同标题）。现仓库关闭 `allow_merge_commit` / `allow_rebase_merge`（PR 上只留 squash），并开启分支保护的 **required linear history**，两道锁叠加保证 `master` 线性、一个 PR 恰好一条提交。squash 的提交标题即 Release 正文条目（ADR-0019 的自动汇总按标题罗列），故合并时标题须写清改动并带 PR 编号。代价是丢掉分支内的分提交历史——其价值在 PR 评审阶段（diff 与逐条 commit view）已兑现。
 
 ## [0.13.0] - 2026-09-26
 

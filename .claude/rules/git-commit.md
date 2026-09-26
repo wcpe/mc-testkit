@@ -97,11 +97,12 @@ feat(api): 加查询端点（handler 还没接，编译不过）
 
 ## 4. 分支与发布（强制）
 
-**`master` 受分支保护、禁止直接推送**——一切改动（功能、修复、重构、文档、发版）都必须经 **PR** 合入，且 PR 的必需状态检查（`构建与测试（插件）`、`静态检查（模板 bot）`）全绿才能合并。详见 `docs/CONTRIBUTING.md` §8 与 [ADR-0018](../../docs/adr/0018-ci-release-and-pr-gating.md)。
+**`master` 受分支保护、禁止直接推送**——一切改动（功能、修复、重构、文档、发版）都必须经 **PR** 合入，且 PR 的必需状态检查（`构建与测试（插件）`、`静态检查（模板 bot）`）全绿才能合并；合并方式**只允许 squash**（禁 merge / rebase，见下）。详见 `docs/CONTRIBUTING.md` §8 与 [ADR-0018](../../docs/adr/0018-ci-release-and-pr-gating.md)。
 
 因此在本仓库工作时：
 
-- **不要直接 `git push origin master`**；改动落在短生命周期分支（`fix/*`、`feat/*`、`ci/*`、`docs/*` 等）后开 PR。
+- **不要直接 `git push origin master`**；改动落在短生命周期分支（`fix/*`、`feat/*`、`ci/*`、`docs/*`、`chore/*` 等）后开 PR。
+- **合并只用 squash，禁止 merge / rebase 合并**：仓库已关掉 `allow_merge_commit` 与 `allow_rebase_merge`，并开启分支保护的 **required linear history**。合并命令用 `gh pr merge <n> --squash --subject "<type>(<scope>): <中文描述> (#<n>)" --body "<总结>"`（网页端则确认默认标题）——squash 的提交标题会成为 Release 正文的条目，须写清改了什么并带 PR 编号。
 - **不要本地发布版本**：不跑 `./gradlew publish` 发正式版、不手工建 GitHub Release（正文由 GitHub 从 PR 自动生成，见 [ADR-0019](../../docs/adr/0019-release-notes-from-prs.md)）。
 - **发版 = 发版 PR + 打 tag**：PR 里 bump 根 `VERSION` 并把 CHANGELOG 未发布段定稿为 `## [X.Y.Z] - YYYY-MM-DD`；合入后打 `vX.Y.Z` tag，其余由 `.github/workflows/release.yml` 自动完成（校验版本一致 → 重跑验证门 → 发布到 maven.wcpe.top → 建 Release，正文由 PR 自动生成）。
 - **CI 工作流里 job 的 `name:` 即分支保护的必需检查名**：改名必须同步更新仓库分支保护规则，否则 PR 会永久卡在「等待检查」。

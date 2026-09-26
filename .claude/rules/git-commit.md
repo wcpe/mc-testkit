@@ -102,8 +102,8 @@ feat(api): 加查询端点（handler 还没接，编译不过）
 因此在本仓库工作时：
 
 - **不要直接 `git push origin master`**；改动落在短生命周期分支（`fix/*`、`feat/*`、`ci/*`、`docs/*` 等）后开 PR。
-- **不要本地发布版本**：不跑 `./gradlew publish` 发正式版、不手工建 GitHub Release、不手抄 CHANGELOG 当 Release 正文。
-- **发版 = 发版 PR + 打 tag**：PR 里 bump 根 `VERSION` 并把 CHANGELOG 未发布段定稿为 `## [X.Y.Z] - YYYY-MM-DD`；合入后打 `vX.Y.Z` tag，其余由 `.github/workflows/release.yml` 自动完成（校验版本一致 → 重跑验证门 → 发布到 maven.wcpe.top → 建 Release）。
+- **不要本地发布版本**：不跑 `./gradlew publish` 发正式版、不手工建 GitHub Release（正文由 GitHub 从 PR 自动生成，见 [ADR-0019](../../docs/adr/0019-release-notes-from-prs.md)）。
+- **发版 = 发版 PR + 打 tag**：PR 里 bump 根 `VERSION` 并把 CHANGELOG 未发布段定稿为 `## [X.Y.Z] - YYYY-MM-DD`；合入后打 `vX.Y.Z` tag，其余由 `.github/workflows/release.yml` 自动完成（校验版本一致 → 重跑验证门 → 发布到 maven.wcpe.top → 建 Release，正文由 PR 自动生成）。
 - **CI 工作流里 job 的 `name:` 即分支保护的必需检查名**：改名必须同步更新仓库分支保护规则，否则 PR 会永久卡在「等待检查」。
 
 ## 5. 其他约束

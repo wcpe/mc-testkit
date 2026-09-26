@@ -1,6 +1,9 @@
 <!--
 master 受分支保护、禁止直接推送：一切改动（含发版）都经本 PR 合入（见 docs/CONTRIBUTING.md §8）。
 CI（`.github/workflows/ci.yml`）必须全绿方可合并；发版另经打 `vX.Y.Z` tag 触发 release.yml。
+
+本 PR 的标题与描述会经 GitHub 自动汇总进下次发布的 Release 正文（ADR-0019），
+故标题请写清改了什么（照仓库的中文 Conventional Commits 约定即可）。
 -->
 
 ## 变更说明
@@ -25,7 +28,7 @@ CI（`.github/workflows/ci.yml`）必须全绿方可合并；发版另经打 `vX
 ## 本 PR 是否为发版 PR
 <!-- 发版 PR = 把 CHANGELOG 未发布段定稿为 '## [X.Y.Z] - YYYY-MM-DD' 并把根 VERSION 改成 X.Y.Z。 -->
 - [ ] 不是
-- [ ] 是 → 合入 master 后由维护者打 `vX.Y.Z` tag，CI 自动发布到 maven.wcpe.top 并建 GitHub Release（本 PR 无需手工发布）
+- [ ] 是 → 合入 master 后由维护者打 `vX.Y.Z` tag，CI 自动发布到 maven.wcpe.top 并建 GitHub Release（正文由 PR 自动生成；本 PR 无需手工发布）
 
 ## 破坏性变更 / 迁移
 <!-- 如有对外 API / 配置 / 数据模型的破坏性变更，写明影响与迁移步骤；否则填"无"。 -->

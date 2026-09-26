@@ -90,16 +90,20 @@
 
 ### 8.1 发版：打 tag 触发 CI，本地不再手工发布
 
-版本号唯一来源仍是根 `VERSION` 文件；发布动作**全部由 CI 完成**，维护者不再本地跑 `./gradlew publish`、不手工建 Release、不手抄 CHANGELOG。
+版本号唯一来源仍是根 `VERSION` 文件；发布动作**全部由 CI 完成**，维护者不再本地跑 `./gradlew publish`、不手工建 Release、不手写 Release 正文（正文由 GitHub 从 PR 自动生成）。
 
 1. **定稿（发版 PR）**：在 PR 里把 `CHANGELOG.md` 的 `## [未发布]` 段定稿为 `## [X.Y.Z] - YYYY-MM-DD`，并把根 `VERSION` 改成 `X.Y.Z`（SemVer：破坏性变更升 major）。PR 模板里有「是否为发版 PR」勾选项。
 2. **合入**：PR 经 CI 全绿后合入 `master`。
 3. **打 tag（唯一的手工动作）**：`git tag vX.Y.Z && git push origin vX.Y.Z`（或 `gh release create` 前先打 tag）。
 4. **CI 自动发布**：tag 推送触发 [release.yml](../.github/workflows/release.yml)，依次执行
-   - 校验 **tag 与 `VERSION` 一致**、且 `CHANGELOG` 已有该版本段（不一致即失败，绝不发布错版本）；
+   - 校验 **tag 与 `VERSION` 一致**（不一致即失败，绝不发布错版本）；`CHANGELOG` 缺该段只告警不阻断（见下）；
    - 再跑一遍验证门（`./gradlew build`），兜底防止 tag 打在门禁未过的提交上；
    - 用仓库密钥（`release` environment 的 `WCPE_MAVEN_USERNAME` / `WCPE_MAVEN_PASSWORD`）发布构件到 **maven.wcpe.top**；
-   - 取 `CHANGELOG` 该版本段作为正文，建 **GitHub Release**。
+   - 建 **GitHub Release**，正文由 **GitHub 从 PR 自动生成**（`gh release create --generate-notes`：汇总该 tag 区间内合并的 PR 与贡献者，并自动识别上一个 tag 作比较基准）。
+
+> **Release 正文为什么自动生成**：Release 面向的是「这个版本相对上个版本变了什么」，而每个改动都已经 PR 说明与评审——由 PR 自动汇总既不用另写一遍，也不会与 PR 描述漂移。`CHANGELOG.md` 仍是仓库内的**手写活文档**（写明「为什么改」，随发版 PR 定稿），两者分工不同、不互相复制（doc-sync 的单一真源）。
+
+> **为什么 `CHANGELOG` 缺段只是告警**：正文已不取自 CHANGELOG，缺段不会再产出空正文；而 tag 一旦推送就不能「改完重推」（Maven 构件不可覆盖），不该让文档问题卡住发布。定稿仍属步骤 1 的流程要求，由发版 PR 的模板勾选与评审把关。
 
 > **为什么是「打 tag 触发」而不是「合并即自动发版」**：GitHub Actions 有一个硬约束——用 `GITHUB_TOKEN` 创建的 tag **不会**触发其它 workflow（防递归）。因此「CI 自己打 tag 再自动发布」必须引入一个长期 PAT（额外凭据与轮换负担）。这里选择零额外凭据的形态：**tag 由人打（一条命令），发布由 CI 全自动**——需要人工判断的只有「什么时候发、发哪个版本号」。
 

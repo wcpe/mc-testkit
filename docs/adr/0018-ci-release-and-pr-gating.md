@@ -1,7 +1,7 @@
 # ADR-0018：发布流程改为「分支保护 + PR 门禁 + 打 tag 触发 CI 发布」
 
 ## 状态
-已接受
+已接受（Release 正文的来源经 [ADR-0019](0019-release-notes-from-prs.md) 补充修正：改为 GitHub 从 PR 自动生成；本 ADR 其余决策不变）
 
 ## 背景
 此前发布**全靠手工**：

@@ -30,8 +30,10 @@ import top.wcpe.mc.testkit.contract.McTestkitEnv
 import top.wcpe.mc.testkit.contract.McTestkitResultFile
 import top.wcpe.mc.testkit.contract.McTestkitTaskNames
 import top.wcpe.mc.testkit.dsl.BotSpec
+import top.wcpe.mc.testkit.dsl.HookContext
 import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import top.wcpe.mc.testkit.dsl.ProxyPlatform
+import top.wcpe.mc.testkit.dsl.ScenarioHook
 import top.wcpe.mc.testkit.dsl.ScenarioSpec
 import top.wcpe.mc.testkit.dsl.ServeSpec
 import top.wcpe.mc.testkit.dsl.StressSpec
@@ -334,6 +336,92 @@ object McTestkitTasks {
         }
     }
 
+    /** 场景钩子任务引用（供各场景路径接线）。 */
+    private class ScenarioHookTasks(
+        val before: TaskProvider<DefaultTask>?,
+        val ready: TaskProvider<DefaultTask>?,
+        val after: TaskProvider<DefaultTask>?,
+    )
+
+    /**
+     * 注册场景的钩子任务（各形态共用）。
+     *
+     * - `before<Key>Scenario`：**不自行接线**——各场景路径按自己的前置任务接它（直连 / 经代理接 `prepare`，
+     *   集群接其自身的集群任务）。此前这里硬接 `prepareE2e<Key>` 是错的：集群场景**不生成**该任务，
+     *   导致集群场景声明 `beforeScenario` 时报 `Task with path 'prepareE2e…' not found`。
+     * - `after<Key>Scenario`：不自动挂载，由各场景任务 `finalizedBy`（三路径都执行）
+     *
+     * `readyScenario` 不在任务层实现——它需要「节点已就绪」这一时刻，而该时刻只存在于集群任务的执行体内
+     * （端口就绪门之后），故由集群任务在体内直接调用，此处不生成任务。
+     */
+    private fun registerScenarioHookTasks(
+        project: Project,
+        ctx: TaskExecutionContext,
+        topology: Topology,
+        scenario: ScenarioSpec,
+    ): ScenarioHookTasks {
+        // 钩子上下文的后端集合：集群用背的 backends，其余用单后端（与场景实际起服的节点一致）
+        val backendNames = if (scenario.backendRefs.isNotEmpty()) {
+            scenario.backendRefs
+        } else {
+            listOfNotNull(resolveScenarioBackend(topology, scenario).name)
+        }
+        val proxyName = scenario.via
+        val hookCtx = hookContext(ctx, scenario.name, backendNames, proxyName)
+
+        val before = if (scenario.beforeHooks.isNotEmpty()) {
+            registerTask(project, McTestkitTaskNames.beforeScenario(scenario.name)) { task ->
+                task.group = TASK_GROUP
+                task.description = "执行场景 ${scenario.name} 的场景前钩子（起外部依赖、等就绪）"
+                task.doLast {
+                    // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
+                    runBeforeHooks(ctx, scenario.beforeHooks, hookCtx)
+                }
+            }
+        } else {
+            null
+        }
+
+        val after = if (scenario.afterHooks.isNotEmpty()) {
+            registerTask(project, McTestkitTaskNames.afterScenario(scenario.name)) { task ->
+                task.group = TASK_GROUP
+                task.description = "执行场景 ${scenario.name} 的场景后钩子（收尾外部依赖）"
+                task.doLast {
+                    // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
+                    runAfterHooks(ctx, scenario.afterHooks, hookCtx)
+                }
+            }
+        } else {
+            null
+        }
+
+        return ScenarioHookTasks(before = before, ready = null, after = after)
+    }
+
+    /**
+     * 校验场景钩子与场景形态的兼容性（配置期，失败抛中文异常）。
+     *
+     * `beforeScenario` / `afterScenario` 在全部形态下都支持；`readyScenario` 需要「节点已就绪」这一明确时刻，
+     * 目前仅**集群场景**提供，故在其他形态下声明会报错——不静默忽略。
+     */
+    private fun validateScenarioHooks(scenario: ScenarioSpec) {
+        if (scenario.readyHooks.isEmpty()) return
+        val isCluster = scenario.backendRefs.isNotEmpty() && scenario.stressSpec == null
+        if (isCluster) return
+        val shape = when {
+            scenario.stressSpec != null -> "压测场景"
+            scenario.backendRefs.isNotEmpty() -> "集群场景"
+            scenario.via != null -> "经代理场景"
+            else -> "直连后端场景"
+        }
+        throw GradleException(
+            "mcTestkit 场景「${scenario.name}」是$shape，不支持 readyScenario 钩子：该钩子需要「全部节点已就绪」" +
+                "这一明确时刻，目前仅集群场景（同时声明 backends 且经代理）提供。" +
+                "请改用 beforeScenario（服务端启动前）或 afterScenario（场景结束后），" +
+                "或把场景改造为集群形态。",
+        )
+    }
+
     /** 为单个场景注册其全部任务。 */
     private fun registerScenarioTasks(
         project: Project,
@@ -342,6 +430,15 @@ object McTestkitTasks {
         scenario: ScenarioSpec,
         mavenSources: MavenCoordinateSources,
     ) {
+        // 钩子与场景形态的兼容性在**配置期**校验：不支持的组合直接报错，不静默忽略
+        // （静默忽略会让消费方以为初始化生效了，实际没跑，排查成本极高）。
+        validateScenarioHooks(scenario)
+
+        // 钩子任务在所有场景形态下统一注册（早于各路径的分发）：
+        // 直连 / 经代理 / 集群 / 压测四条路径都要能声明 beforeScenario 与 afterScenario，
+        // 故在此注册一次并向下传递任务引用，避免各路径各自注册造成命名冲突或漏挂。
+        val hookTasks = registerScenarioHookTasks(project, ctx, topology, scenario)
+
         // 压测场景（声明 stress）走 N 服 × M bot 钉服编排（压测编排，ADR-0008）：不生成单后端 / 集群任务
         scenario.stressSpec?.let { stress ->
             val stressBackends = scenario.backendRefs.map { name ->
@@ -355,7 +452,7 @@ object McTestkitTasks {
                         "「N-listener 一端口对一后端」钉服。请改用 Waterfall / BungeeCord 代理，或去掉 via 直连后端。",
                 )
             }
-            registerStressTask(project, ctx, scenario, stress, stressBackends, proxy, mavenSources)
+            registerStressTask(project, ctx, scenario, stress, stressBackends, proxy, mavenSources, hookTasks)
             return
         }
 
@@ -365,7 +462,7 @@ object McTestkitTasks {
                 topology.backends.first { it.name == name } // 已由 TopologyResolver 校验存在
             }
             val proxy = topology.proxies.first { it.name == scenario.via } // 集群必有 via 且已校验存在
-            registerClusterTask(project, ctx, scenario, clusterBackends, proxy, mavenSources)
+            registerClusterTask(project, ctx, scenario, clusterBackends, proxy, mavenSources, hookTasks)
             return
         }
 
@@ -396,11 +493,16 @@ object McTestkitTasks {
         // e2e（直连后端）：prepare → 前台起后端（自停 waitFor）→ 读结果文件判定
         // bot 必须先于后端跑完连上，故先注册 launch（若有），再在 verify 注册块里 mustRunAfter，避免回头 configure。
         val hasBots = scenario.botSpecs.isNotEmpty()
+        // 钩子任务已在场景分发处统一注册（registerScenarioHookTasks），此处只接线
+        val beforeHooks = hookTasks.before
+        val afterHooks = hookTasks.after
+
         val launch: TaskProvider<DefaultTask>? = if (hasBots) {
             registerTask(project, McTestkitTaskNames.launchBot(scenario.name)) { task ->
                 task.group = TASK_GROUP
                 task.description = "启动场景 ${scenario.name} 的 mineflayer 机器人（声明多 bot 时起多个进程）"
                 task.dependsOn(prepare, McTestkitTaskNames.NPM_INSTALL_BOT)
+                beforeHooks?.let { task.dependsOn(it) }
                 task.doLast {
                     // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                     launchScenarioBots(
@@ -424,6 +526,10 @@ object McTestkitTasks {
             if (launch != null) {
                 task.mustRunAfter(launch)
             }
+            // 无 bot 时没有 launch 任务承载「场景前」时序，钩子改挂到 verify 之前
+            if (launch == null) beforeHooks?.let { task.dependsOn(it) }
+            // 收尾：场景后钩子在判定结束后执行（含失败路径）
+            afterHooks?.let { task.finalizedBy(it) }
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 try {
@@ -458,7 +564,7 @@ object McTestkitTasks {
 
         // 经代理的场景：e2e<Key>Via<Proxy>
         viaProxy?.let { proxy ->
-            registerViaProxyTask(project, ctx, scenario, backend, proxy, mavenSources)
+            registerViaProxyTask(project, ctx, scenario, backend, proxy, mavenSources, hookTasks)
         }
     }
 
@@ -470,6 +576,7 @@ object McTestkitTasks {
         backend: ResolvedBackend,
         proxy: ResolvedProxy,
         mavenSources: MavenCoordinateSources,
+        hookTasks: ScenarioHookTasks,
     ) {
         val layout = ctx.layout
         val prepareName = McTestkitTaskNames.prepare(scenario.name)
@@ -502,6 +609,9 @@ object McTestkitTasks {
             task.dependsOn(prepareName)
             // 正常 / 失败 / 中断三路径都收尾停代理（finalizedBy）；任务体内再加 try/finally 双保险
             task.finalizedBy(stopProxyName)
+            // 钩子接线：场景前须先于起代理，场景后与停代理同层收尾
+            hookTasks.before?.let { task.dependsOn(it) }
+            hookTasks.after?.let { task.finalizedBy(it) }
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 var proxyProcess: Process? = null
@@ -565,6 +675,7 @@ object McTestkitTasks {
         clusterBackends: List<ResolvedBackend>,
         proxy: ResolvedProxy,
         mavenSources: MavenCoordinateSources,
+        hookTasks: ScenarioHookTasks,
     ) {
         val layout = ctx.layout
         val stopName = McTestkitTaskNames.stopCluster(scenario.name)
@@ -603,6 +714,11 @@ object McTestkitTasks {
             }
             // 正常 / 失败 / 中断三路径都收尾（finalizedBy）；任务体内再 try/finally 双保险
             task.finalizedBy(stopName)
+            // 场景后钩子（统一注册）同样挂 finalizedBy：与集群收尾同层，三路径都执行
+            hookTasks.after?.let { task.finalizedBy(it) }
+            // 场景前/就绪后钩子由统一注册的 before 任务与体内调用承载；集群路径需在起服前显式等 before
+            hookTasks.before?.let { task.dependsOn(it) }
+            val clusterHookCtx = hookContext(ctx, scenario.name, clusterBackends.map { it.name }, proxy.name)
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val backendProcesses = LinkedHashMap<String, Process>()
@@ -621,6 +737,8 @@ object McTestkitTasks {
                             PortTarget(proxy.port, "集群代理 ${proxy.name}"),
                         stopTaskName = stopName,
                     )
+                    // 场景前钩子已由 before<Key>Scenario 任务承载（task.dependsOn 保证在起服前执行），
+                    // 故此处不再重复调用——重复执行会让「起控制面」这类非幂等钩子起两份进程。
 
                     // ① 每后端独立运行目录 prepare + BungeeCord 模式 + 后台起（同 SCENARIO / RESULT_FILE）
                     val sameVersionPredecessors = sameVersionStartupPredecessors(
@@ -658,6 +776,9 @@ object McTestkitTasks {
                     // ②' 确定性就绪门：等全部后端 + 代理端口可连再起 bot（不靠 bot 盲重试赛慢启动，慢 CI 上稳）
                     clusterBackends.forEach { awaitPortOpen(ctx, it.port, "集群后端 ${it.name}") }
                     awaitPortOpen(ctx, proxy.port, "集群代理 ${proxy.name}")
+                    // ②'' 节点就绪后钩子：服务端已可连，此时做依赖服务端的初始化
+                    //      （注册审批、造数、下发配置）——必须先于 bot 启动，否则 bot 会被未审批的鉴权拒绝
+                    runReadyHooks(ctx, scenario.readyHooks, clusterHookCtx)
                     // ③ 起全部 bot：经代理端口，CLUSTER_BACKENDS 下发 /server 切换目标（每个 bot 都能切），
                     //    协议版本固定为后端版本；多 bot 各唯一 username、同质复制下发 BOT_INDEX（单场景多 bot）
                     botProcesses += launchScenarioBots(
@@ -783,6 +904,70 @@ object McTestkitTasks {
      * 用于在起 bot **之前**确认后端 / 代理真正接受连接，避免 bot 在进程尚未就绪时盲目重试去赛启动——慢 CI
      * （多服顺序起服、CPU 紧张）上靠拉长超时碰运气不稳，靠就绪门则确定性等到位再连。端口迟迟不开则报错收尾。
      */
+    /**
+     * 执行「节点就绪后」钩子链：服务端 / 代理端口已可连、机器人尚未启动。
+     *
+     * 与 [runBeforeHooks] 同样是「失败即抛出」（场景判失败），区别只在时序。
+     */
+    private fun runReadyHooks(ctx: TaskExecutionContext, hooks: List<ScenarioHook>, hookCtx: HookContext) {
+        if (hooks.isEmpty()) return
+        ctx.info("执行节点就绪后钩子（${hooks.size} 条）")
+        hooks.forEach { it.run(hookCtx) }
+    }
+
+    /**
+     * 构造场景钩子的执行上下文（保存可序列化快照：目录 + 场景名，不含 Gradle 对象）。
+     *
+     * 后端目录只放「本场景实际涉及的」后端，避免钩子误引用未起服的后端目录。
+     */
+    private fun hookContext(
+        ctx: TaskExecutionContext,
+        scenario: String,
+        backendNames: List<String>,
+        proxyName: String?,
+    ): HookContext {
+        val layout = ctx.layout
+        val dirs = backendNames.associateWith { layout.clusterBackendRunDir(it) }
+        val proxyDir = proxyName?.let { layout.proxyRunDir }
+        return HookContext(
+            scenarioName = scenario,
+            resultsDir = layout.resultsDir,
+            backendRunDirs = dirs,
+            proxyRunDir = proxyDir,
+            log = { ctx.info(it) },
+        )
+    }
+
+    /**
+     * 执行「场景前」钩子链。
+     *
+     * 某条钩子失败即抛出——这样场景判失败，且编排侧的 `finally` / `finalizedBy` 会照常触发
+     * [runAfterHooks]，保证已起的外部进程仍被收尾（收尾不被失败路径跳过）。
+     */
+    private fun runBeforeHooks(ctx: TaskExecutionContext, hooks: List<ScenarioHook>, hookCtx: HookContext) {
+        if (hooks.isEmpty()) return
+        ctx.info("执行场景前钩子（${hooks.size} 条）")
+        hooks.forEach { it.run(hookCtx) }
+    }
+
+    /**
+     * 执行「场景后」钩子链（收尾语义）。
+     *
+     * **不在失败时短路**：某条收尾钩子抛异常只记 warn 并继续执行后续钩子——收尾阶段的异常不得
+     * 阻断其余资源的清理，也不得掩盖场景本身的判定失败（与既有「按 pid 收尾静默跳过」一致）。
+     */
+    private fun runAfterHooks(ctx: TaskExecutionContext, hooks: List<ScenarioHook>, hookCtx: HookContext) {
+        if (hooks.isEmpty()) return
+        ctx.info("执行场景后钩子（${hooks.size} 条）")
+        hooks.forEach { hook ->
+            try {
+                hook.run(hookCtx)
+            } catch (ex: Exception) {
+                ctx.warn("场景后钩子执行失败（不阻断其余收尾）：${ex.message}")
+            }
+        }
+    }
+
     private fun awaitPortOpen(
         ctx: TaskExecutionContext,
         port: Int,
@@ -835,6 +1020,7 @@ object McTestkitTasks {
         stressBackends: List<ResolvedBackend>,
         proxy: ResolvedProxy?,
         mavenSources: MavenCoordinateSources,
+        hookTasks: ScenarioHookTasks,
     ) {
         val layout = ctx.layout
         val stopName = McTestkitTaskNames.stopStress(scenario.name)
@@ -879,6 +1065,9 @@ object McTestkitTasks {
             }
             // 正常 / 失败 / 中断三路径都收尾（finalizedBy）；任务体内再 try/finally 双保险
             task.finalizedBy(stopName)
+            // 钩子接线：场景前须先于起服，场景后与压测收尾同层
+            hookTasks.before?.let { task.dependsOn(it) }
+            hookTasks.after?.let { task.finalizedBy(it) }
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val backendProcesses = LinkedHashMap<String, Process>()

@@ -32,7 +32,7 @@
   - `harness/`：服务端桩插件骨架（Kotlin，框架无关的 Bukkit/Paper 插件，**独立 Gradle 子工程**，自带 `settings.gradle.kts` / `build.gradle.kts`、`paper-api` compileOnly，不入 root settings）：**依赖 `harness-core`**，继承 `McTestkitHarnessPlugin`，只保留业务配置与示例场景（配置加载、入服派发场景、内置 `smoke` + `example-bot` 等）。
   - `bot/`：mineflayer 机器人脚手架（Node ≥18）：**依赖 `@wcpe/mc-testkit-bot`**，入口只登记 action → 场景驱动表，场景驱动与示例留在 `src/scenarios/`；eslint + prettier。
   - 复制接线说明（`template/README.md`）。
-  - 协议消息名 / 结果文件键 / env 名以**字面量**对齐 `contract/`（docs/API.md §3.3/3.4/3.5），不 import 插件包——保持 template 与插件零编译期耦合（双向都不依赖）。
+  - 协议消息名 / 结果文件键 / env 名以**字面量**对齐 `contract/`（docs/API.md §3.3/3.4/3.6），不 import 插件包——保持 template 与插件零编译期耦合（双向都不依赖）。
 
 **依赖方向（单向）**：编排插件（含内置下载/运行模块）← 消费项目 → 编排插件（+ 自带桩/机器人/场景）。插件不外挂第三方下载库。`template/` 不参与插件运行期依赖。
 

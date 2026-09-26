@@ -1,15 +1,19 @@
 # mc-testkit 发版：打 `vX.Y.Z` tag 触发——校验版本一致 → 发布构件到私有仓库 → 建 GitHub Release。
 #
+# Release 正文由 GitHub **从 PR 自动生成**（`--generate-notes`：列出本次区间内合并的 PR 与
+# 贡献者，并自动识别上一个 tag 作比较基准）。CHANGELOG 仍是仓库内的活文档（发版时定稿），
+# 但不再被抄进 Release 正文。
+#
 # 为什么是「打 tag 触发」而不是「合并即自动发版」：GitHub Actions 的硬约束——用 GITHUB_TOKEN
 # 建的 tag 不会触发其它 workflow（防递归），所以「CI 自己打 tag 再发布」必须引入长期 PAT。
 # 这里选择零额外凭据的形态：维护者打 tag（一条 gh 命令），发布动作全在 CI 完成——不再需要本地
-# 跑 ./gradlew publish、手工建 Release、手抄 CHANGELOG。
+# 跑 ./gradlew publish、手工建 Release、手写 Release 正文。
 #
 # 发版步骤（详见 docs/CONTRIBUTING.md §8）：
 #   1) 在 PR 里 bump 根 `VERSION` 并把 CHANGELOG 未发布段定稿为 `## [X.Y.Z] - YYYY-MM-DD`
 #   2) PR 合入 master（CI 必须绿）
 #   3) 打 tag：`git tag vX.Y.Z && git push origin vX.Y.Z`（或 `gh release create` 前先打 tag）
-#   4) 本工作流自动发布到 maven.wcpe.top + 建 GitHub Release（正文取 CHANGELOG 该段）
+#   4) 本工作流自动发布到 maven.wcpe.top + 建 GitHub Release（正文由 PR 自动生成）
 #
 # 凭据走仓库 secret（见 docs/OPERATIONS.md §1）：WCPE_MAVEN_USERNAME / WCPE_MAVEN_PASSWORD。
 # 承载在 `release` environment 上，便于加人工审批与环境保护规则。
@@ -61,10 +65,12 @@ jobs:
             echo "::error::tag（$GITHUB_REF_NAME）与 VERSION 文件（$FILE_VERSION）不一致：请先把 VERSION 改为 $TAG_VERSION 并合入 master，再重新打 tag。"
             exit 1
           fi
-          # CHANGELOG 必须已有该版本段落，否则 Release 正文会为空、且说明未按发版流程定稿
+          # CHANGELOG 段落只作**告警**不作门禁：Release 正文现在由 GitHub 从 PR 自动生成，
+          # 不再取自 CHANGELOG；而 tag 一旦推送就无法「改完重推」，不该为文档问题阻断发布
+          # （Maven 构件不可覆盖，发布窗口越短越好）。CHANGELOG 定稿仍属发版流程要求
+          # （CONTRIBUTING §8.1 步骤 1），由发版 PR 的模板勾选与评审把关。
           if ! grep -qE "^##\s+\[?${FILE_VERSION}\]?(\s|\$)" CHANGELOG.md; then
-            echo "::error::CHANGELOG.md 缺少版本 $FILE_VERSION 的段落：请先在 PR 里把未发布段定稿为 '## [$FILE_VERSION] - YYYY-MM-DD' 并合入 master。"
-            exit 1
+            echo "::warning::CHANGELOG.md 缺少版本 $FILE_VERSION 的段落。发版流程要求把未发布段定稿为 '## [$FILE_VERSION] - YYYY-MM-DD'（不阻断本次发布，但请补上以免未发布段累积）。"
           fi
           echo "版本一致性校验通过：$FILE_VERSION"
 
@@ -85,22 +91,15 @@ jobs:
           fi
           ./gradlew publish --no-daemon --stacktrace
 
-      - name: 生成 Release 正文（取 CHANGELOG 该版本段）
-        run: |
-          set -euo pipefail
-          VERSION_FILE="$(tr -d '[:space:]' < VERSION)"
-          python3 .github/scripts/release_notes.py CHANGELOG.md "$VERSION_FILE" --require > RELEASE_BODY.md
-          # 首行固定标题，正文接 CHANGELOG 段落（与既有 Release 形态一致）
-          { echo "# mc-testkit v$VERSION_FILE"; echo; cat RELEASE_BODY.md; } > RELEASE_NOTES.md
-          echo "Release 正文行数：$(wc -l < RELEASE_NOTES.md)"
-
-      - name: 建 GitHub Release
+      - name: 建 GitHub Release（正文由 PR 自动生成）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # --generate-notes：GitHub 按 tag 区间汇总该区间内合并的 PR 与贡献者，
+          # 并自动识别上一个 tag 作比较基准；不再从 CHANGELOG 抄正文。
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
-            --notes-file RELEASE_NOTES.md \
+            --generate-notes \
             --verify-tag
-          echo "已建 Release：$GITHUB_REF_NAME"
+          echo "已建 Release（正文由 PR 自动生成）：$GITHUB_REF_NAME"

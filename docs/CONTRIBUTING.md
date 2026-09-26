@@ -82,24 +82,31 @@
 
 - **`master`（默认分支，受保护）**：**禁止直接推送**——一切改动（功能、修复、重构、文档、发版）都必须经 PR 合入。
   - 分支保护要求 **PR + 必需状态检查全绿**：`构建与测试（插件）`、`静态检查（模板 bot）`（即 `.github/workflows/ci.yml` 的两个 job）。
-  - 强制线性的合入方式由仓库设置决定；无论哪种，合并前检查必须为绿。
+  - **合并必须用 squash（压制合并），禁止 merge（合并提交）与 rebase 合并**。仓库已把 `allow_merge_commit` / `allow_rebase_merge` 关掉（PR 上只留 Squash and merge），并开启分支保护的 **required linear history**——两道锁叠加，让 `master` 保持线性、每个 PR 恰好落成一条提交。
+  - **squash 的提交标题即 Release 条目**：GitHub 自动生成的 Release 正文按提交/PR 标题罗列（ADR-0019），故合并时标题须写清改了什么、并带 PR 编号（`gh pr merge --squash --subject "..." --body "..."`，或网页端确认默认标题）。
   - 例外只有仓库管理员在紧急情况下显式绕过保护，事后须在 PR / Issue 记录原因。
-- **`feature/*`、`fix/*`、`refactor/*`、`docs/*`、`ci/*`**：短生命周期分支，做完发 PR 回 `master`。
+- **`feature/*`、`fix/*`、`refactor/*`、`docs/*`、`ci/*`、`chore/*`**：短生命周期分支，做完发 PR 回 `master`。
 - **回滚**优先 `git revert`（同样走 PR），不重写已 push 历史。
 - **`hotfix/*`**：从出问题的发布 tag 切分支紧急修，出补丁版后**回流 `master`**。
 
+> **为什么只允许 squash**：`master` 保持线性后，「一个 PR = 一条提交」使历史可读、`git bisect` 与 `git revert` 的粒度精确到变更单元；而 merge 提交会产生「分支提交 + 合并提交」两条同标题记录（实测 PR #2 即如此），rebase 合并则改写提交哈希、丢失「何时经 PR 合入」这一信息。代价是丢掉分支内的分提交历史——分提交的价值在 PR 评审时（diff 与逐条 commit view）已经兑现。
+
 ### 8.1 发版：打 tag 触发 CI，本地不再手工发布
 
-版本号唯一来源仍是根 `VERSION` 文件；发布动作**全部由 CI 完成**，维护者不再本地跑 `./gradlew publish`、不手工建 Release、不手抄 CHANGELOG。
+版本号唯一来源仍是根 `VERSION` 文件；发布动作**全部由 CI 完成**，维护者不再本地跑 `./gradlew publish`、不手工建 Release、不手写 Release 正文（正文由 GitHub 从 PR 自动生成）。
 
 1. **定稿（发版 PR）**：在 PR 里把 `CHANGELOG.md` 的 `## [未发布]` 段定稿为 `## [X.Y.Z] - YYYY-MM-DD`，并把根 `VERSION` 改成 `X.Y.Z`（SemVer：破坏性变更升 major）。PR 模板里有「是否为发版 PR」勾选项。
 2. **合入**：PR 经 CI 全绿后合入 `master`。
 3. **打 tag（唯一的手工动作）**：`git tag vX.Y.Z && git push origin vX.Y.Z`（或 `gh release create` 前先打 tag）。
 4. **CI 自动发布**：tag 推送触发 [release.yml](../.github/workflows/release.yml)，依次执行
-   - 校验 **tag 与 `VERSION` 一致**、且 `CHANGELOG` 已有该版本段（不一致即失败，绝不发布错版本）；
+   - 校验 **tag 与 `VERSION` 一致**（不一致即失败，绝不发布错版本）；`CHANGELOG` 缺该段只告警不阻断（见下）；
    - 再跑一遍验证门（`./gradlew build`），兜底防止 tag 打在门禁未过的提交上；
    - 用仓库密钥（`release` environment 的 `WCPE_MAVEN_USERNAME` / `WCPE_MAVEN_PASSWORD`）发布构件到 **maven.wcpe.top**；
-   - 取 `CHANGELOG` 该版本段作为正文，建 **GitHub Release**。
+   - 建 **GitHub Release**，正文由 **GitHub 从 PR 自动生成**（`gh release create --generate-notes`：汇总该 tag 区间内合并的 PR 与贡献者，并自动识别上一个 tag 作比较基准）。
+
+> **Release 正文为什么自动生成**：Release 面向的是「这个版本相对上个版本变了什么」，而每个改动都已经 PR 说明与评审——由 PR 自动汇总既不用另写一遍，也不会与 PR 描述漂移。`CHANGELOG.md` 仍是仓库内的**手写活文档**（写明「为什么改」，随发版 PR 定稿），两者分工不同、不互相复制（doc-sync 的单一真源）。
+
+> **为什么 `CHANGELOG` 缺段只是告警**：正文已不取自 CHANGELOG，缺段不会再产出空正文；而 tag 一旦推送就不能「改完重推」（Maven 构件不可覆盖），不该让文档问题卡住发布。定稿仍属步骤 1 的流程要求，由发版 PR 的模板勾选与评审把关。
 
 > **为什么是「打 tag 触发」而不是「合并即自动发版」**：GitHub Actions 有一个硬约束——用 `GITHUB_TOKEN` 创建的 tag **不会**触发其它 workflow（防递归）。因此「CI 自己打 tag 再自动发布」必须引入一个长期 PAT（额外凭据与轮换负担）。这里选择零额外凭据的形态：**tag 由人打（一条命令），发布由 CI 全自动**——需要人工判断的只有「什么时候发、发哪个版本号」。
 

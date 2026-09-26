@@ -300,8 +300,9 @@ bot 先起、后端后起，不存在「全部节点已就绪」的时刻。在�
 | `SleepHook` | 沉降等待（等异步模块就绪等） |
 | `HookChain` | 按序串联多个钩子，任一步失败即中断 |
 
-**自动任务**：`before<Key>Scenario`（`dependsOn(prepare)`）、`after<Key>Scenario`（由场景任务 `finalizedBy`）；
-仅当场景声明了对应钩子时注册。
+**自动任务**：`before<Key>Scenario` / `after<Key>Scenario` **仅在声明了对应钩子时注册**，且自身不接线——由各场景形态的任务接：`e2e<Key>` / `launch<Key>Bot` / `e2e<Key>Via<Proxy>` / `e2e<Key>Cluster` / `e2e<Key>Stress` 上 `dependsOn(before<Key>Scenario)`、`finalizedBy(after<Key>Scenario)`
+（早期版本让钩子任务自己 `dependsOn(prepareE2e<Key>)` 是错的：集群场景不生成该任务，声明 `beforeScenario` 会报 `Task with path 'prepareE2e…' not found`）。
+`readyScenario` **不生成任务**——它需要「节点已就绪」这一时刻，由集群任务在端口就绪门之后、bot 启动之前直接调用。
 
 ### 3.6 结果文件（测试结论真源，已冻结）
 

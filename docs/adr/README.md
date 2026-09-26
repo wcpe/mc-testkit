@@ -21,6 +21,7 @@
 | [0016](0016-maven-coordinate-server-jars.md) | 服务端 / 代理 jar 支持按 Maven 坐标解析（注册期查镜像以真正短路解析，镜像进 mc-testkit-jars） | 已接受 |
 | [0017](0017-provision-api-and-external-artifact-sources.md) | 开放下载/运行基建为公开 API，并引入声明式外部制品源（固定 URL / API 动态解析） | 已接受 |
 | [0018](0018-ci-release-and-pr-gating.md) | 发布流程改为「分支保护 + PR 门禁 + 打 tag 触发 CI 发布」 | 已接受 |
+| [0019](0019-release-notes-from-prs.md) | Release 正文改为「GitHub 从 PR 自动生成」（补充 0018） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

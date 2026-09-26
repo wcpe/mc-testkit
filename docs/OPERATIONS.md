@@ -17,7 +17,7 @@
 
 1. **发版 PR**：把 `CHANGELOG.md` 的 `## [未发布]` 段定稿为 `## [X.Y.Z] - YYYY-MM-DD`，根 `VERSION` 改成 `X.Y.Z`；PR 经 CI 全绿后合入 `master`（master 禁直接推送）。
 2. **打 tag**：`git tag vX.Y.Z && git push origin vX.Y.Z`
-3. **CI 自动完成**（[.github/workflows/release.yml](../.github/workflows/release.yml)）：校验 tag 与 `VERSION` 一致、`CHANGELOG` 有该段 → 重跑验证门 → 发布构件到 maven.wcpe.top → 建 GitHub Release（正文取 CHANGELOG 该段）。
+3. **CI 自动完成**（[.github/workflows/release.yml](../.github/workflows/release.yml)）：校验 tag 与 `VERSION` 一致（`CHANGELOG` 缺段仅告警）→ 重跑验证门 → 发布构件到 maven.wcpe.top → 建 GitHub Release（**正文由 GitHub 从 PR 自动生成**）。
 
 **发布凭据**（只存 GitHub，不入库）：
 
@@ -63,7 +63,8 @@
 - 配置期报缺依赖/路径：按中文报错补齐对应环境变量或 jar 路径。
 - **release 工作流报「缺少发布凭据」**：在仓库 Settings → Environments → `release` 配置 secrets `WCPE_MAVEN_USERNAME` / `WCPE_MAVEN_PASSWORD`（见 §1.2）。
 - **release 工作流报 tag 与 VERSION 不一致**：先把 `VERSION` 改成该版本号并经 PR 合入 `master`，再重新打 tag（不要移动已推送的 tag，改发新版本号）。
-- **release 工作流报 CHANGELOG 缺该版本段**：把 `## [未发布]` 段定稿为 `## [X.Y.Z] - YYYY-MM-DD` 后合入，再打 tag。
+- **release 工作流告警 CHANGELOG 缺该版本段**：不阻断发布（Release 正文由 PR 自动生成），但请补上——把 `## [未发布]` 段定稿为 `## [X.Y.Z] - YYYY-MM-DD` 后经 PR 合入，避免未发布段累积、CHANGELOG 与发布史脱节。
+- **Release 正文不理想**（如需人工润色或补充说明）：Release 正文由 PR 自动汇总，改正文即改 PR 描述；也可事后 `gh release edit vX.Y.Z --notes-file <文件>` 手工覆盖（仅影响该 Release 的正文，不影响已发布构件）。
 - **PR 合并按钮不可用**：看分支保护的必需检查是否全绿（`构建与测试（插件）` / `静态检查（模板 bot）`）；检查名若被改名需同步更新分支保护规则。
 - 发布失败（网络 / 仓库拒绝）：检查 maven.wcpe.top 可达性与凭据权限（`maven-releases` 仓库的写权限）。
 

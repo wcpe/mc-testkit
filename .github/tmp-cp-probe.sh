@@ -143,5 +143,5 @@ public class Driver {
 }
 JAVA
 
-( cd "$root" && javac -d classes Main.java Lib.java Diag.java Marker.java Driver.java ) || exit 1
+( cd "$root" && javac -encoding UTF-8 -d classes Main.java Lib.java Diag.java Marker.java Driver.java ) || exit 1
 ( cd "$root" && java -cp classes Driver )

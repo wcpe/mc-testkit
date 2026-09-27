@@ -2,7 +2,6 @@ package top.wcpe.mc.testkit.task
 
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
 import top.wcpe.mc.testkit.bot.botPidFile
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -20,8 +19,15 @@ import kotlin.test.assertTrue
  */
 class ProcessStopperTest {
 
-    @TempDir
-    lateinit var resultsDir: File
+    /**
+     * 收尾测试的工作目录：放 build/ 下而不是 JUnit `@TempDir`。
+     *
+     * Windows 上派生的子进程退出后，其日志文件句柄由 JVM 的进程回收线程**异步**释放；`@TempDir` 的清理
+     * 会赶在释放完成之前执行，并以「文件正被另一个进程使用」报错——与本类要验的行为无关的假失败
+     * （仓库其它 TestKit 用例同样为此把工作目录放到 `build/` 下）。每个测试方法由 JUnit 新建实例，
+     * 故这里天然一例一目录。
+     */
+    private val resultsDir: File = File("build/test-process-stopper-${System.nanoTime()}").apply { mkdirs() }
 
     private fun currentJavaExecutable(): String {
         val javaHome = System.getProperty("java.home")

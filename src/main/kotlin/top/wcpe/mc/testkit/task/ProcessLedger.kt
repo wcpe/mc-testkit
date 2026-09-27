@@ -34,6 +34,9 @@ internal object ProcessLedger {
     /** 台账文件名（落结果目录）。 */
     const val FILE_NAME = "process-ledger.properties"
 
+    /** 参数字段在 Properties 中的分隔符（命令参数本身不会由框架拼接 shell）。 */
+    private const val ARGUMENT_SEPARATOR = "\u001F"
+
     /**
      * 台账文件路径。
      *
@@ -59,14 +62,19 @@ internal object ProcessLedger {
     fun record(resultsDir: File, key: String, pid: Long, port: Int) {
         runCatching {
             val handle = ProcessHandle.of(pid).orElse(null)
-            val commandLine = handle?.info()?.commandLine()?.orElse("").orEmpty()
-            val startedAtMillis = handle?.info()?.startInstant()?.map { it.toEpochMilli() }?.orElse(0L) ?: 0L
+            val info = handle?.info()
+            val commandLine = info?.commandLine()?.orElse("").orEmpty()
+            val command = info?.command()?.orElse("").orEmpty()
+            val arguments = info?.arguments()?.map { it.toList() }?.orElse(emptyList()).orEmpty()
+            val startedAtMillis = info?.startInstant()?.map { it.toEpochMilli() }?.orElse(0L) ?: 0L
             val file = file(resultsDir)
             file.parentFile?.mkdirs()
             val properties = load(file)
             properties[propKey(key, "pid")] = pid.toString()
             properties[propKey(key, "port")] = port.toString()
             properties[propKey(key, "commandLine")] = commandLine
+            properties[propKey(key, "command")] = command
+            properties[propKey(key, "arguments")] = arguments.joinToString(ARGUMENT_SEPARATOR)
             properties[propKey(key, "startedAtMillis")] = startedAtMillis.toString()
             properties[propKey(key, "recordedAt")] = Instant.now().toString()
             file.outputStream().use { properties.store(it, LEDGER_HEADER) }
@@ -118,8 +126,21 @@ internal object ProcessLedger {
         val pid = properties[propKey(key, "pid")]?.toString()?.trim()?.toLongOrNull() ?: return null
         val port = properties[propKey(key, "port")]?.toString()?.trim()?.toIntOrNull() ?: 0
         val commandLine = properties[propKey(key, "commandLine")]?.toString().orEmpty()
+        val command = properties[propKey(key, "command")]?.toString().orEmpty()
+        val arguments = properties[propKey(key, "arguments")]?.toString()
+            ?.split(ARGUMENT_SEPARATOR)
+            ?.filter { it.isNotEmpty() }
+            ?: emptyList()
         val startedAtMillis = properties[propKey(key, "startedAtMillis")]?.toString()?.trim()?.toLongOrNull() ?: 0L
-        return ProcessRecord(key = key, pid = pid, port = port, commandLine = commandLine, startedAtMillis = startedAtMillis)
+        return ProcessRecord(
+            key = key,
+            pid = pid,
+            port = port,
+            commandLine = commandLine,
+            startedAtMillis = startedAtMillis,
+            command = command,
+            arguments = arguments,
+        )
     }
 
     /** 读属性表；文件损坏时返回空表（不抛）。 */
@@ -144,6 +165,10 @@ internal data class ProcessRecord(
     val port: Int,
     val commandLine: String,
     val startedAtMillis: Long,
+    /** 结构化命令名（Windows 下比完整 commandLine 更稳定）。 */
+    val command: String = "",
+    /** 结构化参数（Windows 下比完整 commandLine 更稳定）。 */
+    val arguments: List<String> = emptyList(),
 ) {
     /** 进程是否仍存活。 */
     fun isAlive(): Boolean = ProcessHandle.of(pid).map { it.isAlive }.orElse(false)
@@ -156,17 +181,30 @@ internal data class ProcessRecord(
     private fun normalizeCommandLine(value: String): String =
         if (isWindows) value.trim().replace(Regex("\\s+"), " ").lowercase() else value
 
-    /**
-     * 该 pid 当前是否仍属于本工具起的那个进程。
-     *
-     * 命令行与启动时刻两道核对任一缺失都拒绝收尾，宁可提示按端口手工排查，也不误杀用户自己的进程。
-     */
+    /** 比较 Windows 结构化参数时只折叠大小写，保留参数内部空格语义。 */
+    private fun normalizeArgument(value: String): String = if (isWindows) value.lowercase() else value
+
     fun matchesLiveProcess(): Boolean {
         val handle = ProcessHandle.of(pid).orElse(null) ?: return false
         val info = handle.info()
         val liveCommandLine = info.commandLine().orElse("")
-        if (commandLine.isBlank() || liveCommandLine.isBlank()) return false
-        if (normalizeCommandLine(liveCommandLine) != normalizeCommandLine(commandLine)) return false
+        val lineMatches = if (commandLine.isNotBlank()) {
+            liveCommandLine.isNotBlank() && normalizeCommandLine(liveCommandLine) == normalizeCommandLine(commandLine)
+        } else {
+            true
+        }
+        if (!lineMatches) return false
+        if (command.isNotBlank()) {
+            val liveCommand = info.command().orElse("")
+            val liveArguments = info.arguments().map { it.toList() }.orElse(emptyList())
+            if (
+                liveCommand.isBlank() ||
+                normalizeCommandLine(liveCommand) != normalizeCommandLine(command) ||
+                liveArguments.map(::normalizeArgument) != arguments.map(::normalizeArgument)
+            ) {
+                return false
+            }
+        }
         val liveStartedAt = info.startInstant().map { it.toEpochMilli() }.orElse(0L)
         return startedAtMillis != 0L && liveStartedAt != 0L && liveStartedAt == startedAtMillis
     }

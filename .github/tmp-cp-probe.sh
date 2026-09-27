@@ -1,28 +1,48 @@
 #!/usr/bin/env bash
-# 临时诊断脚本：定位 thin jar（清单 Class-Path）在 Windows 下的解析失败原因。
-# Git Bash 会把含中文的参数转成 '?'，故中文路径一律由 Java 侧派生；脚本只用 ASCII 参数。
+# 临时诊断脚本（第二轮）：Windows 下 argv 非 ASCII 编码丢失的确切边界。
+# 中文路径一律由 Java 侧派生，脚本只用 ASCII 参数。
 set -u
-root="$PWD/.tmp/probe-work"
+root="$PWD/.tmp/probe-work2"
 mkdir -p "$root/classes"
 
 cat > "$root/Main.java" <<'JAVA'
 public class Main {
     public static void main(String[] args) throws Exception {
-        System.out.println("      base=" + esc(String.valueOf(
-            Main.class.getProtectionDomain().getCodeSource().getLocation())));
-        System.out.println("      cp=" + esc(System.getProperty("java.class.path")));
-        System.out.println("      dir=" + esc(System.getProperty("user.dir")));
+        System.out.println("      dir=" + Diag.esc(System.getProperty("user.dir")));
+        System.out.println("      cp=" + Diag.esc(System.getProperty("java.class.path")));
+        System.out.println("      prop=" + Diag.esc(String.valueOf(System.getProperty("probe.prop"))));
+        System.out.println("      arg0=" + Diag.esc(args.length > 0 ? args[0] : "<none>"));
+        Diag.rest();
+    }
+}
+JAVA
+
+cat > "$root/Lib.java" <<'JAVA'
+public class Lib {
+    public static void main(String[] args) throws Exception {
+        System.out.println("      dir=" + Diag.esc(System.getProperty("user.dir")));
+        System.out.println("      cp=" + Diag.esc(System.getProperty("java.class.path")));
+        System.out.println("      prop=" + Diag.esc(String.valueOf(System.getProperty("probe.prop"))));
+        System.out.println("      arg0=" + Diag.esc(args.length > 0 ? args[0] : "<none>"));
+        Diag.rest();
+    }
+}
+JAVA
+
+cat > "$root/Diag.java" <<'JAVA'
+public class Diag {
+    public static void rest() {
         System.out.println("      jnu=" + System.getProperty("sun.jnu.encoding")
             + " native=" + System.getProperty("native.encoding"));
         try {
-            Class.forName("Probe");
-            System.out.println("      probe=OK");
+            Class.forName("Marker");
+            System.out.println("      marker=OK");
         } catch (Throwable t) {
-            System.out.println("      probe=FAIL " + t);
+            System.out.println("      marker=FAIL " + t);
         }
     }
 
-    static String esc(String s) {
+    public static String esc(String s) {
         StringBuilder sb = new StringBuilder();
         for (char c : s.toCharArray()) {
             sb.append(c < 0x20 || c > 0x7e ? String.format("\\u%04x", (int) c) : c);
@@ -32,7 +52,7 @@ public class Main {
 }
 JAVA
 
-echo 'public class Probe { }' > "$root/Probe.java"
+echo 'public class Marker { }' > "$root/Marker.java"
 
 cat > "$root/Driver.java" <<'JAVA'
 import java.io.*;
@@ -42,56 +62,47 @@ import java.util.jar.*;
 public class Driver {
     static final String CN = "\u7a7a\u683c \u4e2d\u6587";
     static final String CN_NAME = "probe \u526f\u672c.jar";
+    static final String LIB_ENTRY = "libs/probe%20%E5%89%AF%E6%9C%AC.jar";
     static File classes;
+    static String javaExe;
 
     public static void main(String[] args) throws Exception {
         File root = new File(System.getProperty("user.dir"));
         classes = new File(root, "classes");
         File javaBin = new File(System.getProperty("java.home"), "bin");
-        String javaExe = new File(javaBin, "java.exe").isFile()
+        javaExe = new File(javaBin, "java.exe").isFile()
             ? new File(javaBin, "java.exe").getAbsolutePath()
             : new File(javaBin, "java").getAbsolutePath();
-        System.out.println("root=" + esc(root.getAbsolutePath()));
-        System.out.println("java=" + esc(javaExe));
-        System.out.println("jnu=" + System.getProperty("sun.jnu.encoding")
-            + " native=" + System.getProperty("native.encoding")
-            + " file=" + System.getProperty("file.encoding"));
+        System.out.println("root=" + Diag.esc(root.getAbsolutePath()));
+        System.out.println("jnu=" + System.getProperty("sun.jnu.encoding"));
 
-        run(root, javaExe, "1-manifest-escaped", "caseA " + CN, CN_NAME,
-            "libs/probe%20%E5%89%AF%E6%9C%AC.jar", false);
-        run(root, javaExe, "2-argv-classpath", "caseB " + CN, CN_NAME, null, true);
-        run(root, javaExe, "3-manifest-raw-cn", "caseC " + CN, CN_NAME,
-            "libs/probe%20\u526f\u672c.jar", false);
-        run(root, javaExe, "4-manifest-abs-uri", "caseD " + CN, CN_NAME, "AUTO-URI", false);
-        run(root, javaExe, "5-space-only", "caseE " + CN, "probe copy.jar",
-            "libs/probe%20copy.jar", false);
-        run(root, javaExe, "6-ascii-dir", "caseF-ascii", CN_NAME,
-            "libs/probe%20%E5%89%AF%E6%9C%AC.jar", false);
-        run(root, javaExe, "7-ascii-all", "caseG-ascii", "probe.jar", "libs/probe.jar", false);
-    }
-
-    static void run(File root, String javaExe, String label, String dirName, String probeName,
-                    String cpValue, boolean viaArgv) throws Exception {
-        File dir = new File(root, dirName);
+        File dir = new File(root, "case " + CN);
         File libs = new File(dir, "libs");
         libs.mkdirs();
-        File probeJar = new File(libs, probeName);
-        writeJar(probeJar, "Probe.class", null, null);
-        String classPath = cpValue;
-        if ("AUTO-URI".equals(cpValue)) {
-            classPath = probeJar.toURI().toASCIIString();
-        }
-        writeJar(new File(dir, "main.jar"), "Main.class", "Main", viaArgv ? null : classPath);
+        File probeJar = new File(libs, CN_NAME);
+        writeJar(probeJar, "probe \u526f\u672c.jar", new String[] {"Lib.class", "Marker.class", "Diag.class"},
+            null, null);
+        File launcher = new File(dir, "launcher.jar");
+        writeJar(launcher, "launcher.jar", new String[] {"Main.class", "Diag.class"}, null, LIB_ENTRY);
+        File self = new File(dir, "self.jar");
+        writeJar(self, "self.jar", new String[] {"Main.class", "Diag.class"}, "Main", null);
+        System.out.println("dir=" + Diag.esc(dir.getAbsolutePath()));
+        System.out.println("probe-exists=" + probeJar.isFile() + " launcher-exists=" + launcher.isFile());
 
+        exec(dir, "A-绝对 -cp 启动器（当前产品形态）", javaExe,
+            "-cp", launcher.getAbsolutePath(), "Lib");
+        exec(dir, "B-相对 -cp 启动器", javaExe, "-cp", "launcher.jar", "Lib");
+        exec(dir, "C-绝对 -jar", javaExe, "-jar", self.getAbsolutePath());
+        exec(dir, "D-相对 -jar", javaExe, "-jar", "self.jar");
+        exec(dir, "E-非 ASCII 属性与参数", javaExe, "-Dprobe.prop=" + CN, "-cp", "self.jar",
+            "Main", CN);
+        exec(dir, "F-中文工作目录下的 -cp 相对路径解析", javaExe, "-cp", "self.jar", "Main");
+    }
+
+    static void exec(File dir, String label, String... command) throws Exception {
         System.out.println("==================== " + label);
-        System.out.println("  dir=" + esc(dir.getAbsolutePath()));
-        System.out.println("  probe=" + esc(probeJar.getName()) + " exists=" + probeJar.isFile());
-        System.out.println("  classpath=" + esc(classPath == null ? "<argv>" : classPath));
-
-        ProcessBuilder pb = viaArgv
-            ? new ProcessBuilder(javaExe, "-cp",
-                "main.jar" + File.pathSeparator + probeJar.getAbsolutePath(), "Main")
-            : new ProcessBuilder(javaExe, "-cp", "main.jar", "Main");
+        System.out.println("  cmd=" + Diag.esc(String.join(" ", command)));
+        ProcessBuilder pb = new ProcessBuilder(command);
         pb.directory(dir);
         pb.redirectErrorStream(true);
         Process child = pb.start();
@@ -108,8 +119,8 @@ public class Driver {
         System.out.println("  exit=" + code);
     }
 
-    static void writeJar(File target, String entry, String mainClass, String classPath)
-            throws IOException {
+    static void writeJar(File target, String label, String[] entries, String mainClass,
+                         String classPath) throws IOException {
         Manifest mf = new Manifest();
         mf.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
         if (mainClass != null) {
@@ -122,21 +133,15 @@ public class Driver {
         try (JarOutputStream jos = hasManifest
                 ? new JarOutputStream(new FileOutputStream(target), mf)
                 : new JarOutputStream(new FileOutputStream(target))) {
-            jos.putNextEntry(new JarEntry(entry));
-            jos.write(Files.readAllBytes(new File(classes, entry).toPath()));
-            jos.closeEntry();
+            for (String entry : entries) {
+                jos.putNextEntry(new JarEntry(entry));
+                jos.write(Files.readAllBytes(new File(classes, entry).toPath()));
+                jos.closeEntry();
+            }
         }
-    }
-
-    static String esc(String s) {
-        StringBuilder sb = new StringBuilder();
-        for (char c : s.toCharArray()) {
-            sb.append(c < 0x20 || c > 0x7e ? String.format("\\u%04x", (int) c) : c);
-        }
-        return sb.toString();
     }
 }
 JAVA
 
-( cd "$root" && javac -d classes Main.java Probe.java Driver.java ) || exit 1
+( cd "$root" && javac -d classes Main.java Lib.java Diag.java Marker.java Driver.java ) || exit 1
 ( cd "$root" && java -cp classes Driver )

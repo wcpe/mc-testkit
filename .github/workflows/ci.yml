@@ -71,6 +71,16 @@ jobs:
       - name: 构建与测试（Windows）
         run: .\gradlew.bat build --no-daemon --stacktrace --console=plain
 
+      - name: 归档 Windows 测试报告
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: windows-test-reports
+          path: |
+            build/test-results/test/
+            build/reports/tests/
+          if-no-files-found: ignore
+
   # 模板机器人：prettier + eslint + 依赖漏洞扫描（见 .claude/rules/static-analysis.md）
   # 注意：任务名是分支保护的必需检查名（CONTRIBUTING §8），改名须同步更新仓库分支保护规则。
   bot-checks:

@@ -33,7 +33,7 @@ E2E 编排要先把真实「代理 + 后端」拉起来：下载对应平台 / �
 - **下载工具** `Downloader`（自实现）+ `Hashing`（自实现）：HTTP 下载到临时文件、sha256 校验。
 - **缓存键 / 路径** `JarCache`（自实现缓存布局）：`<cacheRoot>/<platform>/<version>/<build>.jar` 路径推导（纯函数）；命中且 hash 一致即复用，否则下载。
 - **jar 解析** `ServerJarProvisioner`：编排「env `*_JAR` 覆盖 → 直接返回；否则 Maven 坐标来源（命中镜像复用 / 解析后镜像）；否则 env `*_VERSION` / 缺省定版本 → 经对应 API 解析构建 → 缓存命中复用 / 下载」。env 取值经注入的 `(name)->String?` 取值器（纯函数边界，便于「设了 `*_JAR` 就不发网络」单测），不耦合 Gradle `Project`。Maven 来源经 [MavenServerJarSource] 惰性接口传入（实现持 Gradle `FileCollection`，不可用 lambda——Kotlin lambda 非 `Serializable`，配置缓存会拒）。
-- **启动助手** `ServerLauncher`（自实现，用 `ProcessBuilder`）：用 `java.home` 的 `java` 可执行 + JVM 参数 + jar 在运行目录后台启动，返回 `Process`；pid 落盘（复用 FR-06 同款 pid 文件思路，本包自带 `provisionPidFile`，不改 `bot/`）。启动命令按构件形态选路：自包含 jar（Paper / 代理）与 paperclip 引导件走 `-jar`；运行目录下带注入运行库目录（`server-libraries/`）的 thin jar 走 `-cp <启动器 jar> <Main-Class>`，启动器只含一份 `Class-Path` 清单（服务端 jar 在前、运行库按相对路径升序，条目按 UTF-8 百分号编码），该目录缺失 / 读不出 `Main-Class` 时退回 `-jar`。paperclip 引导件按包前缀 `io.papermc.paperclip.` 识别，覆盖实测两个入口名（1.8.8–1.17.1 `Paperclip`、1.18.2+ `Main`）。**注入运行库目录刻意与 paperclip 自有的 `libraries/` 分离**：后者是 paperclip 运行期下载目标且跨轮保留，扫它会把上一轮下载的服务端库接进下一轮 classpath（实测 1.16.5 因 snakeyaml 2.6 报 `NoSuchMethodError` 启动即崩）。
+- **启动助手** `ServerLauncher`（自实现，用 `ProcessBuilder`）：用 `java.home` 的 `java` 可执行 + JVM 参数 + jar 在运行目录后台启动，返回 `Process`；pid 落盘（复用 FR-06 同款 pid 文件思路，本包自带 `provisionPidFile`，不改 `bot/`）。启动命令按构件形态选路：自包含 jar（Paper / 代理）与 paperclip 引导件走 `-jar`；运行目录下带注入运行库目录（`server-libraries/`）的 thin jar 走 `-cp <启动器 jar> <Main-Class>`，启动器只含一份 `Class-Path` 清单（服务端 jar 在前、运行库按相对路径升序，条目按 UTF-8 百分号编码），该目录缺失 / 读不出 `Main-Class` 时退回 `-jar`。两条路径的 jar 都**相对运行目录**给出（子进程 cwd 即运行目录）：Windows 下 Java 向子进程传参会把非 ASCII 字符换成 `?`（实测 `-D<key>=空格 中文` 到子进程变成 `?? ??`），绝对路径里的中文（项目目录 / 用户目录很常见）会让 jar 直接找不到、报「找不到主类」；相对形式在与运行目录共享前缀时天然不含中文，跨盘符等无法相对化时才退回绝对路径。paperclip 引导件按包前缀 `io.papermc.paperclip.` 识别，覆盖实测两个入口名（1.8.8–1.17.1 `Paperclip`、1.18.2+ `Main`）。**注入运行库目录刻意与 paperclip 自有的 `libraries/` 分离**：后者是 paperclip 运行期下载目标且跨轮保留，扫它会把上一轮下载的服务端库接进下一轮 classpath（实测 1.16.5 因 snakeyaml 2.6 报 `NoSuchMethodError` 启动即崩）。
 
 依赖方向：本包只依赖 `contract/`（env 名 / 缺省版本）与 JDK；不反依赖消费项目 / `template/`；不外挂第三方下载库、不引第三方 JSON / HTTP。下载 / 运行核心全部由维护者自实现，整包随 mc-testkit 本体以 MIT 发布。
 
@@ -46,11 +46,12 @@ E2E 编排要先把真实「代理 + 后端」拉起来：下载对应平台 / �
 - [x] 实现 `provision/`（平台映射 / JSON / 两 API / 下载 / 缓存 / jar 解析 / 启动助手）。
 - [x] 文档同步：ARCHITECTURE `provision/` 条核对、CHANGELOG 未发布段追加一行。
 - [x] 启动助手按构件形态选路（thin jar 经启动器 jar 传 classpath、自包含 / paperclip 走 `-jar`）——`ServerLauncherTest`。
+- [x] 启动路径相对化：`-jar` / `-cp` 相对运行目录给出、命令行参数不含非 ASCII 字符（空格 / 中文运行目录可拉起）——`ServerLauncherTest`。
 
 ## 5. 验收标准
 
 - 新增单测红 → 绿；`./gradlew build` 全绿（validatePlugins + 全部测试，FR-01/03/06 既有测试不回归）。
-- 启动选路：运行目录带注入运行库目录（`server-libraries/`）的 thin jar 经启动器 jar 拉起，`Class-Path` 含服务端 jar 与全部注入运行库且按相对路径升序；路径含空格 / 中文时按 UTF-8 百分号编码，条目不被截断（子进程能加载到入口类）。自包含 jar、paperclip 主入口（含 1.8.8–1.17.1 的 `io.papermc.paperclip.Paperclip`）、读不出 `Main-Class` 三种情况退回 `-jar`；**paperclip 自有的 `libraries/` 不参与 classpath**（跨轮残留不得进入下一轮）；启动前清理上一轮残留的启动器 jar。
+- 启动选路：运行目录带注入运行库目录（`server-libraries/`）的 thin jar 经启动器 jar 拉起，`Class-Path` 含服务端 jar 与全部注入运行库且按相对路径升序；路径含空格 / 中文时按 UTF-8 百分号编码，条目不被截断（子进程能加载到入口类）。自包含 jar、paperclip 主入口（含 1.8.8–1.17.1 的 `io.papermc.paperclip.Paperclip`）、读不出 `Main-Class` 三种情况退回 `-jar`；**paperclip 自有的 `libraries/` 不参与 classpath**（跨轮残留不得进入下一轮）；启动前清理上一轮残留的启动器 jar。`-jar` / `-cp` 传的是相对运行目录的路径，且命令行参数不含非 ASCII 字符（运行目录与运行库名含空格 / 中文时可正常拉起，见 `ServerLauncherTest`）。
 - Spigot 供应：按版本下载受控公共构件（首源失败回退镜像），下载后校验结构合法 jar 并把实际来源 / 版本 / 本地 SHA-256 写入缓存目录 `source.properties`；命中缓存时复核这三项与当前文件哈希；全部源不可达抛中文错误；设 `MC_TESTKIT_E2E_SPIGOT_JAR` 时全程不发网络。
 - jar 解析：设某 `*_JAR` 环境变量时返回该覆盖路径且**全程不发网络**；`*_VERSION` 覆盖被采纳；Maven 坐标来源命中镜像时**不创建解析配置、不触仓库**（配置缓存可存储），未命中时解析后镜像、镜像内容与来源逐字节一致。
 - JSON / 构建 / URL 解析：对固定样本文本解析出正确构建号 / 下载名 / sha256 / 下载 URL。
@@ -62,6 +63,7 @@ E2E 编排要先把真实「代理 + 后端」拉起来：下载对应平台 / �
 - PaperMC Fill v3 对 User-Agent 与响应结构有契约要求；适配集中在 `PaperDownloadsApi` / `Downloader`，后续下载服务变更时只需改本包一处。
 - BungeeCord Jenkins 无远端 sha256 与下载产物匹配，只能校验"结构合法 jar"+ 记录本地 hash 防本地损坏（本包既定取舍）。
 - 启动助手只提供「起一个进程返回 Process + pid 落盘」与按构件形态选路；前台被测后端自停驱动后台收尾、就绪时序、集群批量回收等编排与收尾接线属 FR-04，本包不做。
+- Windows 下**命令行参数无法承载非 ASCII 字符**（Java 传参时替换为 `?`）：本包的相对路径消法规避了「路径里的中文」，但用户自带的中文 `jvmArgs` / `serverArgs`，以及无法相对化的跨盘符中文路径，仍会踩到该平台限制——属平台行为，本包不代偿。
 - thin jar 的启动器 jar（`.mc-testkit-<key>-classpath.jar`）随运行目录重建，清单里的运行库是**启动时刻**的快照：运行库在运行期被改动需重启才会生效。注入运行库目录不在 clean 的保留集合内，每轮由消费方 prepare 重建。
 - Spigot 构件**不是官方一手产物**且无远端 sha256：只能校验「下载到的是合法 jar 且之后未被本地改动」，无法保证上游构件未被替换；来源可用性也不由本项目控制，多源回退与溯源只是对冲（取舍见 ADR-0013）。
 - 真实下载 / 起服只能 FR-08 实机验，单测不打网络（诚实标注）。

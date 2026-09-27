@@ -189,6 +189,39 @@ class ServerLauncherTest {
     }
 
     @Test
+    @DisplayName("运行目录含空格与中文时仍应能启动自包含 jar")
+    fun launchSelfContainedJarFromPathContainingNonAscii() {
+        val workDir = File("build/test-launch 空格 中文-${System.nanoTime()}").apply { mkdirs() }
+        val jar = createImmediateExitJar(File(workDir, "hello.jar"))
+
+        val process = ServerLauncher.launch(jar, workDir, "node")
+        try {
+            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "探针应已退出")
+            val log = File(workDir, "node.log").readText()
+            assertEquals(0, process.exitValue(), "非 ASCII 目录不得让 jar 找不到：$log")
+        } finally {
+            process.destroyForcibly()
+        }
+    }
+
+    @Test
+    @DisplayName("命令行参数里不得出现非 ASCII 路径")
+    fun commandArgumentsStayAscii() {
+        // Windows 下 Java 向子进程传参会把非 ASCII 字符换成 `?`，带中文的绝对路径会让 jar 找不到；
+        // 故 `-jar` / `-cp` 一律相对运行目录给出（见 ServerLauncher.launchArgument）
+        val workDir = File("build/test-command 空格 中文-${System.nanoTime()}").apply { mkdirs() }
+        val jar = createImmediateExitJar(File(workDir, "hello.jar"))
+
+        val command = ServerLauncher.buildCommand(jar, workDir, "node", emptyList(), emptyList(), null)
+
+        assertEquals("hello.jar", command[command.indexOf("-jar") + 1], "jar 应相对运行目录给出：$command")
+        assertTrue(
+            command.none { argument -> argument.any { it.code > 0x7f } },
+            "命令行参数不得含非 ASCII 字符：$command",
+        )
+    }
+
+    @Test
     @DisplayName("记录启动日志时应说明按运行库 classpath 启动")
     fun logRuntimeClasspathLaunchMode() {
         val workDir = File("build/test-command-log-${System.nanoTime()}").apply { mkdirs() }
@@ -209,7 +242,7 @@ class ServerLauncherTest {
 
         val command = ServerLauncher.buildCommand(jar, workDir, "node", listOf("-Xmx1G"), listOf("--nogui"), null)
 
-        assertEquals(listOf(javaExecutable(), "-Xmx1G", "-jar", jar.absolutePath, "--nogui"), command)
+        assertEquals(listOf(javaExecutable(), "-Xmx1G", "-jar", jar.name, "--nogui"), command)
         assertFalse(provisionClasspathFile(workDir, "node").exists(), "未启用 classpath 启动器时不应生成它")
     }
 
@@ -249,7 +282,7 @@ class ServerLauncherTest {
         val command = ServerLauncher.buildCommand(paperclipJar, workDir, "paperclip", emptyList(), emptyList(), null)
 
         assertTrue(command.contains("-jar"), "paperclip 必须自己引导，不得替它拼 classpath：$command")
-        assertEquals(paperclipJar.absolutePath, command[command.indexOf("-jar") + 1])
+        assertEquals(paperclipJar.name, command[command.indexOf("-jar") + 1], "jar 应相对运行目录给出：$command")
         assertFalse(provisionClasspathFile(workDir, "paperclip").exists(), "paperclip 场景不应生成 classpath 启动器")
     }
 
@@ -265,7 +298,7 @@ class ServerLauncherTest {
             listOf(
                 javaExecutable(),
                 "-cp",
-                provisionClasspathFile(workDir, "server").absolutePath,
+                provisionClasspathFile(workDir, "server").name,
                 LaunchProbeMain::class.java.name,
             ),
             command,
@@ -313,7 +346,7 @@ class ServerLauncherTest {
         val command = ServerLauncher.buildCommand(paperclipJar, workDir, "paperclip", emptyList(), emptyList(), null)
 
         assertTrue(command.contains("-jar"), "paperclip 必须自己引导，不得替它拼 classpath：$command")
-        assertEquals(paperclipJar.absolutePath, command[command.indexOf("-jar") + 1])
+        assertEquals(paperclipJar.name, command[command.indexOf("-jar") + 1], "jar 应相对运行目录给出：$command")
         assertFalse(provisionClasspathFile(workDir, "paperclip").exists(), "paperclip 场景不应生成 classpath 启动器")
     }
 

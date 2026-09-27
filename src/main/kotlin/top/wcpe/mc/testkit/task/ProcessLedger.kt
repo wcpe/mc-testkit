@@ -34,6 +34,9 @@ internal object ProcessLedger {
     /** 台账文件名（落结果目录）。 */
     const val FILE_NAME = "process-ledger.properties"
 
+    /** 参数字段在 Properties 中的分隔符（命令参数本身不会由框架拼接 shell）。 */
+    private const val ARGUMENT_SEPARATOR = "\u001F"
+
     /**
      * 台账文件路径。
      *
@@ -59,14 +62,19 @@ internal object ProcessLedger {
     fun record(resultsDir: File, key: String, pid: Long, port: Int) {
         runCatching {
             val handle = ProcessHandle.of(pid).orElse(null)
-            val commandLine = handle?.info()?.commandLine()?.orElse("").orEmpty()
-            val startedAtMillis = handle?.info()?.startInstant()?.map { it.toEpochMilli() }?.orElse(0L) ?: 0L
+            val info = handle?.info()
+            val commandLine = info?.commandLine()?.orElse("").orEmpty()
+            val command = info?.command()?.orElse("").orEmpty()
+            val arguments = info?.arguments()?.map { it.toList() }?.orElse(emptyList()).orEmpty()
+            val startedAtMillis = info?.startInstant()?.map { it.toEpochMilli() }?.orElse(0L) ?: 0L
             val file = file(resultsDir)
             file.parentFile?.mkdirs()
             val properties = load(file)
             properties[propKey(key, "pid")] = pid.toString()
             properties[propKey(key, "port")] = port.toString()
             properties[propKey(key, "commandLine")] = commandLine
+            properties[propKey(key, "command")] = command
+            properties[propKey(key, "arguments")] = arguments.joinToString(ARGUMENT_SEPARATOR)
             properties[propKey(key, "startedAtMillis")] = startedAtMillis.toString()
             properties[propKey(key, "recordedAt")] = Instant.now().toString()
             file.outputStream().use { properties.store(it, LEDGER_HEADER) }
@@ -118,8 +126,21 @@ internal object ProcessLedger {
         val pid = properties[propKey(key, "pid")]?.toString()?.trim()?.toLongOrNull() ?: return null
         val port = properties[propKey(key, "port")]?.toString()?.trim()?.toIntOrNull() ?: 0
         val commandLine = properties[propKey(key, "commandLine")]?.toString().orEmpty()
+        val command = properties[propKey(key, "command")]?.toString().orEmpty()
+        val arguments = properties[propKey(key, "arguments")]?.toString()
+            ?.split(ARGUMENT_SEPARATOR)
+            ?.filter { it.isNotEmpty() }
+            ?: emptyList()
         val startedAtMillis = properties[propKey(key, "startedAtMillis")]?.toString()?.trim()?.toLongOrNull() ?: 0L
-        return ProcessRecord(key = key, pid = pid, port = port, commandLine = commandLine, startedAtMillis = startedAtMillis)
+        return ProcessRecord(
+            key = key,
+            pid = pid,
+            port = port,
+            commandLine = commandLine,
+            startedAtMillis = startedAtMillis,
+            command = command,
+            arguments = arguments,
+        )
     }
 
     /** 读属性表；文件损坏时返回空表（不抛）。 */
@@ -138,45 +159,53 @@ internal object ProcessLedger {
     """.trimIndent()
 }
 
-/**
- * 台账里的一条进程记录。
- *
- * @property key 逻辑进程标识（如 `backend/paper1201`）。
- * @property pid 进程号。
- * @property port 监听端口（0 = 无端口，如机器人）。
- * @property commandLine 登记时的完整命令行（收尾前核对身份用）。
- * @property startedAtMillis 登记时该进程的启动时刻（毫秒；0 = 取不到，此时退化为只比命令行）。
- */
 internal data class ProcessRecord(
     val key: String,
     val pid: Long,
     val port: Int,
     val commandLine: String,
     val startedAtMillis: Long,
+    /** 结构化命令名（Windows 下比完整 commandLine 更稳定）。 */
+    val command: String = "",
+    /** 结构化参数（Windows 下比完整 commandLine 更稳定）。 */
+    val arguments: List<String> = emptyList(),
 ) {
     /** 进程是否仍存活。 */
     fun isAlive(): Boolean = ProcessHandle.of(pid).map { it.isAlive }.orElse(false)
 
-    /**
-     * 该 pid 当前是否**仍属于本工具起的那一个进程**（决定能不能杀）。
-     *
-     * pid 会被操作系统复用，故不能只看「pid 存在就杀」——两道核对：
-     * 1. **命令行相同**：进程已被回收成别的程序时，pid 的存活状态与命令行都对不上，直接挡住。
-     * 2. **启动时刻相同**：挡住「同一 pid 上又起了一个命令行一模一样的进程」（例如用户在同一 jar 上
-     *    另开了一个服务端）。只有启动时刻也对得上，才是当初登记的那一个进程实例。
-     *
-     * 任一项取不到（读不到命令行 / 启动时刻）即判否：宁可漏收尾（停任务会提示按端口手工排查），
-     * 也不误杀用户自己的进程。
-     */
+    /** 当前进程是否 Windows（Windows 的命令行 / 启动时刻信息可能比 Unix 不完整）。 */
+    private val isWindows: Boolean
+        get() = System.getProperty("os.name").orEmpty().startsWith("Windows", ignoreCase = true)
+
+    /** 比较命令行时折叠 Windows 的大小写与多余空白，避免同一进程快照格式差异导致误拒杀。 */
+    private fun normalizeCommandLine(value: String): String =
+        if (isWindows) value.trim().replace(Regex("\\s+"), " ").lowercase() else value
+
+    /** 比较 Windows 结构化参数时只折叠大小写，保留参数内部空格语义。 */
+    private fun normalizeArgument(value: String): String = if (isWindows) value.lowercase() else value
+
     fun matchesLiveProcess(): Boolean {
         val handle = ProcessHandle.of(pid).orElse(null) ?: return false
         val info = handle.info()
         val liveCommandLine = info.commandLine().orElse("")
-        if (commandLine.isBlank() || liveCommandLine != commandLine) {
-            return false
+        val lineMatches = if (commandLine.isNotBlank()) {
+            liveCommandLine.isNotBlank() && normalizeCommandLine(liveCommandLine) == normalizeCommandLine(commandLine)
+        } else {
+            true
         }
-        // 启动时刻是我们登记时的快照；进程换了一茬（pid 复用 + 同命令行）时它必然不同
+        if (!lineMatches) return false
+        if (command.isNotBlank()) {
+            val liveCommand = info.command().orElse("")
+            val liveArguments = info.arguments().map { it.toList() }.orElse(emptyList())
+            if (
+                liveCommand.isBlank() ||
+                normalizeCommandLine(liveCommand) != normalizeCommandLine(command) ||
+                liveArguments.map(::normalizeArgument) != arguments.map(::normalizeArgument)
+            ) {
+                return false
+            }
+        }
         val liveStartedAt = info.startInstant().map { it.toEpochMilli() }.orElse(0L)
-        return startedAtMillis != 0L && liveStartedAt == startedAtMillis
+        return startedAtMillis != 0L && liveStartedAt != 0L && liveStartedAt == startedAtMillis
     }
 }

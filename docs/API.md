@@ -207,6 +207,45 @@ v1 **不做** `pluginUnderTest` 的坐标形式（解析机制可复用，待真
 - 收尾仍以「进程退出」为准（`stop` / `end` 发完生效后任务自然返回），`Ctrl+C` 与 `stop<Key>Serve` 仍是兜底路径。
 - 用公开 API 自行编排时，`ServerLauncher.launch` 返回的 `Process` 同样保持 stdin 可写（见 §5），可自行向控制台注入命令。
 
+**Tab 补全与 ↑/↓ 历史（2026-09-27 增补，[ADR-0021](adr/0021-serve-console-line-completion.md)）**：
+
+- **Tab 补全**：候选 = 服务端命令表 + 本控制台历史。
+  - 唯一命中 → 补全并把补全结果下发（等价 shell 里「Tab 补全 + 回车」）；
+  - 多候选 → **只列候选、不下发**（提示写明"该行未下发"），用户补全后重发；
+  - 无候选 → Tab 位于行尾时照常下发你敲的内容（等价 shell 里「Tab 没补到 + 回车」）；Tab 之后还有内容则**不猜也不下发**（不丢已敲的字）。
+- **服务端命令表**：serve 就绪后自动往控制台发一条 `help` 取全表（含原版 / Bukkit / 插件命令与别名），其输出**不回放到控制台**（只写运行目录日志，故不刷屏），只用于补全候选。**平台差异**：Paper / Spigot / Folia 的控制台有 `help`；**BungeeCord / Velocity 没有**（实测 26.1 / 3.4.0 回 `Command not found` / `此命令不存在。`），此时候选只用历史命令，就绪日志会如实说明「未取到服务端命令表」。
+- **参数位置的候选**：已敲到参数（含空格）时，候选是**你自己用过的整行**——参数补全（玩家名 / 世界名等）依赖服务端自己的命令树，而管道 stdin 下服务端没有终端、它的补全接口不可用，故不提供（理由与备选见 ADR-0021）。
+- **↑/↓ 历史**：调出并下发（本终端无法把历史塞回编辑缓冲，故取 shell 语义「↑ + 回车 = 重跑上一条」，并打印调出的条目）；连按 `↑` 更早、`↓` 更晚。历史跨轮次保存在 `<结果目录>/serve-console-history-<serve>.txt`（可安全删除，删掉只失去历史）。
+- **本终端做不到**：左右键 / Home / End / Delete 的行内编辑与光标移动（Gradle 控制台按行转发、不做行内编辑）。这些键会作为转义字节落进整行，框架**不下发**并中文说明——避免把转义字节当命令发给服务端报未知命令。改已敲的内容请用退格，或 `Ctrl+U` 清行后重输。
+
+#### 3.2.2 serve 的附加控制台（原版控制台体验，FR-25）
+
+`serve("dev") { attachConsole = true }` 后，`serve<Key>` 把目标进程放进**伪终端（PTY）**启动，并在就绪时打印一条**可直接粘贴**的命令（路径由框架按自身构件推导，消费方不必自己拼）：
+
+```
+[mc-testkit] 附加控制台（原版体验）：在**另一个终端**运行下面这条命令，即可把该终端接到服务端自己的控制台上
+[mc-testkit] java -cp "<插件 jar>:<kotlin-stdlib jar>" top.wcpe.mc.testkit.console.ServeConsoleAttach --host 127.0.0.1 --port <端口> --token <令牌>
+```
+
+在另一个终端运行它之后，**那个终端就是服务端自己的控制台**：
+
+| 能力 | 由谁提供 |
+|---|---|
+| Tab 补全（命令名 + **参数**，如 `whitelist add <Tab>`） | 服务端 JLine（命令树来自服务端自己） |
+| ↑↓ 历史、←→ 行编辑、Home/End、颜色 | 服务端 JLine |
+| Ctrl+C 停服 | 服务端（与原版一致） |
+| `Ctrl+]` 断开附加 | 客户端（只断开附加，服务端继续运行；退出时恢复终端设置） |
+
+要点：
+
+- **默认关闭**：不声明 `attachConsole` 时，行为与本功能引入前完全一致（管道 stdin + 框架侧行级补全 + 纯文本日志）。
+- **平台**：PTY 由 pty4j 统一提供——Windows 优先 ConPTY、必要时 WinPty fallback，Linux/macOS 使用 Unix PTY；pty4j 与 JLine（含按 JLine 运行期约定注册的原生 provider 与原生库） 原生后端加载失败时不阻断 serve，中文说明并退回默认形态（行级补全仍可用）。
+- **日志语义（仅开启时）**：运行目录 `<key>.log` 记的是服务端的**终端流**（含 JLine 转义与提示符重绘，已去 ANSI 与 `\r`）——这是「服务端真的拿到终端」的必然结果；Gradle 控制台视图会再去掉提示符残留，保持可读。
+- **端点安全与收敛**：只绑 `127.0.0.1`，随机端口 + 随机令牌；同一时刻只服务**一个** attach 会话（两个终端抢同一个 pty 只会互相踩）。attach 时会把 pty 尺寸同步为该终端的真实尺寸（best-effort；之后改窗口大小需重新 attach）。
+- **原终端仍可用**：attach 期间，原来那个 Gradle 终端的行级补全 / 历史 / 命令透传照样有效（两处同时输入会交错，通常只用一处）。
+- **收尾不变**：Ctrl+C / `stop<Key>Serve` / JVM shutdown hook 三路都收尾目标进程（PTY 模式下先收尾其后代），端口不漏、无残留。
+- **集群 serve 同样支持**：attach 的目标是**代理**（集群 serve 的命令落点与真人入口都是代理）。
+
 ### 3.3 环境变量约定（前缀已冻结：`MC_TESTKIT_E2E_`）
 
 用于覆盖默认值、提供 jar / 模板路径、调节规模与超时（须可移植、不写死本机绝对路径）。前缀固定 `MC_TESTKIT_E2E_`（ADR-0006，本期不做 DSL 可配）。已冻结的核心名（**全集随 FR-02/04/06 补全，前缀与风格不变**）：
@@ -300,8 +339,9 @@ bot 先起、后端后起，不存在「全部节点已就绪」的时刻。在�
 | `SleepHook` | 沉降等待（等异步模块就绪等） |
 | `HookChain` | 按序串联多个钩子，任一步失败即中断 |
 
-**自动任务**：`before<Key>Scenario`（`dependsOn(prepare)`）、`after<Key>Scenario`（由场景任务 `finalizedBy`）；
-仅当场景声明了对应钩子时注册。
+**自动任务**：`before<Key>Scenario` / `after<Key>Scenario` **仅在声明了对应钩子时注册**，且自身不接线——由各场景形态的任务接：`e2e<Key>` / `launch<Key>Bot` / `e2e<Key>Via<Proxy>` / `e2e<Key>Cluster` / `e2e<Key>Stress` 上 `dependsOn(before<Key>Scenario)`、`finalizedBy(after<Key>Scenario)`
+（早期版本让钩子任务自己 `dependsOn(prepareE2e<Key>)` 是错的：集群场景不生成该任务，声明 `beforeScenario` 会报 `Task with path 'prepareE2e…' not found`）。
+`readyScenario` **不生成任务**——它需要「节点已就绪」这一时刻，由集群任务在端口就绪门之后、bot 启动之前直接调用。
 
 ### 3.6 结果文件（测试结论真源，已冻结）
 
@@ -346,6 +386,11 @@ WaterfallModuleProvisioner().provision("1.20", proxyRunDir)
 
 // 起服（返回 Process；stdin 保持打开，可向控制台注入命令）
 val process = ServerLauncher.launch(paper, runDir, "s1", jvmArgs = listOf("-Xmx1G"))
+
+// 可选：让服务端拿到**真终端**（PTY，附加控制台用；由 pty4j 提供 Windows ConPTY/WinPty 与 Unix PTY）
+// PTY 模式下列为「输出不重定向」——process.inputStream 是服务端终端流，由调用方消费并落盘，
+// 否则管道写满会阻塞服务端；pid 文件记的是 PTY 进程的 pid（杀它，服务端随 pty 关闭退出）。
+val tty = ServerLauncher.launch(paper, runDir, "s1", jvmArgs = listOf("-Xmx1G"), pty = true)
 
 // 其它：Java 运行时选择 / 服务端属性 / 完整性校验
 JavaRuntimeSelector.executable("1.20.1") { System.getenv(it) }

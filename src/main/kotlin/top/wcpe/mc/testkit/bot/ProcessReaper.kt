@@ -82,6 +82,8 @@ fun stopProcessByPid(pid: Long, handle: ProcessHandle, logger: (String) -> Unit 
     }
     if (handle.isAlive) {
         handle.destroyForcibly()
+        // Windows 的强杀是异步的：必须再等待一次，调用方才能可靠观察到进程已退出。
+        runCatching { handle.onExit().get(GRACEFUL_EXIT_TIMEOUT_SECONDS, TimeUnit.SECONDS) }
     }
     logger("已结束进程 pid=$pid")
 }

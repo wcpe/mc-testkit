@@ -50,6 +50,38 @@ jobs:
           path: build/reports/tests/
           if-no-files-found: ignore
 
+  # Windows PTY：验证 pty4j 的 ConPTY/WinPty 加载、JLine 依赖与 Windows 下全量构建。
+  # 真实 Paper attach 仍留在手动 E2E，避免 CI 受服务端下载与桌面终端环境影响；桩服务端的 PTY 冒烟
+  # （PtyAttachConsoleSmokeTest）随全量测试在 Windows 上跑，覆盖 ConPTY 真终端与端点桥接。
+  windows-pty:
+    name: Windows PTY 构建与测试
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 配置 Gradle（带依赖 / 构建缓存）
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: 构建与测试（Windows）
+        run: .\gradlew.bat build --no-daemon --stacktrace --console=plain
+
+      - name: 归档 Windows 测试报告
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: windows-test-reports
+          path: |
+            build/test-results/test/
+            build/reports/tests/
+          if-no-files-found: ignore
+
   # 模板机器人：prettier + eslint + 依赖漏洞扫描（见 .claude/rules/static-analysis.md）
   # 注意：任务名是分支保护的必需检查名（CONTRIBUTING §8），改名须同步更新仓库分支保护规则。
   bot-checks:

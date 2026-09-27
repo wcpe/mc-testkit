@@ -2,6 +2,8 @@ package top.wcpe.mc.testkit.console
 
 import org.jline.terminal.Terminal
 import org.jline.terminal.TerminalBuilder
+import org.jline.terminal.spi.SystemStream
+import org.jline.terminal.spi.TerminalProvider
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -14,10 +16,14 @@ import java.io.File
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.util.ServiceLoader
 import java.util.concurrent.TimeUnit
 import java.util.jar.Attributes
 import java.util.jar.JarOutputStream
 import java.util.jar.Manifest
+import java.util.logging.ConsoleHandler
+import java.util.logging.Level
+import java.util.logging.Logger
 
 /**
  * 附加控制台的 **PTY 冒烟测试**：真起一个带 JLine 控制台的桩服务端放进 PTY（Windows 走 ConPTY、
@@ -166,8 +172,23 @@ class PtyAttachConsoleSmokeTest {
  */
 object PtyStubConsole {
 
+    /** 子进程里要能查到的运行时依赖（缺失即 JLine 认不出终端，诊断用）。 */
+    private val PROBED_CLASSES = listOf(
+        "org.jline.terminal.impl.jna.JnaTerminalProvider",
+        "org.jline.terminal.impl.jna.win.JnaWinSysTerminal",
+        "com.sun.jna.Native",
+        "com.sun.jna.platform.win32.WinBase",
+        "org.jline.nativ.JLineNativeLoader",
+    )
+
     @JvmStatic
     fun main(args: Array<String>) {
+        // JLine 只在 DEBUG 级别说明「为什么建不出系统终端」，这里把它的日志拧开，便于 CI 上定位
+        Logger.getLogger("org.jline.utils.Log").apply {
+            level = Level.ALL
+            useParentHandlers = false
+            addHandler(ConsoleHandler().apply { level = Level.ALL })
+        }
         val terminal = try {
             TerminalBuilder.builder().system(true).build()
         } catch (ex: Exception) {
@@ -193,15 +214,46 @@ object PtyStubConsole {
                         println("STUB_ECHO:$line")
                         break
                     }
-                    "banner" -> {
-                        println("STUB_TERMINAL:${terminal.type}")
-                        println("STUB_SIZE:${terminal.width}x${terminal.height}")
-                    }
+                    // attach 之前打的环境信息会被端点丢弃（还没有会话），故 banner 时再打一遍
+                    "banner" -> printDiagnostics(terminal)
                     else -> println("STUB_ECHO:$line")
                 }
             }
         } finally {
             terminal.close()
         }
+    }
+
+    /** 打一组 ASCII 诊断：终端类型 / 尺寸 + JLine provider 与依赖可见性。 */
+    private fun printDiagnostics(terminal: Terminal) {
+        println("STUB_ENV:console=${System.console() != null} term=${System.getenv("TERM")}")
+        println("STUB_PROVIDERS:${describeProviders()}")
+        println("STUB_DEPS:${describeDeps()}")
+        println("STUB_TERMINAL:${terminal.type}")
+        println("STUB_SIZE:${terminal.width}x${terminal.height}")
+    }
+
+    /** 列出 ServiceLoader 找到的终端 provider，以及各自是否认为标准输出是「系统终端」。 */
+    private fun describeProviders(): String = runCatching {
+        val providers = ServiceLoader.load(TerminalProvider::class.java).toList()
+        if (providers.isEmpty()) {
+            "none"
+        } else {
+            providers.joinToString(",") { provider ->
+                val ok = runCatching {
+                    provider.isSystemStream(SystemStream.Output)
+                }.getOrElse { false }
+                "${provider.name()}:systemStream=$ok"
+            }
+        }
+    }.getOrElse { "ERROR:${it.javaClass.simpleName}:${it.message}" }
+
+    /** 逐个探测关键依赖是否可见（缺失说明桩 jar 的 Class-Path 没接全）。 */
+    private fun describeDeps(): String = PROBED_CLASSES.joinToString(",") { name ->
+        val state = runCatching {
+            Class.forName(name, false, PtyStubConsole::class.java.classLoader)
+            "ok"
+        }.getOrElse { "missing" }
+        "$name=$state"
     }
 }

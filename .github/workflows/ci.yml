@@ -51,7 +51,8 @@ jobs:
           if-no-files-found: ignore
 
   # Windows PTY：验证 pty4j 的 ConPTY/WinPty 加载、JLine 依赖与 Windows 下全量构建。
-  # 真实 Paper attach 仍留在手动 E2E，避免 CI 受服务端下载与桌面终端环境影响。
+  # 真实 Paper attach 仍留在手动 E2E，避免 CI 受服务端下载与桌面终端环境影响；桩服务端的 PTY 冒烟
+  # （PtyAttachConsoleSmokeTest）随全量测试在 Windows 上跑，覆盖 ConPTY 真终端与端点桥接。
   windows-pty:
     name: Windows PTY 构建与测试
     runs-on: windows-latest

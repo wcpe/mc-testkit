@@ -58,6 +58,7 @@ serve 挂住后能在 Gradle 终端里敲服务端命令，也有框架侧的行
 - [x] serve 接线：DSL `attachConsole`、PTY 启动分支、输出泵、就绪提示、进程树收尾
 - [x] 文档同步：PRD（FR-25 行）、API §3.2.2、ARCHITECTURE §5、OPERATIONS（用法 + 排障）、CHANGELOG、ADR-0021 状态修正
 - [x] 验证：`./gradlew build` 全绿；真机端到端见 §5
+- [x] PTY 冒烟测试（`PtyAttachConsoleSmokeTest`）：桩 JLine 控制台放进真 PTY + 端点桥接，覆盖原生后端加载与 Windows ConPTY 路径
 
 ## 5. 验收标准
 
@@ -66,6 +67,7 @@ serve 挂住后能在 Gradle 终端里敲服务端命令，也有框架侧的行
 - **[自动]** 不可用探测：pty4j native backend 缺失、ConPTY/WinPty 创建失败、非 TTY 等路径都判不可用、中文说明、不抛（单测注入运行器覆盖）。
 - **[自动]** 终端流清洗：ANSI（含 CSI / OSC / `ESC M` 类双字符）、提示符重绘、`\r`、增量回显退格都被还原；命令表解析在清洗后文本上仍能取到命令。
 - **[自动]** attach 协议：令牌不符 / 格式非法 / 并发第二个会话被拒（中文日志）；通过后双向字节搬运成立。
+- **[自动]** PTY 冒烟（`PtyAttachConsoleSmokeTest`，Linux 与 Windows 两个 CI 平台都跑）：桩服务端进真 PTY 后 JLine 报出的终端类型不是 `dumb`（ConPTY 未生效即失败），命令经端点往返回显，`Tab` 原样送达子进程。
 - **[真机]** 真实 Paper 1.20.1（2026-09-26 实测）：`attachConsole = true` 启动后，从另一个终端 attach → `whi<Tab>` 由**服务端**补全为 `whitelist<--[HERE]`、`list` 执行并回显、`Ctrl+]` 退出后终端恢复且服务端仍在运行、随后 `stop` 停服且端口释放、无残留进程。
 - **[真机]** 退化路径（用 pty4j 探测运行器注入失败模拟）：日志给出「PTY 分配器探测失败…本次退回本终端的行级补全」、serve 照常就绪、命令可用、`stop` 正常收尾；且 help 命令表**没有**漏进控制台（隐藏窗口自愈生效）。
 - **[手动，需用户确认]** 在真实项目里 attach 手测：参数补全（如 `whitelist add <Tab>`）、←→ 行编辑、颜色显示符合预期。

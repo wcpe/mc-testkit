@@ -16,7 +16,6 @@ import java.io.File
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketTimeoutException
-import java.util.ServiceLoader
 import java.util.concurrent.TimeUnit
 import java.util.jar.Attributes
 import java.util.jar.JarOutputStream
@@ -66,6 +65,8 @@ class PtyAttachConsoleSmokeTest {
 
                 write(socket, "banner\r")
                 val banner = expect(socket, "STUB_SIZE:")
+                // 打进测试输出，CI 日志里能直接看到「PTY 子进程拿到什么终端、由哪个 provider 建成」
+                println("PTY 冒烟诊断：$banner")
                 assertTrue(banner.contains("STUB_TERMINAL:"), "桩服务端应报告终端类型：$banner")
                 assertFalse(
                     banner.contains("STUB_TERMINAL:ERROR"),
@@ -134,19 +135,14 @@ class PtyAttachConsoleSmokeTest {
     }
 
     /**
-     * 造桩控制台 jar：`Main-Class` 指向测试模块里的 [PtyStubConsole]，把它的依赖（Kotlin stdlib、
-     * JLine 与 JNA）经清单 `Class-Path` 接进来——子进程才会像服务端那样用 JLine 认终端。
+     * 造桩控制台 jar：`Main-Class` 指向测试模块里的 [PtyStubConsole]，类路径取**客户端同款**
+     * （[AttachCommand.classpathEntries] 算出的那份）+ 测试模块自身。
+     *
+     * 这样冒烟顺带验证「客户端在这台机器上能不能拿到真终端」：客户端正是靠 JLine 认终端，认不出就拒绝
+     * attach；用同一份类路径，平台缺 provider 时这里就会以 dumb 终端失败。
      */
     private fun createStubConsoleJar(target: File): File {
-        val entries = buildList {
-            add(codeSourceFile(PtyStubConsole::class.java))
-            add(codeSourceFile(Unit::class.java))
-            add(codeSourceFile(Terminal::class.java))
-            // JLine 在子进程里靠 JNA provider 识别真实终端；类名用字符串反射取，避免测试源码依赖可选库
-            listOf("org.jline.terminal.impl.jna.JnaTerminalProvider", "com.sun.jna.Native").forEach { name ->
-                runCatching { add(codeSourceFile(Class.forName(name))) }
-            }
-        }.distinct()
+        val entries = (AttachCommand.classpathEntries() + codeSourceFile(PtyStubConsole::class.java)).distinct()
         val manifest = Manifest().apply {
             mainAttributes[Attributes.Name.MANIFEST_VERSION] = "1.0"
             mainAttributes[Attributes.Name.MAIN_CLASS] = PtyStubConsole::class.java.name
@@ -172,13 +168,14 @@ class PtyAttachConsoleSmokeTest {
  */
 object PtyStubConsole {
 
+    /** JLine 的 provider 名（各自对应一个 `META-INF/services/org/jline/terminal/provider/<name>` 注册文件）。 */
+    private val PROVIDER_NAMES = listOf("jna", "jni", "ffm", "exec", "jansi", "dumb")
+
     /** 子进程里要能查到的运行时依赖（缺失即 JLine 认不出终端，诊断用）。 */
     private val PROBED_CLASSES = listOf(
-        "org.jline.terminal.impl.jna.JnaTerminalProvider",
-        "org.jline.terminal.impl.jna.win.JnaWinSysTerminal",
-        "com.sun.jna.Native",
-        "com.sun.jna.platform.win32.WinBase",
+        "org.jline.terminal.impl.jni.JniTerminalProvider",
         "org.jline.nativ.JLineNativeLoader",
+        "com.sun.jna.Native",
     )
 
     @JvmStatic
@@ -233,20 +230,28 @@ object PtyStubConsole {
         println("STUB_SIZE:${terminal.width}x${terminal.height}")
     }
 
-    /** 列出 ServiceLoader 找到的终端 provider，以及各自是否认为标准输出是「系统终端」。 */
-    private fun describeProviders(): String = runCatching {
-        val providers = ServiceLoader.load(TerminalProvider::class.java).toList()
-        if (providers.isEmpty()) {
-            "none"
-        } else {
-            providers.joinToString(",") { provider ->
-                val ok = runCatching {
-                    provider.isSystemStream(SystemStream.Output)
-                }.getOrElse { false }
-                "${provider.name()}:systemStream=$ok"
-            }
+    /** 逐个真建终端，报告每个 provider 的成败与原因（JLine 只在 DEBUG 里说，这里自己问）。 */
+    private fun describeProviders(): String = PROVIDER_NAMES.joinToString(",") { name ->
+        val outcome = runCatching {
+            val provider = TerminalProvider.load(name)
+            val terminal = provider.sysTerminal(
+                "stub",
+                null,
+                false,
+                Charsets.UTF_8,
+                false,
+                Terminal.SignalHandler.SIG_DFL,
+                false,
+                SystemStream.Output,
+            )
+            val type = terminal.type
+            terminal.close()
+            "ok:$type"
+        }.getOrElse { ex ->
+            "FAIL:${ex.javaClass.simpleName}:${(ex.message ?: "").take(160)}"
         }
-    }.getOrElse { "ERROR:${it.javaClass.simpleName}:${it.message}" }
+        "$name=$outcome"
+    }
 
     /** 逐个探测关键依赖是否可见（缺失说明桩 jar 的 Class-Path 没接全）。 */
     private fun describeDeps(): String = PROBED_CLASSES.joinToString(",") { name ->

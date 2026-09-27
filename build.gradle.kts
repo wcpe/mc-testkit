@@ -30,7 +30,12 @@ dependencies {
         exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
     }
     implementation("org.jline:jline-terminal:3.30.16")
-    implementation("org.jline:jline-terminal-jna:3.30.16")
+    // 原生 provider 必须是「已按 JLine 3.30 运行期约定注册」的构件：3.30 只用
+    // `META-INF/jline/providers/{name}` 按名加载 provider，而 terminal-jna 只带了旧路径
+    // （`META-INF/services/org/jline/terminal/provider/jna`），运行期加载不到它——实测 Windows 下
+    // JLine 因此退化成 dumb 终端（客户端会拒绝 attach）。terminal-jni 已按约定注册，其原生库由
+    // jline-native 提供（随 jline-terminal 传递进来，含 Windows x86_64 DLL）。
+    implementation("org.jline:jline-terminal-jni:3.30.16")
 
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")

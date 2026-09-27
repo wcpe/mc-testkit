@@ -6,7 +6,8 @@ import java.io.File
  * 拼出**可直接粘贴**的附加控制台 attach 命令（serve 就绪提示里打印）。
  *
  * 客户端随插件 jar 发布，因此类路径要由框架自己算：进程内的 `java.class.path` 不包含插件自身的类路径
- * （插件跑在 Gradle 的插件类加载器里），故按类源（`codeSource`）取——本客户端、Kotlin、JLine 与 JNA 运行时所在的构件。
+ * （插件跑在 Gradle 的插件类加载器里），故按类源（`codeSource`）取——本客户端、Kotlin，以及 JLine 的
+ * 原生化运行时（按 JLine 3.30 约定注册的 provider 构件 + 其原生库构件）。
  * 消费方不需要自己拼路径，也不需要知道 jar 在哪里。
  */
 internal object AttachCommand {
@@ -34,7 +35,7 @@ internal object AttachCommand {
         return File(File(System.getProperty("java.home"), "bin"), executable).absolutePath
     }
 
-    /** 客户端运行所需的类路径：客户端、Kotlin、JLine 与 JNA 的代码源。 */
+    /** 客户端运行所需的类路径：客户端、Kotlin，以及 JLine 与其原生 provider / 原生库的代码源。 */
     fun classpathEntries(): List<File> {
         val classes = buildList {
             add(ServeConsoleAttach::class.java)
@@ -58,8 +59,9 @@ internal object AttachCommand {
     private val JLINE_RUNTIME_CLASS_NAMES = listOf(
         "org.jline.terminal.Terminal",
         "org.jline.terminal.TerminalBuilder",
-        "org.jline.terminal.spi.JnaSupport",
-        "org.jline.terminal.impl.jna.JnaNativePty",
-        "com.sun.jna.Native",
+        // Windows 上 JLine 只有拿到原生 provider 才认得出真终端（否则退化成 dumb 并被客户端拒绝）；
+        // JLine 3.30 按 `META-INF/jline/providers/{name}` 按名加载，故取已按该约定注册的 terminal-jni。
+        "org.jline.terminal.impl.jni.JniTerminalProvider",
+        "org.jline.nativ.JLineNativeLoader",
     )
 }

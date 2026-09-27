@@ -239,7 +239,7 @@ v1 **不做** `pluginUnderTest` 的坐标形式（解析机制可复用，待真
 要点：
 
 - **默认关闭**：不声明 `attachConsole` 时，行为与本功能引入前完全一致（管道 stdin + 框架侧行级补全 + 纯文本日志）。
-- **平台**：PTY 由 pty4j 统一提供——Windows 优先 ConPTY、必要时 WinPty fallback，Linux/macOS 使用 Unix PTY；pty4j/JNA/JLine 原生后端加载失败时不阻断 serve，中文说明并退回默认形态（行级补全仍可用）。
+- **平台**：PTY 由 pty4j 统一提供——Windows 优先 ConPTY、必要时 WinPty fallback，Linux/macOS 使用 Unix PTY；pty4j 与 JLine（含按 JLine 运行期约定注册的原生 provider 与原生库） 原生后端加载失败时不阻断 serve，中文说明并退回默认形态（行级补全仍可用）。
 - **日志语义（仅开启时）**：运行目录 `<key>.log` 记的是服务端的**终端流**（含 JLine 转义与提示符重绘，已去 ANSI 与 `\r`）——这是「服务端真的拿到终端」的必然结果；Gradle 控制台视图会再去掉提示符残留，保持可读。
 - **端点安全与收敛**：只绑 `127.0.0.1`，随机端口 + 随机令牌；同一时刻只服务**一个** attach 会话（两个终端抢同一个 pty 只会互相踩）。attach 时会把 pty 尺寸同步为该终端的真实尺寸（best-effort；之后改窗口大小需重新 attach）。
 - **原终端仍可用**：attach 期间，原来那个 Gradle 终端的行级补全 / 历史 / 命令透传照样有效（两处同时输入会交错，通常只用一处）。

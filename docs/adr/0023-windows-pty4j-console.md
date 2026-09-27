@@ -2,7 +2,7 @@
 
 ## 状态
 
-已接受，取代 [ADR-0022](0022-serve-attach-console-pty.md) 中「只用 POSIX `script`、不引原生依赖」的实现决策；保留 ADR-0022 的附加控制台协议、单会话、回环令牌、日志清洗和默认关闭原则。
+已接受，取代 [ADR-0022](0022-serve-attach-console-pty.md) 中「只用 POSIX `script`、不引原生依赖」的实现决策；保留 ADR-0022 的附加控制台协议、单会话、回环令牌、日志清洗和默认关闭原则。（决策 2 中「JLine 用 `jline-terminal-jna`」的构件选择已被 [ADR-0024](0024-attach-console-jline-native-provider.md) 取代。）
 
 ## 背景
 

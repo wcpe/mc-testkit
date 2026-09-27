@@ -78,7 +78,7 @@ object ServeConsoleAttach {
     private fun openTerminal(): Terminal? = runCatching {
         TerminalBuilder.builder().system(true).build()
     }.getOrElse { ex ->
-        println("附加控制台客户端无法加载 JLine terminal/terminal-jna 依赖：${ex.message ?: ex.javaClass.simpleName}。请确认 attach 命令的类路径包含插件及其运行依赖。")
+        println("附加控制台客户端无法加载 JLine terminal/terminal-jni 依赖：${ex.message ?: ex.javaClass.simpleName}。请确认 attach 命令的类路径包含插件及其运行依赖。")
         null
     }
 

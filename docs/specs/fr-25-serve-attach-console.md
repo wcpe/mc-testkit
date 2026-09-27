@@ -76,6 +76,6 @@ serve 挂住后能在 Gradle 终端里敲服务端命令，也有框架侧的行
 
 - **平台覆盖**：pty4j 覆盖 Linux / macOS / Windows（Windows 优先 ConPTY，必要时 WinPty fallback）；native backend 加载失败时退回行级控制台。
 - **日志语义变化（仅 opt-in 时）**：`<key>.log` 变成服务端**终端流**（含 JLine 转义与提示符重绘），不再是纯文本日志；控制台视图会清洗。这是「服务端真的拿到了终端」的必然代价，文档写明。
-- **pty4j 原生资源与依赖**：pty4j/JNA/JLine 的运行时构件需进入插件发布依赖并可被消费方缓存；pty4j 0.13.13 的 Kotlin 元数据高于项目编译器，因此构建只跳过外部库元数据检查，项目源码/API/字节码仍锁 Kotlin 1.9/Java 17。
+- **pty4j 原生资源与依赖**：pty4j 与 JLine 的运行时构件需进入插件发布依赖并可被消费方缓存（JLine 的原生 provider 选按 JLine 3.30 运行期约定注册的 `terminal-jni`，见 [ADR-0024](../adr/0024-attach-console-jline-native-provider.md)）；pty4j 0.13.13 的 Kotlin 元数据高于项目编译器，因此构建只跳过外部库元数据检查，项目源码/API/字节码仍锁 Kotlin 1.9/Java 17。
 - **窗口尺寸**：只在 attach 时同步一次；attach 后改窗口大小需重新 attach（可在后续版本加 `SIGWINCH` 轮询）。
 - **单会话**：同时只能有一个附加控制台；多人手测需排队（避免两个终端抢同一 pty 造成错乱）。

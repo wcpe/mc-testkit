@@ -83,6 +83,7 @@ internal fun provisionClasspathFile(runDirectory: File, key: String): File =
  * 运行目录下存在 [INJECTED_LIBRARY_DIR_NAME] 的 thin jar 构件（如部分 Folia / Forge 系）走
  * `java <jvmArgs> -cp <启动器 jar> <Main-Class> <serverArgs>`，启动器 jar 只带一份
  * `Class-Path` 清单，把服务端 jar 与全部注入运行库接进来（同时规避 Windows 命令行长度限制）。
+ * 两条路径的 jar 都相对运行目录给出（见 [launchArgument]），以免 Windows 下命令行里的非 ASCII 字符被吞。
  *
  * 在 [runDirectory] 运行（cwd）。日志重定向到运行目录下 `<key>.log`，合并 stderr。
  * 不在此连真服 / 判定（结果以桩写出的结果文件为权威，见 verify/）。
@@ -164,6 +165,7 @@ object ServerLauncher {
      *
      * 自包含 jar 走 `java -jar`；thin jar（有 `Main-Class` 且运行目录下有注入运行库目录）改为
      * 经启动器 jar 传完整 classpath。选路结果写入 [logger]，便于排查“服务端为何没起来”。
+     * jar 路径按相对运行目录给出（子进程 cwd 即运行目录），理由见 [launchArgument]。
      */
     internal fun buildCommand(
         jar: File,
@@ -184,7 +186,7 @@ object ServerLauncher {
                 add(executable)
                 addAll(jvmArgs)
                 add("-jar")
-                add(jar.absolutePath)
+                add(launchArgument(runDirectory, jar))
                 addAll(serverArgs)
             }
         }
@@ -195,7 +197,7 @@ object ServerLauncher {
             add(executable)
             addAll(jvmArgs)
             add("-cp")
-            add(classpathJar.absolutePath)
+            add(launchArgument(runDirectory, classpathJar))
             add(mainClass)
             addAll(serverArgs)
         }
@@ -246,15 +248,29 @@ object ServerLauncher {
 
     /**
      * 单个 `Class-Path` 条目：同盘文件用相对路径，缓存 jar 位于其它盘符时退回 file URL
-     * （[File.toURI] 已完成百分号编码）。
+     * （[java.net.URI.toASCIIString] 已把空格 / 中文按 UTF-8 百分号编码）。
      *
      * 清单的 `Class-Path` 以空格分隔且**没有转义机制**，路径含空格 / 中文时必须按 UTF-8 百分号编码，
      * 否则 JVM 会在空格处截断条目，表现为莫名的 `ClassNotFoundException`。
      */
     private fun classpathEntry(runDirectory: File, entry: File): String {
         val relative = relativeClasspath(runDirectory, entry)
-        return if (relative == null) entry.toURI().toString() else percentEncode(relative)
+        return if (relative == null) entry.toURI().toASCIIString() else percentEncode(relative)
     }
+
+    /**
+     * `-jar` / `-cp` 参数里的路径：能相对运行目录表达时一律用相对路径。
+     *
+     * Windows 下 Java 向子进程传参会把**非 ASCII 字符换成 `?`**（实测：子进程收到 `-Dprobe.prop=空格 中文`
+     * 变成 `?? ??`，于是带中文的绝对 `-cp` / `-jar` 直接找不到 jar、报「找不到主类」）。而项目目录、用户
+     * 目录带中文在国内是常态，故不能把绝对路径塞进命令行。
+     *
+     * 相对路径正好绕开这点：jar 与运行目录同源时（都在项目目录下）相对形式天然不含中文，而子进程的 cwd
+     * 就是运行目录（见 [launch]），解析结果与绝对路径等价。跨盘符等无法相对化时才退回绝对路径
+     * （此时若路径含非 ASCII 字符，是平台限制，非本类可解）。
+     */
+    private fun launchArgument(runDirectory: File, target: File): String =
+        relativeClasspath(runDirectory, target)?.replace('/', File.separatorChar) ?: target.absolutePath
 
     /** 运行库相对运行目录的路径（`/` 分隔）；跨盘符等无法相对化时返回 null。 */
     private fun relativeClasspath(runDirectory: File, entry: File): String? = try {

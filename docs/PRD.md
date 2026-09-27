@@ -81,7 +81,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 - [x] 集群/压测下各后端经 `MC_TESTKIT_E2E_BACKEND_NAME` 收到各自声明名，消费方据此派生**不同** `server-id`（FR-12）；smoke 结果含 `backendName=s1`、集群到达服结果含其服名（2026-08-31 自举实机：`smoke.properties` 含 `backendName=s1`，`cross-server.properties` 含 `backendName=s2` + `arrivedServer=Paper`，桩确认 bot 经代理到达本服）；下游跨服一致性 / 转服不丢数据断言由消费方桩查共享 DB 自证——自举桩用自带判定（非共享 DB），该部分待真实下游闭环（与 fr-16 实机项同挂）。
 - [x] FR-20 以真实 BungeeCord 消费验证为交付门禁：下游代理插件经代理节点专属声明成功加载，backend / proxy 每节点 env 与模板分别生效；旧 DSL 与 `dependencies { }` 仅后端注入语义不回归；公共 DSL / 任务不引入 `provide`（**Beacon 真实消费与完整构建已确认**）。
 - [x] FR-22：同一消费项目可分别拉起 Velocity 3.1.1、最新 3.x（固定为 3.5.1）、4.1.0 并选择匹配 Java（4.1.0 使用 Java 25）；backend/proxy 节点 JVM 参数能传入 `-javaagent` 且不泄露本机路径到公共契约；真实协议流量与诊断 fixture 结果仍由 harness 结果文件判定；旧 DSL、任务名及 `MC_TESTKIT_E2E_` 冻结契约全部回归通过。
-- [x] FR-02 thin jar 启动：运行目录带注入运行库目录 `server-libraries/` 的构件按 `-cp <启动器 jar> <Main-Class>` 拉起，`Class-Path` 条目按 UTF-8 百分号编码（含空格 / 中文路径不被截断）；自包含 jar、paperclip 主入口（含 1.8.8–1.17.1 的 `io.papermc.paperclip.Paperclip`）、读不出 `Main-Class` 三种情况退回 `-jar`；paperclip 自有的 `libraries/` 不参与 classpath；既有启动路径与全部单测回归通过（**单测维度**；thin jar 平台的真实拉起待下次实机维度一并确认）。
+- [x] FR-02 thin jar 启动：运行目录带注入运行库目录 `server-libraries/` 的构件按 `-cp <启动器 jar> <Main-Class>` 拉起，`Class-Path` 条目按 UTF-8 百分号编码（含空格 / 中文路径不被截断）；自包含 jar、paperclip 主入口（含 1.8.8–1.17.1 的 `io.papermc.paperclip.Paperclip`）、读不出 `Main-Class` 三种情况退回 `-jar`；paperclip 自有的 `libraries/` 不参与 classpath；既有启动路径与全部单测回归通过；`-jar` / `-cp` 路径相对运行目录给出并附回归用例（Windows 命令行传参会把非 ASCII 字符换成 `?`，绝对路径里的中文会让 jar 找不到）（**单测维度**；thin jar 平台的真实拉起待下次实机维度一并确认）。
 
 ## 7. 分期（路线）
 

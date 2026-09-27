@@ -50,25 +50,6 @@ jobs:
           path: build/reports/tests/
           if-no-files-found: ignore
 
-  # 临时诊断（用完即删）：探测 Windows 下 thin jar 清单 Class-Path 的解析行为。
-  # 独立成 job 便于快速读到输出，不必等 windows-pty 的全量构建跑完。
-  tmp-classpath-probe:
-    name: 临时诊断 Class-Path 解析
-    runs-on: windows-latest
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v5
-
-      - name: 安装 JDK 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: 探测 Class-Path 各编码方式
-        shell: bash
-        run: bash .github/tmp-cp-probe.sh
-
   # Windows PTY：验证 pty4j 的 ConPTY/WinPty 加载、JLine 依赖与 Windows 下全量构建。
   # 真实 Paper attach 仍留在手动 E2E，避免 CI 受服务端下载与桌面终端环境影响。
   windows-pty:

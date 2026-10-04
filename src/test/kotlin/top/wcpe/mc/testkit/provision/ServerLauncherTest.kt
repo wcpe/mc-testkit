@@ -43,11 +43,14 @@ class ServerLauncherTest {
     }
 
     @Test
-    @DisplayName("1.12.x 后端程序参数不应含 --nogui；1.13+ 与 26.x 应含")
+    @DisplayName("1.12.x 后端程序参数不应含 nogui；1.13 - 1.14 用无横线 nogui；1.15+ 与 26.x 用 --nogui")
     fun backendServerArgsForLegacyPaperOmitNogui() {
         assertEquals(emptyList(), backendServerArgs("1.12.2"))
         assertEquals(emptyList(), backendServerArgs("1.8.8"))
-        assertEquals(listOf("--nogui"), backendServerArgs("1.13.2"))
+        // 1.13 - 1.14：带横线写法会报「nogui is not a recognized option」并退出（实测 1.13.2 / 1.14.4）
+        assertEquals(listOf("nogui"), backendServerArgs("1.13.2"))
+        assertEquals(listOf("nogui"), backendServerArgs("1.14.4"))
+        assertEquals(listOf("--nogui"), backendServerArgs("1.15.2"))
         assertEquals(listOf("--nogui"), backendServerArgs("1.20.1"))
         // 新版号方案：26.2 的第二段是补丁/次版本，不能按 1.x 的 minor≤12 误判成旧服
         assertEquals(listOf("--nogui"), backendServerArgs("26.2"))

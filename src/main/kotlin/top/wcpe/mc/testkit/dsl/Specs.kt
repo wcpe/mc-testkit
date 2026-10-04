@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.dsl
 
+import org.gradle.api.file.FileCollection
 import top.wcpe.mc.testkit.contract.McTestkitDefaults
 
 /**
@@ -430,6 +431,39 @@ class DependenciesSpec {
      * 运行期仍可经 `MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR` 覆盖（CI / GradleRunner 注入用）。
      */
     var pluginUnderTest: String? = null
+
+    /**
+     * `project.files(...)` 的注入点：本 spec 只承载声明、不持有 `Project`，
+     * 由插件 `apply` 期注入（做法同 [McTestkitExtension.runRoot]）。
+     */
+    internal var fileResolver: ((Any) -> FileCollection)? = null
+
+    private var mutablePluginUnderTestFiles: FileCollection? = null
+
+    /**
+     * 已声明的待测插件产物来源（ADR-0025）；null 表示未声明。
+     *
+     * 与 [pluginUnderTest] 字符串形式**互斥**：互斥校验在配置期完成并报中文错误，不静默取其一。
+     */
+    internal val pluginUnderTestFiles: FileCollection? get() = mutablePluginUnderTestFiles
+
+    /**
+     * 声明待测插件产物来源（ADR-0025）：接受 `project.files(...)` 可接受的任意输入，
+     * **推荐传携带任务信息的 `TaskProvider`**（如 `tasks.named<ShadowJar>("shadowJar")`）——
+     * 框架据此自动建立产物任务依赖，消费方无需手写任何 `dependsOn`。
+     *
+     * 与 [pluginUnderTest] 字符串形式互斥（配置期报错）；执行期仍可经
+     * `MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR` 覆盖，优先级与既有形式一致。
+     */
+    fun pluginUnderTest(from: Any) {
+        val resolver = fileResolver
+            ?: error(
+                "mcTestkit 依赖声明尚未就绪：请在应用插件 id \"" +
+                    top.wcpe.mc.testkit.contract.McTestkitContract.PLUGIN_ID +
+                    "\" 之后再调用 pluginUnderTest(from = …)。",
+            )
+        mutablePluginUnderTestFiles = resolver(from)
+    }
 
     /**
      * 是否处于自测模式（[pluginUnderTest] 未显式声明，由框架回退为本模块 jar 产物）。

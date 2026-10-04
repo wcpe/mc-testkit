@@ -284,14 +284,22 @@ class PluginUnderTestArtifactSourceFunctionalTest {
         )
 
         assertEquals(
-            shadowJarArtifact().absolutePath,
-            resolvedPath,
+            normalizedPath(shadowJarArtifact()),
+            normalizedPath(File(resolvedPath)),
             "待测插件路径应为产物来源解析出的绝对路径",
         )
         assertTrue(
-            resolvedPath != File(projectDir, "build/libs/$selfModuleJarFileName").absolutePath,
+            normalizedPath(File(resolvedPath)) != normalizedPath(File(projectDir, "build/libs/$selfModuleJarFileName")),
             "声明产物来源后不应回退到本模块 jar 产物：$resolvedPath",
         )
         assertEquals("false", selfJarMarker, "声明产物来源后不应标记为自测模式")
     }
+
+    /**
+     * 路径比较用的规范化形式：**必须跨平台**。
+     *
+     * Windows 的 CI runner 临时目录是短路径形式（`C:\Users\RUNNER~1\…`），而 Gradle 输出的是长路径，
+     * 直接比字符串会假失败；`canonicalPath` 会在 Windows 上把短路径解析为长路径，再统一分隔符即可稳定比较。
+     */
+    private fun normalizedPath(file: File): String = file.canonicalFile.absolutePath.replace('\\', '/')
 }

@@ -27,6 +27,7 @@
 | [0022](0022-serve-attach-console-pty.md) | serve 附加控制台：给服务端分配 PTY，另开终端 attach 得到原版控制台 | 已被 0023 取代 |
 | [0023](0023-windows-pty4j-console.md) | serve 附加控制台改用 pty4j，跨平台支持 Windows ConPTY | 已接受（决策 2 的 provider 构件被 0024 取代） |
 | [0024](0024-attach-console-jline-native-provider.md) | attach 客户端的 JLine 原生 provider 改用 terminal-jni（按 JLine 3.30 运行期注册约定，修正 0023 决策 2） | 已接受 |
+| [0025](0025-plugin-under-test-artifact-source.md) | 待测插件产物来源可配置：`pluginUnderTest(from = …)` + 与字符串形式互斥（配置期中文报错）+ 框架自动建立产物任务依赖（扩展 0015） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

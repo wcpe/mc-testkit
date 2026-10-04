@@ -36,10 +36,13 @@ internal const val INJECTED_LIBRARY_DIR_NAME = "server-libraries"
 /**
  * 按 Minecraft 版本选择后端程序参数。
  *
- * Paper/CraftBukkit **1.12.x 及更早**不识别 `--nogui`（启动即打印 help 并退出）；
- * **1.13+** 与 **26.x 新版号方案**（无 `1.` 前缀，如 `26.2`）使用 `--nogui` 关闭图形界面。
+ * Paper/CraftBukkit 的 `nogui` 形式随版本而变（实测 1.13.2 / 1.14.4：带横线写法会报
+ * `nogui is not a recognized option` 并打印 help 退出）：
+ * - **1.12.x 及更早**：不识别任何形式——不传；
+ * - **1.13 - 1.14**：只识别无横线写法 `nogui`；
+ * - **1.15+** 与 **26.x 新版号方案**（无 `1.` 前缀，如 `26.2`）：使用 `--nogui` 关闭图形界面。
  *
- * @param minecraftVersion 如 `1.12.2` / `1.20.1` / `26.2`
+ * @param minecraftVersion 如 `1.12.2` / `1.13.2` / `1.20.1` / `26.2`
  */
 fun backendServerArgs(minecraftVersion: String): List<String> {
     val parts = minecraftVersion.trim().split('.')
@@ -48,9 +51,15 @@ fun backendServerArgs(minecraftVersion: String): List<String> {
     if (major != null && major >= 26) {
         return listOf("--nogui")
     }
-    // 旧方案 1.x：第二段 ≤12 为 1.12 及更早；解析失败时保守使用现代 --nogui
     val minor = parts.getOrNull(1)?.toIntOrNull()
-    return if (minor != null && minor <= 12) emptyList() else listOf("--nogui")
+    return when {
+        // 1.12 及更早：不识别任何 nogui 形式
+        minor != null && minor <= 12 -> emptyList()
+        // 1.13 - 1.14：仅识别无横线写法
+        minor != null && minor <= 14 -> listOf("nogui")
+        // 1.15+；解析失败时保守使用现代形式
+        else -> listOf("--nogui")
+    }
 }
 
 /**

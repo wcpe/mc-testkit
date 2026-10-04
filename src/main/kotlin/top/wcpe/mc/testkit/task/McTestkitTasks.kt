@@ -5,6 +5,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.Project
 import org.gradle.api.Task
+import org.gradle.api.file.FileCollection
 import org.gradle.api.logging.Logger
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.TaskProvider
@@ -209,13 +210,15 @@ object McTestkitTasks {
         registerFixedTasks(project, ctx)
 
         // ④ 数据驱动：每个场景注册 prepare / e2e（+ bot 时 launch / withBot；+ via 时经代理任务）
+        // 显式声明的产物来源（ADR-0025）向下传递，供 prepare / verify / serve 自动接线
+        val pluginUnderTestSource = extension.declaredDependencies.pluginUnderTestFiles
         extension.declaredScenarios.forEach { scenario ->
-            registerScenarioTasks(project, ctx, topology, scenario, mavenSources)
+            registerScenarioTasks(project, ctx, topology, scenario, mavenSources, pluginUnderTestSource)
         }
 
         // ⑤ 持久手测：每个 serve 注册 serve<Key> + stop<Key>Serve（持久手测 serve，ADR-0011）
         extension.declaredServes.forEach { serve ->
-            registerServeTasks(project, ctx, topology, serve, mavenSources)
+            registerServeTasks(project, ctx, topology, serve, mavenSources, pluginUnderTestSource)
         }
 
         // ⑥ 版本矩阵聚合：e2eMatrix<Key> / e2eMatrix<Key>SmokeOnly + mustRunAfter 串行链
@@ -442,6 +445,7 @@ object McTestkitTasks {
         topology: Topology,
         scenario: ScenarioSpec,
         mavenSources: MavenCoordinateSources,
+        pluginUnderTestSource: FileCollection?,
     ) {
         // 钩子与场景形态的兼容性在**配置期**校验：不支持的组合直接报错，不静默忽略
         // （静默忽略会让消费方以为初始化生效了，实际没跑，排查成本极高）。
@@ -564,6 +568,11 @@ object McTestkitTasks {
             // TaskProvider 无 dependsOn 方法；此处任务刚注册、仍在 afterEvaluate 内，get() 实现安全
             prepare.get().dependsOn(jarTask)
             verify.get().dependsOn(jarTask)
+        }
+        // 显式声明的产物来源（ADR-0025）同样自动接线：消费方只写配置，不写 dependsOn
+        if (pluginUnderTestSource != null) {
+            prepare.get().dependsOn(pluginUnderTestSource)
+            verify.get().dependsOn(pluginUnderTestSource)
         }
 
         // 有 bot 的场景：一键「启动机器人 + 验证」
@@ -1394,12 +1403,13 @@ object McTestkitTasks {
         topology: Topology,
         serve: ServeSpec,
         mavenSources: MavenCoordinateSources,
+        pluginUnderTestSource: FileCollection?,
     ) {
         // 声明 backends(...) 即集群 serve；否则单后端 serve（持久手测 serve）
         if (serve.backendRefs.isNotEmpty()) {
             registerClusterServeTasks(project, ctx, topology, serve, mavenSources)
         } else {
-            registerSingleServeTasks(project, ctx, topology, serve, mavenSources)
+            registerSingleServeTasks(project, ctx, topology, serve, mavenSources, pluginUnderTestSource)
         }
     }
 
@@ -1410,6 +1420,7 @@ object McTestkitTasks {
         topology: Topology,
         serve: ServeSpec,
         mavenSources: MavenCoordinateSources,
+        pluginUnderTestSource: FileCollection?,
     ) {
         val backend = resolveServeBackend(topology, serve)
         val proxy = serve.via?.let { via -> topology.proxies.first { it.name == via } } // 已由 TopologyResolver 校验存在 + 路由
@@ -1461,6 +1472,10 @@ object McTestkitTasks {
         // （与 prepare / e2e 的自动接线同源，覆盖 MCE 式「serve 挂住手测」消费形态）
         if (ctx.dependencies.pluginUnderTestSelfJar) {
             serveTask.get().dependsOn(project.tasks.named("jar"))
+        }
+        // 显式声明的产物来源（ADR-0025）同样自动接线：消费方只写配置，不写 dependsOn
+        if (pluginUnderTestSource != null) {
+            serveTask.get().dependsOn(pluginUnderTestSource)
         }
     }
 

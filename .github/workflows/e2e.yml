@@ -1,4 +1,4 @@
-# mc-testkit 实机 E2E：自举跑通「Paper 8 代表版本烟雾 + 代理×场景矩阵」。
+# mc-testkit 实机 E2E：自举跑通「Paper 10 代表版本烟雾 + 代理×场景矩阵」。
 # 「自举」= 以 template/ 的桩与 bot 作消费者，真实下载并拉起后端 + 代理，按结果文件判定、收尾。
 # 重且需联网，故 **仅手动触发**（workflow_dispatch）；发版前应手动跑一遍全量。
 # 各 job 经 actions/cache 复用 ~/.gradle/caches/mc-testkit-jars，减少重复下载（仍可能一次 API 解析 build）。
@@ -20,7 +20,7 @@ env:
   DEFAULT_BACKEND_VERSION: '1.20.1'
 
 jobs:
-  # ── Paper 8 代表版本 × e2eSmoke（FR-21 多版本拉起，一版本一 job 并行）──
+  # ── Paper 10 代表版本 × e2eSmoke（FR-21 多版本拉起，一版本一 job 并行）──
   version-smoke:
     name: Paper ${{ matrix.version }} 烟雾
     runs-on: ubuntu-latest
@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['1.7.10', '1.8.8', '1.12.2', '1.16.5', '1.17.1', '1.19.4', '1.20.1', '1.21.1']
+        version: ['1.7.10', '1.8.8', '1.12.2', '1.13.2', '1.14.4', '1.16.5', '1.17.1', '1.19.4', '1.20.1', '1.21.1']
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -69,6 +69,9 @@ jobs:
           echo "MC_TESTKIT_JAVA_HOME_1_7=$JDK8_HOME" >> "$GITHUB_ENV"
           echo "MC_TESTKIT_JAVA_HOME_1_8=$JDK8_HOME" >> "$GITHUB_ENV"
           echo "MC_TESTKIT_JAVA_HOME_1_12=$JDK8_HOME" >> "$GITHUB_ENV"
+          # 1.13 / 1.14 同属 legacy（需 Java 8）且是「只认无横线 nogui」的版本区间，纳入矩阵后必须有对应版本段变量
+          echo "MC_TESTKIT_JAVA_HOME_1_13=$JDK8_HOME" >> "$GITHUB_ENV"
+          echo "MC_TESTKIT_JAVA_HOME_1_14=$JDK8_HOME" >> "$GITHUB_ENV"
           echo "MC_TESTKIT_JAVA_HOME_1_16=$JDK8_HOME" >> "$GITHUB_ENV"
           echo "MC_TESTKIT_JAVA_HOME_1_21=$JDK21_HOME" >> "$GITHUB_ENV"
 

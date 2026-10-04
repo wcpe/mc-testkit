@@ -95,6 +95,7 @@ mcTestkit {
     // 注入到后端运行目录的待测/依赖插件 jar；不注入代理
     dependencies {
         pluginUnderTest = "MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR" // 环境变量名或路径，运行期解析
+        // pluginUnderTest(from = tasks.named<ShadowJar>("shadowJar")) // 产物来源，与上一行互斥（二选一），见下「待测插件产物来源」
         plugin("SampleLib")                                     // 环境变量名或路径，运行期解析
         mavenPlugin("com.example:foo-plugin:1.2.0")             // Maven 坐标，按 Gradle 原生依赖解析拉取
     }
@@ -149,7 +150,23 @@ mcTestkit {
 - **消费方若用 `RepositoriesMode.PREFER_SETTINGS`**（如 ServerProbe）：**项目级** repositories 会被忽略、只有 **settings 级**生效，请把仓库写在 `settings.gradle.kts` 里；框架不会替你在项目级补仓库。
 - **配置缓存的边界**（ADR-0015/0016）：Gradle 原生解析无法真正推迟到任务动作内，故本实现**限定捕获范围**——坐标只被真正需要的任务捕获：起服类任务（`e2e*` / `serve*` 等）捕获依赖插件 + 全部服务端/代理坐标（故其调度时会解析全部已声明坐标）；`prepareE2e*` 只注入插件、不起服务端，只捕获依赖插件坐标；`stop<Key>Serve` / `syncE2eRuntimeCache` / `npmInstallBot` 等一概不解析坐标、不访问仓库。需要坐标的任务在配置缓存下照常存储 / 重用。
 
-v1 **不做** `pluginUnderTest` 的坐标形式（解析机制可复用，待真实需求再加）；`pluginUnderTest` / `plugin(...)` 的语义与优先级完全不变。
+v1 **不做** `pluginUnderTest` 的坐标形式（解析机制可复用，待真实需求再加）；`pluginUnderTest` / `plugin(...)` 的语义与优先级完全不变。下条的**产物来源**形式与之不冲突：产物来源声明「待测 jar 由哪个任务产出」，坐标形式要解决的是「制品从哪个仓库取」，两个维度正交（ADR-0025）。
+
+**待测插件产物来源（`dependencies { pluginUnderTest(from = …) }`，加法扩展）**：`pluginUnderTest` 新增 `from` 形式，直接声明待测插件 jar 的**产物来源**（[ADR-0025](adr/0025-plugin-under-test-artifact-source.md)）。用于待测产物**不在本模块 `jar` 任务、也不便写成路径**的消费方——典型是用 shadow 插件产 fat jar 的项目：此前 DSL 要么写「环境变量名或路径」，要么不声明而由自测模式取本模块 `jar` 产物，这类消费方只能打补丁（`jar { enabled = false }` 关掉普通 jar + 按 `prepareE2e` 任务名匹配并 `dependsOn(shadowJar)`），接线靠字符串猜任务名，失效是静默的。
+
+```kotlin
+dependencies {
+    // 产物来源：按 project.files(…) 的输入语义接受任意输入；推荐传 TaskProvider —— 只有携带任务信息的形式才能自动建立产物依赖
+    pluginUnderTest(from = tasks.named<ShadowJar>("shadowJar"))
+    // 也可以写 pluginUnderTest(from = tasks.named("shadowJar"))，不必引入 shadow 插件的类型
+}
+```
+
+- **语义**：从该 `FileCollection` 解析出**恰好一个** jar 作为待测插件；不是恰好一个时配置期中文报错，不静默取首个（待测插件在契约里就是单个 jar，注入目标名固定 `plugin-under-test.jar`）。
+- **无需 `dependsOn`**：框架自动把该来源携带的产物任务接到需要待测产物的任务上（`prepareE2e<Key>` / `e2e<Key>` 及经代理 / 集群 / 压测 / serve 各形态），消费方**不再手写任何任务依赖**，也不必再关掉 `jar`。
+- **与 `pluginUnderTest = "…"` 互斥**：两种形式同时声明时**配置期中文报错**，不静默取其一（两种形式的解析时机与语义不同，静默择一会让另一处声明看似生效实则被忽略）。
+- **优先级不变**：执行期 `MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR` 仍最高（可覆盖声明，CI / `GradleRunner` 注入用）；未声明任何形式时仍走自测模式（本模块 `jar` 产物 + 自动接线）。声明了产物来源即不再是自测模式。
+- **边界**：传普通文件路径（无任务信息）时框架无法建立产物依赖，产物仍须由消费方自行保证先于任务产出；本形式只在**配置期**消费，不进入任务动作捕获图（配置缓存约束同 ADR-0015/0016/0017）。
 
 **服务端 / 代理 jar 按 Maven 坐标解析（`backend/proxy { mavenServer(…) }`，加法扩展）**：`BackendSpec` 与 `ProxySpec` 各新增 `mavenServer(coordinate)`，声明该节点的服务端 / 代理软件 jar 来自 Maven 坐标 `group:artifact:version`。用于制品不随公开仓库分发、或需要固定 / 自建构建的场景（ADR-0016）。
 

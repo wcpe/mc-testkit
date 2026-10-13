@@ -38,9 +38,9 @@ class RunLayoutTest {
     @DisplayName("运行目录与结果目录应位于 build/mc-testkit 下")
     fun deriveBuildScopedRunAndResultDirectories() {
         val layout = layout()
-        assertEquals(File(tmp, "build/mc-testkit/run"), layout.runDir)
         assertEquals(File(tmp, "build/mc-testkit/results"), layout.resultsDir)
         assertEquals(File(tmp, "build/mc-testkit/run-proxy"), layout.proxyRunDir)
+        assertEquals(File(tmp, "build/mc-testkit/run-s1"), layout.backendRunDir("s1"))
     }
 
     @Test

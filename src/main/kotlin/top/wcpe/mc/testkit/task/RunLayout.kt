@@ -25,14 +25,14 @@ class RunLayout(
     /** E2E 工作根：`build/mc-testkit`（clean 即清，含运行目录 / 结果 / 代理运行目录）。 */
     val workRoot: File get() = File(buildDir, McTestkitRunDirectories.WORK_DIR_NAME)
 
-    /** 前台被测后端的运行目录（cwd）。多版本矩阵下已弃用共享目录，见 [backendRunDir]。 */
-    val runDir: File get() = File(workRoot, "run")
-
     /**
      * 单个后端节点的独立运行目录：`run-<backendName>`。
      *
      * 多版本矩阵必须隔离 `libraries`/`cache`：新 Paper 的 Java 16+ 依赖会被旧版（Java 8）
      * 误用导致 `UnsupportedClassVersionError`。与集群 [clusterBackendRunDir] 同形。
+     *
+     * 历史上的共享目录 `run/`（曾有一个返回它的 getter）已删除：它不归属任何后端，无恢复下标，
+     * 留着只会留下一个「框架永不铺筑、也不回写」的目录可被调用。
      */
     fun backendRunDir(backendName: String): File = clusterBackendRunDir(backendName)
 

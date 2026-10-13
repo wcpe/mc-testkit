@@ -13,6 +13,10 @@
   - **持久缓存静默失效**：`backendRunDirsByName` 须排除 `run-proxy`（否则代理会被误当后端、凭空造出 `server-base/proxy/` 把代理的运行库混进后端缓存），而该后端会被这条排除一并吃掉——既不回写也不恢复，且全程无声。
   现配置期中文报错。判定**忽略大小写与首尾空白**（`McTestkitRunDirectories.isReservedBackendName`）：撞名与否由**文件系统**决定而非字符串——Windows / macOS 的文件系统大小写不敏感，`run-Proxy` 与 `run-proxy` 是同一目录；Windows 落盘还会去掉尾随空格，使 `backend("proxy ")` 也建成 `run-proxy`。只比字面量会漏掉这两种变体。枚举侧**复用同一判定**，与配置期校验互为配套（排除保证代理不被误当后端，保留字保证不会有真名叫 `proxy` 的后端被静默吃掉；改一处须同步另一处）。**代理名不受此约束**：代理运行目录恒为固定值、与代理名无关，故 `proxy("proxy")` 照常可用。
 
+### 移除
+
+- **`RunLayout.runDir`（历史共享运行目录 getter）**：它返回 `build/mc-testkit/run`，但运行目录早已按后端隔离为 `run-<backendName>`（多版本矩阵必须隔离 `libraries`/`cache`，否则新 Paper 的 Java 16+ 依赖被旧版 Java 8 服务端复用即抛 `UnsupportedClassVersionError`），该 getter 已无任何调用方，且指向一个框架永不铺筑、也不参与持久缓存回写的目录——留着只会让人误以为存在「共享运行目录」这一形态。删除属内部清理（`RunLayout` 在 `task/` 实现包，非对外契约；对外契约是 `contract/McTestkitRunDirectories`）。
+
 ### 修复
 
 - **持久运行缓存「只写不读」、未按后端隔离、回写任务从不执行（FR-04，NFR 幂等可重跑）**：`syncE2eRuntimeCache` 与持久缓存目录此前都是**摆设**——三处缺陷叠加，让「缓存复用」在整条链路上静默失效：

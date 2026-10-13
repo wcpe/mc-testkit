@@ -151,10 +151,10 @@
 1. **识别工作项**，选对应技能（路由见下表）。
 2. **开分支**：`feature/*` / `fix/*` / `refactor/*` / `hotfix/*`（§8）。
 3. **按技能走**：读相关 PRD / ARCHITECTURE / ADR → 测试先行 → 实现（守不变量、简单优先）→ 过验证门 → `doc-sync` 同步文档。
-4. **发 PR**：填防漂移自检模板 → 评审 → 合入 `main`。
-5. **main 自动出快照**（CI / `sdd-publish-snapshot`），可随时让人试用。
+4. **发 PR**：填防漂移自检模板 → 评审 → 合入 `master`。
+5. **`master` 自动出快照**（CI / `sdd-publish-snapshot`），可随时让人试用。
 6. **攒够一批 → 发版**（`sdd-release-version`：CHANGELOG 分段、定 SemVer、bump `VERSION`、打 `vX.Y.Z` → CI 出正式 Release）。
-7. **生产事故** → `sdd-hotfix` 旁路：从发布 tag 切分支最小修 → 出补丁版 → 回流 `main`。
+7. **生产事故** → `sdd-hotfix` 旁路：从发布 tag 切分支最小修 → 出补丁版 → 回流 `master`。
 
 → 回到 1。
 

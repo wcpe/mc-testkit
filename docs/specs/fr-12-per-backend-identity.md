@@ -50,5 +50,5 @@ mc-testkit 此前不告诉后端「它在这组里叫什么」，消费方无从
 
 ## 7. 同批小改（FR-13 / FR-14，均为小改、免独立规格）
 
-- **FR-13 默认 peaceful 难度**：`prepareRunDirectory` 写最小 `server.properties` 时，仅在消费方模板**未设** `difficulty` 时补 `difficulty=peaceful`（用 `ServerProperties.load(runDir).containsKey(DIFFICULTY)` 判定），保护测试玩家不被怪物 / 环境杀；模板已设则保留。验收：单测覆盖「缺省判定」预测语，实机 `run/server.properties` 含 `difficulty=peaceful`。
+- **FR-13 默认 peaceful 难度**：`prepareRunDirectory` 写最小 `server.properties` 时，仅在消费方模板**未设** `difficulty` 时补 `difficulty=peaceful`（用 `ServerProperties.load(runDir).containsKey(DIFFICULTY)` 判定），保护测试玩家不被怪物 / 环境杀；模板已设则保留。验收：单测覆盖「缺省判定」预测语，实机 `run-<backendName>/server.properties` 含 `difficulty=peaceful`。
 - **FR-14 跳过 Kotlin 元数据版本校验**：`template/harness/build.gradle.kts` 的 `kotlin { compilerOptions { freeCompilerArgs.add("-Xskip-metadata-version-check") } }`，使桩能 `compileOnly` 引用「元数据版本高于本工程编译器可读上限」的被测插件类（仅编译期跳过，运行期字节码兼容）。验收：`template/harness` 加该参数后仍正常编译。

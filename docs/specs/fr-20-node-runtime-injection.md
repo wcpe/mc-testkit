@@ -149,19 +149,26 @@ mcTestkit {
 - proxy 节点环境只进入对应 proxy JVM；不转发给 backend、bot 或其它 proxy。
 - 单节点、集群、压测与 serve 中，同一节点声明得到一致环境，不因启动函数不同而漂移。
 
-### 3.5 v0.4.2 启动路径接线矩阵
+### 3.5 启动路径接线矩阵
 
-实现不得只覆盖普通场景；以下 v0.4.2 实际路径全部纳入验收：
+实现不得只覆盖普通场景；以下**全部任务形态**均纳入验收：
 
-| 节点 | v0.4.2 启动入口 | 覆盖的任务形态 | FR-20 接线要求 |
-|---|---|---|---|
-| backend | `runBackendForeground` | 单后端直连、单后端经代理 | 节点模板 + 节点 env；`dependencies { }` 仍仅后端 |
-| backend | `startBackendBackground` | 集群场景、压测场景 | 每个后端独立模板 + 独立 env |
-| backend | `startServeBackend` | 单后端 serve（直连 / 经代理） | 节点模板 + 节点 env，框架 serve 哨兵优先 |
-| backend | `startServeClusterBackend` | 集群 serve | 每个后端独立模板 + 独立 env，框架 serve 哨兵优先 |
-| proxy | `startProxyBackground` | 单后端经代理场景、单后端经代理 serve | 每次清理 / 铺模板 / 写权威配置 / 注入该代理插件 / 合并 env |
-| proxy | `startClusterProxyBackground` | 集群场景、集群 serve | 同上，集群路由配置保持权威 |
-| proxy | `startStressProxyBackground` | Waterfall / BungeeCord 压测代理 | 同上，N-listener 配置保持权威 |
+自 v0.5.0 起，各形态不再各自实现「清理 → 铺模板 → 写权威配置 → 注入依赖」这套顺序，而是**统一收敛到 `NodeRuntimeInjection` 的两个入口**：后端为 `stageBackendRuntime`、代理为 `stageProxyRuntime`，全部启动路径（直连 / 经代理 / 集群 / 压测 / serve / 集群 serve）都经它们铺运行目录。故下表按**任务形态**给出要求（而非早期版本的逐启动函数入口）：
+
+| 节点 | 覆盖的任务形态 | FR-20 接线要求 |
+|---|---|---|
+| backend | 单后端直连、单后端经代理 | 节点模板 + 节点 env；`dependencies { }` 仍仅后端 |
+| backend | 集群场景、压测场景 | 每个后端独立运行目录 + 独立模板 + 独立 env |
+| backend | 单后端 serve（直连 / 经代理） | 节点模板 + 节点 env，框架 serve 哨兵优先 |
+| backend | 集群 serve | 每个后端独立运行目录 + 独立模板 + 独立 env，框架 serve 哨兵优先 |
+| proxy | 单后端经代理场景、单后端经代理 serve | 每次清理 / 铺模板 / 写权威配置 / 注入该代理插件 / 合并 env |
+| proxy | 集群场景、集群 serve | 同上，集群路由配置保持权威 |
+| proxy | Waterfall / BungeeCord 压测代理 | 同上，N-listener 配置保持权威 |
+
+两个 `stage*` 入口各自的动作顺序：
+
+- **后端 `stageBackendRuntime`**：清理（保留运行库缓存子目录）→ **按后端从持久运行库缓存恢复**（`cacheDirectory` 入参，只补缺失；见 fr-04 的缓存契约）→ 铺模板 → 写权威基础配置 → 注入依赖。
+- **代理 `stageProxyRuntime`**：**整目录重建**（不保留任何子目录）→ 铺模板 → 写框架配置 → 平台准备 → 注入代理插件。代理**不参与**持久运行库缓存：那套缓存（`libraries`/`cache`/`assets`/`versions`）是为后端 paperclip 反复下载原版 jar 准备的，代理没有对应负担，故 `stageProxyRuntime` 无 `cacheDirectory` 入参、也不做恢复。
 
 `ServerLauncher.launch` 继续作为唯一 JVM 子进程启动原语；任务层不得另开绕过环境合并与准备顺序的新启动器。
 

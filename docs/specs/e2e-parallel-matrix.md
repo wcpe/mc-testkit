@@ -46,6 +46,8 @@
 - `on.workflow_dispatch` only。
 - 版本 job cache key 含 `matrix.version`，场景 job 含 `matrix.suite`；`restore-keys` 前缀 `mc-testkit-jars-${{ runner.os }}-` 允许跨 job 命中公共 jar。
 
+> **两种缓存不要混为一谈**：本节讲的 `actions/cache` 只覆盖 **jar 下载缓存** `~/.gradle/caches/mc-testkit-jars`（服务端/代理 jar 本体，跨 job 复用）。框架另有一份**持久运行库缓存** `<根工程>/.gradle/mc-testkit/server-base/<后端名>/`（运行目录里的 `libraries`/`cache`/`assets`/`versions`，用于运行目录重建后免于重下）——它落在**工作区**而非 Gradle 用户主目录，**不在本 spec 的 `actions/cache` 范围内**，且 CI runner 每轮 ephemeral，故 CI 上仍是冷启动。两者区别与排障见 `docs/OPERATIONS.md` §5.2。
+
 ### 3.2 Job 拓扑
 
 | Job | 并行维度 | 内容 |

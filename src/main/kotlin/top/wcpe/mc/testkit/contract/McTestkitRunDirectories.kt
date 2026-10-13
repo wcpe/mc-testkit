@@ -18,9 +18,17 @@ object McTestkitRunDirectories {
     const val PROXY_RUN_DIR_NAME = "run-proxy"
 
     /**
+     * 单后端运行目录名的前缀：`run-`。
+     *
+     * 与 [backendRunDirName] 同源（后者由它拼出），供需要「识别所有后端运行目录」的调用方
+     * （如按后端回写持久缓存）按前缀枚举，而不必自己拼字符串。
+     */
+    const val BACKEND_RUN_DIR_PREFIX = "run-"
+
+    /**
      * 单后端运行目录名：`run-<后端名>`。
      *
      * 每个后端一个独立目录：多版本矩阵下各后端运行库 / 缓存互不污染。
      */
-    fun backendRunDirName(backendName: String): String = "run-$backendName"
+    fun backendRunDirName(backendName: String): String = "$BACKEND_RUN_DIR_PREFIX$backendName"
 }

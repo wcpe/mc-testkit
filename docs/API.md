@@ -189,7 +189,7 @@ dependencies {
 | `launch<Key>Bot` | 启动该场景的 mineflayer 机器人 |
 | `e2e<Key>WithBot` | 一键「启动机器人 + 验证」 |
 | `npmInstallE2eBot` | 安装机器人 mineflayer 依赖（固定名） |
-| `syncE2eRuntimeCache` | 运行库/下载缓存回写到持久缓存（固定名） |
+| `syncE2eRuntimeCache` | 运行库/下载缓存回写到持久缓存（固定名）。**由各终态任务（`e2e<Key>` / `e2e<Key>Via<Proxy>` / `e2e<Key>Cluster` / `e2e<Key>Stress` / `serve<Key>`）经 `finalizedBy` 自动执行**，通常无需手工调用；按后端分别回写 `server-base/<backendName>/` |
 | `purgeE2eRuntimeCache` | 清空持久缓存（固定名） |
 | `stopProxy<Proxy>` | 停止某代理（按 pid 收尾）；由 `e2e<Key>Via<Proxy>` 经 `finalizedBy` 触发，亦可单独调用 |
 | `e2e<Key>Cluster` | 集群跑某场景：N 后端全后台 + 代理（单 listener + N 具名 server）+ bot 经代理 `/server` 切换，读结果判 PASS/FAIL（FR-10） |

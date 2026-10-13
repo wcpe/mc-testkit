@@ -45,8 +45,23 @@ class RunLayout(
     /** 服务端 / 代理 jar 的下载缓存根（挂 Gradle 用户主目录，跨工程 / 跨 clean 复用，避免反复下载）。 */
     val jarCacheRoot: File get() = File(gradleUserHome, "caches/$JAR_CACHE_DIR_NAME")
 
-    /** 持久运行库缓存（运行库 / 资源回写此处，clean 后可恢复而非冷启动）。 */
+    /**
+     * 持久运行库缓存根（运行库 / 资源回写此处，`clean` 后可恢复而非冷启动）。
+     *
+     * **为什么按后端分目录（见 [persistentBackendCacheDir]）而不是共用一份**：
+     * `libraries` / `cache` / `versions` 是**版本敏感**的——新 Paper 拉到 Java 16+ 依赖，
+     * 被旧版（Java 8）服务端复用时抛 `UnsupportedClassVersionError`。共用一份缓存会让
+     * 多版本矩阵在恢复时互相污染，正是 [backendRunDir] 那段注释要防的问题。
+     */
     val persistentServerBaseDir: File get() = File(rootDir, ".gradle/${McTestkitRunDirectories.WORK_DIR_NAME}/server-base")
+
+    /**
+     * 某后端的持久运行库缓存目录：`server-base/<backendName>`。
+     *
+     * 与 [backendRunDir] 的 `run-<backendName>` 一一对应，使「回写」与「恢复」按下标对齐，
+     * 而不是把多个后端的运行库混在一起。
+     */
+    fun persistentBackendCacheDir(backendName: String): File = File(persistentServerBaseDir, backendName)
 
     /** 某代理节点的 pid 文件（落结果目录，供收尾按 pid 杀）。 */
     fun proxyPidFile(proxyName: String): File = File(resultsDir, "proxy-$proxyName.pid")
@@ -109,4 +124,67 @@ fun cleanRunDirPreservingRuntimeCaches(runDir: File) {
         if (remaining.none { it.exists() }) return
         Thread.sleep(250)
     }
+}
+
+/**
+ * 从持久缓存恢复某后端运行目录的运行库 / 缓存子目录（[RunLayout.PRESERVED_RUNTIME_CACHE_ENTRIES]）。
+ *
+ * **为什么必须有这一步**：只回写不恢复等于缓存从未生效——运行目录每轮由
+ * [cleanRunDirPreservingRuntimeCaches] 重建，若不同时恢复，冷启动依旧反复下载
+ * （Paper 的 paperclip 会把原版服务端 jar 下到 `cache/`，约 50MB，每次重跑都要重来）。
+ *
+ * 覆盖语义：**只补缺失，不覆盖已有**。运行目录里已有的内容是本轮真实产物，比缓存新；
+ * 用旧缓存覆盖它可能造成版本回退（缓存来自上一轮的别的构建）。
+ *
+ * 纯 IO、无 Gradle 依赖，便于用临时目录单测。
+ *
+ * @param cacheDir 该后端的持久缓存目录（见 [RunLayout.persistentBackendCacheDir]）；不存在即跳过
+ * @param runDir 目标运行目录；不存在会被创建
+ * @return 实际补上的文件数（0 表示缓存不存在或运行目录已齐全）。调用方据此决定汇报口径——
+ *   否则「恢复」日志在一次真正的冷启动（缓存还没被回写过、恢复量为 0）里也会照打，读日志的人
+ *   会以为缓存生效了，实际这一轮仍在全量下载。
+ */
+fun restoreBackendRuntimeCache(cacheDir: File, runDir: File): Int {
+    if (!cacheDir.exists()) {
+        return 0
+    }
+    return RunLayout.PRESERVED_RUNTIME_CACHE_ENTRIES.sumOf { name ->
+        val source = File(cacheDir, name)
+        if (!source.exists()) {
+            return@sumOf 0
+        }
+        val target = File(runDir, name)
+        // 该子目录本次补上的文件数，即 sumOf 的加数：已有同名目录则逐项补齐缺失文件
+        // （不覆盖运行目录里已有的），否则整目录拷贝。
+        if (target.exists()) {
+            mergeMissing(source, target)
+        } else {
+            runDir.mkdirs()
+            source.copyRecursively(target, overwrite = false)
+            source.countFiles()
+        }
+    }
+}
+
+/** 递归统计目录下的文件数（恢复了多少个文件用于汇报，不关心目录）。 */
+private fun File.countFiles(): Int = walkTopDown().count { it.isFile }
+
+/**
+ * 把 [source] 中 [target] 尚不存在的文件补过去，返回实际补上的文件数。
+ *
+ * 逐文件判断而不是整目录覆盖：缓存目录可能混有上一轮的陈旧文件，
+ * 整目录覆盖会把它们带进来；只补缺失则运行目录里已有的（本轮产物）始终优先。
+ */
+private fun mergeMissing(source: File, target: File): Int {
+    if (source.isDirectory) {
+        target.mkdirs()
+        val children = source.listFiles() ?: return 0
+        return children.sumOf { child -> mergeMissing(child, File(target, child.name)) }
+    }
+    if (target.exists()) {
+        return 0
+    }
+    target.parentFile?.mkdirs()
+    source.copyTo(target, overwrite = false)
+    return 1
 }

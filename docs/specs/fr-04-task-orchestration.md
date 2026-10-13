@@ -17,7 +17,7 @@ FR-04 是第一期（MVP）的**整合器**：把已落地的各包（`contract/
     - `e2e<Key>`：依赖 `prepareE2e<Key>` → 前台起后端（`provision` 解析+下载 jar、`ServerLauncher` 起子进程、桩跑完自停 → `waitFor`）→ `ResultReader` 读 `<scenario>.properties` 判 PASS/FAIL（**只认结果文件**）。
     - 有 bot 的场景额外：`launch<Key>Bot`（`BotLauncher.launch`，env 由 `BotConnection.toEnvironment` 建）、`e2e<Key>WithBot`（依赖 launch + verify 一键跑）。
     - 经代理（`via` 非空）的场景：`e2e<Key>Via<Proxy>`——prepare 后按代理平台决定是否 `BackendBungeeCordConfig.apply`、`provision` 后台起代理（写 pid）、bot 经代理端口进服且用 `ProxyProtocolVersion.forBackend` 固定协议版本、前台起后端、verify、`finalizedBy` 停代理。
-  - **固定名任务**：`npmInstallE2eBot`（`Exec`：bot 目录 `npm install`）、`syncE2eRuntimeCache`（运行库缓存回写持久缓存）、`purgeE2eRuntimeCache`（清空持久缓存）。
+  - **固定名任务**：`npmInstallE2eBot`（`Exec`：bot 目录 `npm install`）、`syncE2eRuntimeCache`（运行库缓存回写持久缓存，**由各终态任务 `finalizedBy` 自动挂载**）、`purgeE2eRuntimeCache`（清空持久缓存）。
   - **进程收尾**（高风险区）：后台代理/机器人在任务结束/失败/中断都被 pid 收尾杀掉、端口释放、无残留——后台代理用 `finalizedBy` 停代理任务 + `try/finally` 双保险，统一走 `stopProcessByPidFile`。
   - **bot 目录定位**：消费方照抄 `template/bot` 到其项目；用 Gradle 属性 `mcTestkit.botDir`（项目属性）定位，缺省相对路径 `e2e-bot`，可移植、不写死绝对路径。入口脚本固定 `src/connectAndWait.js`（template 既定）。
 - 不做（范围外）：
@@ -32,8 +32,9 @@ FR-04 是第一期（MVP）的**整合器**：把已落地的各包（`contract/
 落在新包 `top.wcpe.mc.testkit.task`（ARCHITECTURE §2 的 `task/` 条），由 `McTestkitPlugin.apply()` 调用一处装配入口。
 
 - **运行目录与缓存路径**（依赖 Gradle `project.layout`，留在 task 包工厂方法/插件侧解析，不写死绝对路径）：
-  - 运行目录 `build/mc-testkit/run`、结果目录 `build/mc-testkit/results`、代理运行目录 `build/mc-testkit/run-proxy`、jar 下载缓存根 `<gradleUserHome>/caches/mc-testkit-jars`、持久运行库缓存 `<rootProject>/.gradle/mc-testkit/server-base`。
+  - 运行目录 `build/mc-testkit/run`、结果目录 `build/mc-testkit/results`、代理运行目录 `build/mc-testkit/run-proxy`、jar 下载缓存根 `<gradleUserHome>/caches/mc-testkit-jars`、持久运行库缓存根 `<rootProject>/.gradle/mc-testkit/server-base`（各后端的缓存在其下的 `server-base/<backendName>/`，见下）。
   - clean 时保留运行库子目录集合（`libraries`/`cache`/`assets`/`versions`），避免连续重跑反复下载（NFR 幂等可重跑）。其中 `libraries` 是 paperclip 自有的下载目标；消费者注入运行库用的 `server-libraries` 刻意不保留，每轮由消费方 prepare 重建，避免陈旧注入跨轮泄漏。
+  - **持久缓存的写入与恢复必须成对、且按后端隔离**：单后端运行目录是 `run-<backendName>`（`McTestkitRunDirectories.backendRunDirName`，前缀常量 `BACKEND_RUN_DIR_PREFIX`），其缓存在 `server-base/<backendName>/`——两侧同一下标才对得上。**只写不读等于缓存从未生效**（运行目录每轮重建，不恢复就还是冷启动，Paper 的 paperclip 每轮都要重下约 50MB 的原版 jar 到 `cache/`）；**多后端共用一份则互相污染**（`libraries`/`cache`/`versions` 版本敏感，新 Paper 的 Java 16+ 依赖被旧版 Java 8 服务端复用即抛 `UnsupportedClassVersionError`）。故：铺运行时 `restoreBackendRuntimeCache` **只补缺失、不覆盖已有**（运行目录里已有的本轮产物比缓存新），且**先清理后恢复**（顺序反了会被清理覆盖）；回写由 `syncE2eRuntimeCache` 按后端分别进行，目录枚举用 `backendRunDirsByName`（只认 `run-<name>`，**须排除 `run-proxy`**——代理目录同前缀，否则会被当成后端名 `proxy`）。该回写任务**必须自动执行**：只注册不挂载时它从不进入任务图，持久缓存永不填充。挂载方式为各终态任务 `finalizedBy`（缓存是优化、判定才是目的，回写失败不应判定失败；失败/中断路径同样沉淀）。
 - **装配入口** `McTestkitTasks.register(project)`：
   1. `TopologyResolver.resolve(extension)` 得 `Topology`（同时完成配置期校验，失败抛中文 `GradleException`）。
   2. 注册固定名任务（`npmInstallE2eBot` / `syncE2eRuntimeCache` / `purgeE2eRuntimeCache`）。

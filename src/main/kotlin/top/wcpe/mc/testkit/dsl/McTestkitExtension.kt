@@ -105,6 +105,13 @@ open class McTestkitExtension {
                 top.wcpe.mc.testkit.contract.McTestkitContract.PLUGIN_ID +
                 "\" 后再访问 backendRunDirectory。"
         }
+        // 与配置期校验同口径地拒掉保留字：本访问器不经过 TopologyResolver，若这里不拦，同一个名
+        // 会出现「声明时被拒、查询却返回一个指向代理目录的 Provider」的不一致。后端名 proxy 的
+        // 运行目录就是代理目录 run-proxy，把配置写进去会落到代理目录上。
+        check(!McTestkitRunDirectories.isReservedBackendName(backendName)) {
+            "mcTestkit 后端名「$backendName」是保留字，不能用于 backendRunDirectory；" +
+                "该名的运行目录与代理运行目录（${McTestkitRunDirectories.PROXY_RUN_DIR_NAME}）是同一个目录。"
+        }
         return runRoot.map { it.dir(McTestkitRunDirectories.backendRunDirName(backendName)) }
     }
 }

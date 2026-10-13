@@ -2649,18 +2649,23 @@ internal fun copyRuntimeCaches(sourceRunDirectory: File, targetRunDirectory: Fil
  * 代理运行目录 `run-proxy` 同样以 `run-` 开头，必须显式排除：否则会被当成本名叫 `proxy`
  * 的后端，凭空造出一个 `server-base/proxy/` 并把代理的库混进后端缓存。
  *
+ * 这条排除与配置期的「`proxy` 是保留后端名」（[McTestkitRunDirectories.isReservedBackendName]）
+ * **互为配套**：排除保证代理不被误当后端，保留字保证不会有名为 `proxy` 的真后端被这条排除吃掉
+ * （否则它的缓存会既不回写也不恢复，且完全静默）。二者缺一都会留下缺口，改一处须同步另一处。
+ * 故这里的排除**复用保留字判定**（大小写不敏感 + 去首尾空白）而不是比字面量：撞名由文件系统
+ * 决定，Windows / macOS 上 `run-Proxy` 与 `run-proxy` 本就是同一目录。
+ *
  * 只读工作根的一层子目录，不做递归——后端运行目录恒为一级子目录。
  */
 internal fun backendRunDirsByName(layout: RunLayout): Map<String, File> {
     val prefix = McTestkitRunDirectories.BACKEND_RUN_DIR_PREFIX
-    val proxyRunDirName = McTestkitRunDirectories.PROXY_RUN_DIR_NAME
     return layout.workRoot.listFiles()
         ?.filter {
             it.isDirectory &&
                 it.name.startsWith(prefix) &&
                 // 恰好等于前缀的是历史共享目录之外的残名，不含后端名，无恢复下标可用
                 it.name.length > prefix.length &&
-                it.name != proxyRunDirName
+                !McTestkitRunDirectories.isReservedBackendName(it.name.removePrefix(prefix))
         }
         ?.associate { it.name.removePrefix(prefix) to it }
         ?: emptyMap()

@@ -2,6 +2,7 @@ package top.wcpe.mc.testkit.task
 
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
+import top.wcpe.mc.testkit.contract.McTestkitRunDirectories
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -114,6 +115,50 @@ class BackendRunDirsTest {
             File(layout.workRoot, "run-s1"),
             result["s1"],
             "backendRunDir 推导出的目录名应能被 backendRunDirsByName 反推回同一后端名",
+        )
+    }
+
+    @Test
+    @DisplayName("排除 run-proxy 与「proxy 是保留后端名」互为配套：该目录不再有歧义")
+    fun proxyRunDirectoryIsUnambiguousBecauseProxyIsReserved() {
+        // 这里锚定两个约束的配套关系：枚举侧排除 run-proxy（见 excludeProxyRunDirectory），
+        // 配置期又禁止 backend("proxy")（见 TopologyResolver 的保留字校验）——两处合起来才使
+        // run-proxy「只可能是代理目录」，不会既是某后端运行目录又是代理目录。
+        // 若将来放宽保留字，本测试与 excludeProxyRunDirectory 必须一起重审。
+        assertEquals(
+            "proxy",
+            McTestkitRunDirectories.RESERVED_BACKEND_NAME,
+            "保留字应与被排除的代理目录名去掉前缀后一致，否则排除逻辑会出现无歧义缺口",
+        )
+
+        val layout = layout()
+        workEntry(layout, McTestkitRunDirectories.backendRunDirName("s1"))
+        workEntry(layout, McTestkitRunDirectories.PROXY_RUN_DIR_NAME)
+
+        assertEquals(
+            setOf("s1"),
+            backendRunDirsByName(layout).keys,
+            "run-proxy 恒为代理目录（后端名 proxy 已在配置期被拒），不得被当成本端",
+        )
+    }
+
+    @Test
+    @DisplayName("排除须忽略大小写与首尾空白：run-Proxy 在 Windows / macOS 上就是 run-proxy")
+    fun excludeProxyRunDirectoryIgnoringCaseAndWhitespace() {
+        // 这两条不是假想：文件系统决定撞名与否——Windows / macOS 大小写不敏感，run-Proxy 与
+        // run-proxy 是同一目录；Windows 落盘还会去掉尾随空格，使 "run-proxy " 也建成 run-proxy。
+        // 若排除只比字面量，这些目录会被当成本端，凭空回写一份混入代理运行库的 server-base/Proxy。
+        val layout = layout()
+        workEntry(layout, McTestkitRunDirectories.backendRunDirName("s1"))
+        workEntry(layout, "run-Proxy")
+        workEntry(layout, "run-PROXY")
+        workEntry(layout, "run-proxy ")
+        workEntry(layout, "run- proxy")
+
+        assertEquals(
+            setOf("s1"),
+            backendRunDirsByName(layout).keys,
+            "代理目录的大小写 / 空白变体都不得被识别为后端运行目录",
         )
     }
 }

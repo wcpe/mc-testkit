@@ -92,7 +92,7 @@ pluginManagement {
 
 ```kotlin
 plugins {
-    id("top.wcpe.mc-testkit") version "0.15.0"
+    id("top.wcpe.mc-testkit") version "0.15.1"
 }
 
 mcTestkit {

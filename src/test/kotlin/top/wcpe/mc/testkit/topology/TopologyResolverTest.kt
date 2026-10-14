@@ -169,6 +169,53 @@ class TopologyResolverTest {
         assertTrue(ex.message!!.contains("名"))
     }
 
+    @Test
+    @DisplayName("后端名为保留字 proxy 时应抛出中文错误")
+    fun rejectsReservedBackendNameProxy() {
+        // run-<proxy> 与代理固定的 run-proxy 是同一目录：代理铺目录时整删后端内容，故配置期拒绝。
+        val ex = assertFailsWith<GradleException> {
+            resolve(backends = listOf(backend("proxy")), proxies = listOf(proxy("wf", routesTo = arrayOf("proxy"))))
+        }
+        assertTrue(ex.message!!.contains("保留字"), "应说明是保留字：${ex.message}")
+        assertTrue(ex.message!!.contains("run-proxy"), "应指出与代理目录撞名：${ex.message}")
+    }
+
+    @Test
+    @DisplayName("保留字判定应忽略大小写与首尾空白（Windows / macOS 文件系统不区分大小写）")
+    fun rejectsReservedBackendNameCaseAndWhitespaceInsensitively() {
+        // 撞名与否由文件系统决定：Windows / macOS 上 run-Proxy 与 run-proxy 是同一目录；
+        // Windows 落盘还会去掉尾随空格，使 "proxy " 也建成 run-proxy。故这些都须拒绝。
+        listOf("Proxy", "PROXY", "proxy ", " proxy", " Proxy ").forEach { name ->
+            assertFailsWith<GradleException>("「$name」应被判为保留字") {
+                resolve(backends = listOf(backend(name)))
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("后端名含 proxy 但非保留字本身时应正常解析")
+    fun allowsBackendNamesContainingProxySubstring() {
+        // 只有「归一后等于 proxy」才是保留字；proxy2 / my-proxy / proxying 都不撞 run-proxy，不得误伤。
+        val topology = resolve(
+            backends = listOf(backend("proxy2"), backend("my-proxy"), backend("proxying")),
+        )
+        assertEquals(setOf("proxy2", "my-proxy", "proxying"), topology.backends.map { it.name }.toSet())
+    }
+
+    @Test
+    @DisplayName("保留字只约束后端名：代理名叫 proxy 应照常可用")
+    fun allowsProxyNamedProxy() {
+        // 代理运行目录恒为固定的 run-proxy（与代理名无关），故代理名不受保留字约束——只有后端名受限。
+        // 锁住这个不变量，免得日后把保留字校验误扩到代理侧，白白禁掉一个合法名。
+        val topology = resolve(
+            backends = listOf(backend("s1")),
+            proxies = listOf(proxy("proxy", routesTo = arrayOf("s1"))),
+            scenarios = listOf(scenario("via", backend = "s1", via = "proxy")),
+        )
+        assertEquals(listOf("proxy"), topology.proxies.map { it.name })
+        assertEquals(listOf("s1"), topology.backends.map { it.name })
+    }
+
     // ── 校验：路由 ──
 
     @Test

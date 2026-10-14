@@ -32,6 +32,7 @@ import top.wcpe.mc.testkit.contract.McTestkitContract
 import top.wcpe.mc.testkit.contract.McTestkitDefaults
 import top.wcpe.mc.testkit.contract.McTestkitEnv
 import top.wcpe.mc.testkit.contract.McTestkitResultFile
+import top.wcpe.mc.testkit.contract.McTestkitRunDirectories
 import top.wcpe.mc.testkit.contract.McTestkitTaskNames
 import top.wcpe.mc.testkit.dsl.BotSpec
 import top.wcpe.mc.testkit.dsl.HookContext
@@ -320,23 +321,15 @@ object McTestkitTasks {
             task.description = "将运行库 / 下载缓存回写到持久缓存目录"
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
-                val cacheDir = ctx.layout.persistentServerBaseDir
-                cacheDir.mkdirs()
-                // 汇总所有后端运行目录（含历史共享 run/ 与新的 run-<backend>/）
-                val runDirs = (
-                    ctx.layout.workRoot.listFiles()?.filter {
-                        it.isDirectory && (it.name == "run" || it.name.startsWith("run-"))
-                    } ?: emptyList()
-                    ) + listOf(ctx.layout.runDir)
-                runDirs.distinctBy { it.absolutePath }.forEach { runDir ->
-                    RunLayout.PRESERVED_RUNTIME_CACHE_ENTRIES.forEach { name ->
-                        val src = File(runDir, name)
-                        if (src.exists()) {
-                            src.copyRecursively(File(cacheDir, name), overwrite = true)
-                        }
+                val written = syncBackendRuntimeCaches(ctx.layout)
+                if (written.isEmpty()) {
+                    ctx.info("没有可回写的运行库（运行目录为空）；持久缓存：${ctx.layout.persistentServerBaseDir.absolutePath}")
+                } else {
+                    val detail = written.entries.joinToString("，") { (backendName, entries) ->
+                        "$backendName(${entries.joinToString("/")})"
                     }
+                    ctx.info("已更新持久缓存：${ctx.layout.persistentServerBaseDir.absolutePath} ← $detail")
                 }
-                ctx.info("已更新持久缓存：${cacheDir.absolutePath}")
             }
         }
 
@@ -547,6 +540,8 @@ object McTestkitTasks {
             if (launch == null) beforeHooks?.let { task.dependsOn(it) }
             // 收尾：场景后钩子在判定结束后执行（含失败路径）
             afterHooks?.let { task.finalizedBy(it) }
+            // 收尾：回写持久运行库缓存（下次冷启动恢复用；失败路径同样执行）
+            finalizeWithRuntimeCacheSync(task)
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 try {
@@ -588,6 +583,21 @@ object McTestkitTasks {
         viaProxy?.let { proxy ->
             registerViaProxyTask(project, ctx, scenario, backend, proxy, mavenSources, hookTasks)
         }
+    }
+
+    /**
+     * 把「回写持久运行库缓存」挂为 [task] 的收尾动作。
+     *
+     * 用 `finalizedBy` 而不是 `dependsOn`：回写是**收尾**动作，不能因为它失败而让场景判定失败
+     * （缓存是优化，判定才是目的）。`finalizedBy` 在失败 / 中断路径同样执行，故一次失败运行
+     * 拉到的运行库也能沉淀下来。
+     *
+     * **必须自动挂载**：早先只注册了 [McTestkitTaskNames.SYNC_RUNTIME_CACHE]、无人依赖，
+     * 结果它从不运行——持久缓存从未被填充，恢复逻辑也就永远拿不到东西，整条缓存链静默失效。
+     * 故凡会写出运行目录的终态任务（场景 / 经代理 / 集群 / 压测 / serve）都要接上。
+     */
+    private fun finalizeWithRuntimeCacheSync(task: Task) {
+        task.finalizedBy(McTestkitTaskNames.SYNC_RUNTIME_CACHE)
     }
 
     /** 注册经代理任务：prepare → 起代理（后台）→ 起 bot（经代理端口、固定协议版本）→ 前台起后端 → 验证 → finalizedBy 停代理。 */
@@ -634,6 +644,8 @@ object McTestkitTasks {
             // 钩子接线：场景前须先于起代理，场景后与停代理同层收尾
             hookTasks.before?.let { task.dependsOn(it) }
             hookTasks.after?.let { task.finalizedBy(it) }
+            // 收尾：回写持久运行库缓存（与场景后钩子同层，失败路径同样执行）
+            finalizeWithRuntimeCacheSync(task)
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 var proxyProcess: Process? = null
@@ -738,6 +750,8 @@ object McTestkitTasks {
             task.finalizedBy(stopName)
             // 场景后钩子（统一注册）同样挂 finalizedBy：与集群收尾同层，三路径都执行
             hookTasks.after?.let { task.finalizedBy(it) }
+            // 收尾：回写持久运行库缓存（与集群收尾同层，失败路径同样执行）
+            finalizeWithRuntimeCacheSync(task)
             // 场景前/就绪后钩子由统一注册的 before 任务与体内调用承载；集群路径需在起服前显式等 before
             hookTasks.before?.let { task.dependsOn(it) }
             val clusterHookCtx = hookContext(ctx, scenario.name, clusterBackends.map { it.name }, proxy.name)
@@ -1092,6 +1106,8 @@ object McTestkitTasks {
             // 钩子接线：场景前须先于起服，场景后与压测收尾同层
             hookTasks.before?.let { task.dependsOn(it) }
             hookTasks.after?.let { task.finalizedBy(it) }
+            // 收尾：回写持久运行库缓存（与压测后钩子同层，失败路径同样执行）
+            finalizeWithRuntimeCacheSync(task)
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val backendProcesses = LinkedHashMap<String, Process>()
@@ -1459,6 +1475,8 @@ object McTestkitTasks {
                 "持久起 serve「${serve.name}」：后端 ${backend.name}${proxy?.let { " 经代理 ${it.name}" } ?: " 直连"}" +
                 (if (serve.botSpecs.isNotEmpty()) " + ${botKeys.size} bot" else "") + "，挂住供真人客户端手测（Ctrl+C 停）"
             // 起 bot 需先装好 mineflayer 依赖（serve 人机混场）
+            // 收尾：回写持久运行库缓存（serve 同样 prepare 了运行目录，退出时收尾）
+            finalizeWithRuntimeCacheSync(task)
             if (serve.botSpecs.isNotEmpty()) {
                 task.dependsOn(McTestkitTaskNames.NPM_INSTALL_BOT)
             }
@@ -1871,6 +1889,8 @@ object McTestkitTasks {
             task.description =
                 "持久起集群 serve「${serve.name}」：${clusterBackends.size} 后端 + 代理 ${proxy.name}" +
                 (if (serve.botSpecs.isNotEmpty()) " + ${botKeys.size} bot" else "") + "，真人经代理 /server 切服手测（Ctrl+C 停）"
+            // 收尾：回写持久运行库缓存（集群 serve 同样 prepare 了各后端运行目录，退出时收尾）
+            finalizeWithRuntimeCacheSync(task)
             if (serve.botSpecs.isNotEmpty()) {
                 task.dependsOn(McTestkitTaskNames.NPM_INSTALL_BOT)
             }
@@ -2045,7 +2065,12 @@ object McTestkitTasks {
         resources: BackendRuntimeResources,
     ) {
         ctx.layout.resultsDir.mkdirs()
-        stageBackendRuntime(runDir, backend, resources) { ctx.info(it) }
+        stageBackendRuntime(
+            runDir,
+            backend,
+            resources,
+            cacheDirectory = ctx.layout.persistentBackendCacheDir(backend.name),
+        ) { ctx.info(it) }
     }
 
     /**
@@ -2612,4 +2637,72 @@ internal fun copyRuntimeCaches(sourceRunDirectory: File, targetRunDirectory: Fil
         val source = File(sourceRunDirectory, name)
         if (source.exists()) source.copyRecursively(File(targetRunDirectory, name), overwrite = true)
     }
+}
+
+/**
+ * 枚举工作根下全部后端运行目录：后端名 → 目录。
+ *
+ * 后端运行目录的命名是 `run-<backendName>`（[RunLayout.backendRunDir]），
+ * 但历史上还有共享的 `run/`。后者无法归属到某个后端，故不参与**按后端隔离**的缓存回写
+ * （它没有对应的恢复下标；归给任一后端都会让该后端拿到别的版本的运行库）。
+ *
+ * 代理运行目录 `run-proxy` 同样以 `run-` 开头，必须显式排除：否则会被当成本名叫 `proxy`
+ * 的后端，凭空造出一个 `server-base/proxy/` 并把代理的库混进后端缓存。
+ *
+ * 这条排除与配置期的「`proxy` 是保留后端名」（[McTestkitRunDirectories.isReservedBackendName]）
+ * **互为配套**：排除保证代理不被误当后端，保留字保证不会有名为 `proxy` 的真后端被这条排除吃掉
+ * （否则它的缓存会既不回写也不恢复，且完全静默）。二者缺一都会留下缺口，改一处须同步另一处。
+ * 故这里的排除**复用保留字判定**（大小写不敏感 + 去首尾空白）而不是比字面量：撞名由文件系统
+ * 决定，Windows / macOS 上 `run-Proxy` 与 `run-proxy` 本就是同一目录。
+ *
+ * 只读工作根的一层子目录，不做递归——后端运行目录恒为一级子目录。
+ */
+internal fun backendRunDirsByName(layout: RunLayout): Map<String, File> {
+    val prefix = McTestkitRunDirectories.BACKEND_RUN_DIR_PREFIX
+    return layout.workRoot.listFiles()
+        ?.filter {
+            it.isDirectory &&
+                it.name.startsWith(prefix) &&
+                // 恰好等于前缀的是历史共享目录之外的残名，不含后端名，无恢复下标可用
+                it.name.length > prefix.length &&
+                !McTestkitRunDirectories.isReservedBackendName(it.name.removePrefix(prefix))
+        }
+        ?.associate { it.name.removePrefix(prefix) to it }
+        ?: emptyMap()
+}
+
+/**
+ * 把工作根下各后端运行目录里的运行库 / 缓存回写到**按后端隔离**的持久缓存目录。
+ *
+ * **按后端分别回写**：写入 `server-base/<backendName>/`，与 [restoreBackendRuntimeCache] 的下标
+ * 一一对应。早先的实现把所有后端合并写入同一个 `server-base/`（且 `overwrite = true`），
+ * 多版本矩阵下后写的会覆盖先写的——恢复时拿到的就是错版本，而这正是「按后端隔离」要防的
+ * `UnsupportedClassVersionError`。
+ *
+ * 已存在的缓存文件按 `overwrite = true` 覆盖：回写方向与本轮运行目录一致（缓存应当跟上最新一轮），
+ * 与恢复方向的「只补缺失、不覆盖」相反——两侧的不对称是刻意的，因为「新」在两侧指的是不同东西。
+ *
+ * 纯 IO、无 Gradle 依赖，便于用临时目录单测（回写 → 清理 → 恢复的完整链路）。
+ *
+ * @return 后端名 → 实际回写的子目录名列表；无内容可回写的后端不出现在结果里
+ */
+internal fun syncBackendRuntimeCaches(layout: RunLayout): Map<String, List<String>> {
+    layout.persistentServerBaseDir.mkdirs()
+    val written = LinkedHashMap<String, List<String>>()
+    backendRunDirsByName(layout).forEach { (backendName, runDir) ->
+        val cacheDir = layout.persistentBackendCacheDir(backendName)
+        val copied = RunLayout.PRESERVED_RUNTIME_CACHE_ENTRIES.filter { name ->
+            val source = File(runDir, name)
+            if (!source.exists()) {
+                false
+            } else {
+                source.copyRecursively(File(cacheDir, name), overwrite = true)
+                true
+            }
+        }
+        if (copied.isNotEmpty()) {
+            written[backendName] = copied
+        }
+    }
+    return written
 }

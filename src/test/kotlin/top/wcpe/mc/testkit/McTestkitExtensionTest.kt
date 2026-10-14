@@ -6,6 +6,7 @@ import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import top.wcpe.mc.testkit.dsl.ProxyPlatform
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -108,5 +109,28 @@ class McTestkitExtensionTest {
         }
         assertEquals("MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR", ext.declaredDependencies.pluginUnderTest)
         assertEquals(listOf("SampleLib"), ext.declaredDependencies.plugins)
+    }
+
+    @Test
+    @DisplayName("backendRunDirectory 应拒绝保留字后端名，与配置期校验同口径")
+    fun rejectReservedBackendNameInBackendRunDirectory() {
+        // 本访问器不经过 TopologyResolver，若不自行拦截，同一个名会出现「声明时被拒、查询却拿到
+        // 一个指向代理目录 run-proxy 的 Provider」的不一致。判定复用同一函数，含大小写/空白变体。
+        val ext = extension()
+        listOf("proxy", "Proxy", "proxy ").forEach { name ->
+            assertFailsWith<IllegalStateException>("「$name」应被拒绝") {
+                ext.backendRunDirectory(name)
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("backendRunDirectory 对普通后端名应照常返回运行目录")
+    fun allowNormalBackendNameInBackendRunDirectory() {
+        val ext = extension()
+        assertTrue(
+            ext.backendRunDirectory("s1").get().asFile.path.endsWith("run-s1"),
+            "普通后端名应照常返回 run-<名>",
+        )
     }
 }

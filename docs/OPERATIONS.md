@@ -70,6 +70,14 @@
 
 ### 5.2 作为工具运行 E2E 时（消费方常见故障）
 - **反复下载服务端/代理**：检查内置下载缓存目录是否被清；首次需联网，之后复用。
+- **持久运行库缓存的排障（`syncE2eRuntimeCache` / `server-base`）**：除了上面的 jar 下载缓存，框架还有一份**持久运行库缓存**，用于让运行目录重建（`clean` / 清目录）后不必重新下载运行库与资源——Paper 的 paperclip 会把约 50MB 的原版服务端 jar 下到运行目录的 `cache/`，不恢复则每轮重来。要点与排查：
+  - **它在哪**：`<根工程>/.gradle/mc-testkit/server-base/<后端名>/`（每后端一份 `libraries` / `cache` / `assets` / `versions`）。按后端隔离是必须的——这些内容是**版本敏感**的，多版本矩阵共用一份会让新版 Paper 的 Java 16+ 依赖被旧版（Java 8）服务端复用而抛 `UnsupportedClassVersionError`。
+  - **它怎么填**：固定名任务 `syncE2eRuntimeCache` 由各终态任务（`e2e*` / `e2e*Via*` / `e2e*Cluster` / `e2e*Stress` / `serve*`）以 `finalizedBy` **自动收尾执行**，通常无需手工调用；**失败路径也会回写**，所以一次失败运行拉到的运行库同样沉淀下来。
+  - **它怎么用**：铺运行目录时先清理、再按后端从缓存**只补缺失**（不覆盖运行目录里已有的本轮产物）。日志会打印「已从持久缓存恢复后端 X 的运行库 N 个文件」；**没有这行说明本轮确实是冷启动**（缓存还没被回写过，或后端名对不上），此时出现下载是正常的。
+  - **想强制冷启动 / 怀疑缓存坏了**：跑 `./gradlew purgeE2eRuntimeCache` 清空整份 `server-base`，下次运行重新下载填充。手工 `rm -rf .gradle/mc-testkit/server-base` 等价。
+  - **磁盘占用**：每个后端一份完整运行库，量级为**单后端 150MB 上下**（主要是 `libraries` 与 `cache` 两项，随服务端版本与注入插件变化；具体数值请以本机实测为准——`du -sh .gradle/mc-testkit/server-base/*/*`，本文不钉死实测值免得随版本漂移）。多版本矩阵按后端数倍增。空间紧张时优先删不常跑的后端目录（`server-base/<后端名>/`），或整体 `purgeE2eRuntimeCache`。
+  - **后端改名后缓存没命中**：缓存目录与运行目录都以**后端名**为下标（`server-base/<后端名>/` ↔ `run-<后端名>`）。改名等于换了一份缓存，旧目录不会被自动清除——确认无用后手工删除即可（框架不会把别的后端的库错配给它）。
+  - **`run-proxy` 不参与回写**：代理运行目录虽同样以 `run-` 开头，但被显式排除（它没有对应的后端缓存下标），故代理不会被误当成后端。配套地，**后端名 `proxy` 是保留字**：若声明了它，其运行目录 `run-<proxy>` 恰好就是代理目录 `run-proxy`，既会被代理铺目录时整删、又会被上述排除吃掉缓存；故配置期即中文报错，改用别的后端名即可（**代理**名叫 `proxy` 不受影响）。
 - **服务端起不来且报 `ClassNotFoundException`**：先看运行目录的 `<key>.log`，再看启动日志里的选路行（`按自包含 jar 启动` / `按运行库 classpath 启动`）。运行目录带注入运行库目录 `server-libraries/` 的构件走后者，依赖由 `.mc-testkit-<key>-classpath.jar` 的清单给出；该清单是**启动时刻**的快照，运行库有变动需重跑任务重建。paperclip 自有的 `libraries/` 不参与 classpath（它是服务端自己的运行库目录，跨轮保留只为省重复下载）。
 - **端口占用 / 残留进程**：框架在**起服前会做端口预检**——端口被占即在起服前中文失败，报错里直接给出该端口与按端口排查的命令（Windows `netstat -ano | findstr :<端口>`；Linux `ss -ltnp | grep :<端口>`），不会再出现「日志先报端口已就绪、随后服务端 `bind(..) failed: 地址已在使用`」那种误导形态。清理分三种情形：
   1. **有配套停任务时优先跑它**（`stop<Key>Serve` / `stop<Key>Cluster` / `stop<Key>Stress` / `stopProxy<Proxy>`）：它先按 pid 文件收尾，再**按进程台账兜底**——上一轮构建被强杀留下的逃逸进程（其 pid 文件已随运行目录清理丢失）也能被找回来。台账落 `<工程>/build/mc-testkit/results/process-ledger.properties`，可安全手工删除（删掉只失去「收尾上一轮逃逸进程」的能力，不影响后续起服）。

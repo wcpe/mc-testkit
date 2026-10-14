@@ -145,10 +145,21 @@ internal fun stageBackendRuntime(
     runDirectory: File,
     backend: ResolvedBackend,
     resources: BackendRuntimeResources,
+    cacheDirectory: File? = null,
     logger: (String) -> Unit = {},
 ) {
+    // 顺序有讲究：先清理可重建内容（保留运行库 / 缓存子目录），再从持久缓存补齐缺失的运行库。
+    // 反过来会在恢复后立刻被清理覆盖，等于缓存没生效。
     cleanRunDirPreservingRuntimeCaches(runDirectory)
     requireDirectory(runDirectory, "后端「${backend.name}」运行目录")
+    if (cacheDirectory != null) {
+        // 只在真的补到东西时汇报：首次运行（缓存还没被回写过）恢复量为 0，
+        // 那时打「已从持久缓存恢复」是误导——这一轮其实仍在全量下载。
+        val restored = restoreBackendRuntimeCache(cacheDirectory, runDirectory)
+        if (restored > 0) {
+            logger("已从持久缓存恢复后端 ${backend.name} 的运行库 $restored 个文件：${cacheDirectory.absolutePath}")
+        }
+    }
     resources.templateDirectory?.let { template ->
         copyTemplate(template, runDirectory, BACKEND_TEMPLATE_EXCLUDES)
         logger("已铺后端 ${backend.name} 模板：${template.absolutePath} → ${runDirectory.name}")

@@ -2,6 +2,7 @@ package top.wcpe.mc.testkit.topology
 
 import org.gradle.api.GradleException
 import top.wcpe.mc.testkit.contract.McTestkitEnv
+import top.wcpe.mc.testkit.contract.McTestkitRunDirectories
 import top.wcpe.mc.testkit.contract.toTaskKey
 import top.wcpe.mc.testkit.dsl.BackendSpec
 import top.wcpe.mc.testkit.dsl.McTestkitExtension
@@ -100,11 +101,22 @@ object TopologyResolver {
         }
     }
 
-    /** 校验：后端名 / 代理名非空、各自唯一、且后端名与代理名不相撞（二者共用 routesTo / via 引用命名空间）。 */
+    /** 校验：后端名 / 代理名非空、各自唯一、后端名不与代理名或保留字相撞（共用运行目录命名空间）。 */
     private fun validateNames(backends: List<BackendSpec>, proxies: List<ProxySpec>) {
         backends.forEach { spec ->
             if (spec.name.isBlank()) {
                 throw GradleException("mcTestkit 后端节点名不能为空白，请为 backend(...) 提供非空名称。")
+            }
+            // 后端运行目录是 run-<后端名>，代理目录固定 run-proxy；名为 proxy 的后端会与代理
+            // 抢同一目录（代理铺目录时整删该目录），故在配置期拒绝，不等到运行期踩。
+            // 判定走 isReservedBackendName（大小写不敏感 + 去首尾空白）：撞名与否由文件系统决定
+            // ——Windows / macOS 上 run-Proxy 与 run-proxy 本就是同一目录。
+            if (McTestkitRunDirectories.isReservedBackendName(spec.name)) {
+                throw GradleException(
+                    "mcTestkit 后端名「${spec.name}」是保留字，请改用其它名称。" +
+                        "后端运行目录为 run-<后端名>，而代理运行目录固定为 ${McTestkitRunDirectories.PROXY_RUN_DIR_NAME}——" +
+                        "该名会让二者指向同一目录，代理铺运行目录时会整删后端已备好的内容。",
+                )
             }
         }
         proxies.forEach { spec ->

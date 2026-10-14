@@ -4,6 +4,30 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 变更
+
+- **后端名 `proxy` 列为保留字，配置期拒绝（FR-04）**：后端运行目录是 `run-<后端名>`，而代理运行目录恒为 `run-proxy`——于是 `backend("proxy")` 的运行目录**就是**代理运行目录，两者是同一物理目录，后果不只是某个功能失效：
+  - **代理整删后端已备好的内容**：代理铺运行目录按「每轮全量重建」整目录 `deleteRecursively`（代理不需要保留子目录），把后端刚铺好的模板 / 权威配置 / 注入插件一并删掉；随后后端又在这个已被改成代理形态的目录里启动。
+  - **持久缓存静默失效**：`backendRunDirsByName` 须排除 `run-proxy`（否则代理会被误当后端、凭空造出 `server-base/proxy/` 把代理的运行库混进后端缓存），而该后端会被这条排除一并吃掉——既不回写也不恢复，且全程无声。
+  现配置期中文报错。判定**忽略大小写与首尾空白**（`McTestkitRunDirectories.isReservedBackendName`）：撞名与否由**文件系统**决定而非字符串——Windows / macOS 的文件系统大小写不敏感，`run-Proxy` 与 `run-proxy` 是同一目录；Windows 落盘还会去掉尾随空格，使 `backend("proxy ")` 也建成 `run-proxy`。只比字面量会漏掉这两种变体。枚举侧**复用同一判定**，与配置期校验互为配套（排除保证代理不被误当后端，保留字保证不会有真名叫 `proxy` 的后端被静默吃掉；改一处须同步另一处）。**代理名不受此约束**：代理运行目录恒为固定值、与代理名无关，故 `proxy("proxy")` 照常可用。
+
+### 移除
+
+- **`RunLayout.runDir`（历史共享运行目录 getter）**：它返回 `build/mc-testkit/run`，但运行目录早已按后端隔离为 `run-<backendName>`（多版本矩阵必须隔离 `libraries`/`cache`，否则新 Paper 的 Java 16+ 依赖被旧版 Java 8 服务端复用即抛 `UnsupportedClassVersionError`），该 getter 已无任何调用方，且指向一个框架永不铺筑、也不参与持久缓存回写的目录——留着只会让人误以为存在「共享运行目录」这一形态。删除属内部清理（`RunLayout` 在 `task/` 实现包，非对外契约；对外契约是 `contract/McTestkitRunDirectories`）。
+
+### 修复
+
+- **持久运行缓存「只写不读」、未按后端隔离、回写任务从不执行（FR-04，NFR 幂等可重跑）**：`syncE2eRuntimeCache` 与持久缓存目录此前都是**摆设**——三处缺陷叠加，让「缓存复用」在整条链路上静默失效：
+  - **回写任务从不执行**：`syncE2eRuntimeCache` 只被注册、**没有任何任务依赖它**，于是它永远不出现在任务图里，持久缓存从未被填充过。现在它由各终态任务（`e2e<Key>` / `e2e<Key>Via<Proxy>` / `e2e<Key>Cluster` / `e2e<Key>Stress` / `serve<Key>`）以 `finalizedBy` 自动收尾挂载——用 `finalizedBy` 而非 `dependsOn`，因为回写是收尾动作，不能因它失败而让场景判定失败（缓存是优化、判定才是目的），且失败 / 中断路径同样执行，故一次失败运行拉到的运行库也能沉淀。
+  - **只有写入、没有恢复**：运行目录每轮由 `cleanRunDirPreservingRuntimeCaches` 重建，却从无「把持久缓存搬回运行目录」的一步，冷启动照样重新下载（Paper 的 paperclip 会把原版服务端 jar 下到 `cache/`，约 50MB，每轮重来）。现新增 `restoreBackendRuntimeCache` 并在 `stageBackendRuntime` 里**先清理、后恢复**（顺序反了会被清理覆盖，等于没恢复）；恢复语义是**只补缺失、不覆盖已有**——运行目录里已有的内容是本轮真实产物、比缓存新，用旧缓存覆盖它可能造成版本回退。
+  - **多后端共用一份缓存**：所有后端原先都写进同一个 `server-base/`，多版本矩阵下是后写的覆盖先写的，恢复时拿到的可能是**错版本**的运行库——正是 `run-<backend>` 那段注释要防的 `UnsupportedClassVersionError`（新 Paper 拉到的 Java 16+ 依赖被旧版 Java 8 服务端复用）。现按后端隔离为 `server-base/<backendName>/`，与 `run-<backendName>` 一一对应，回写与恢复按同一下标对齐。
+
+  配套把「识别后端运行目录」做成 `backendRunDirsByName`（枚举 `run-<name>`，**显式排除 `run-proxy`**——代理目录同样以 `run-` 开头，否则会被当成本名叫 `proxy` 的后端、凭空造出一个 `server-base/proxy/` 把代理的库混进后端缓存），`run-` 前缀固化为 `McTestkitRunDirectories.BACKEND_RUN_DIR_PREFIX`，避免回写侧与目录命名侧各拼一遍字符串而漂移。
+
+  另把恢复汇报改成**说真话**：`restoreBackendRuntimeCache` 返回实际补上的文件数，`0` 时不再打印「已从持久缓存恢复」——首次运行（缓存还没被回写过）恢复量本就是 0，那时打这句话会让读日志的人以为缓存生效了，而这一轮其实仍在全量下载；回写侧同样在无可回写内容时如实说明。
+
 ## [0.15.0] - 2026-10-05
 
 ### 新增

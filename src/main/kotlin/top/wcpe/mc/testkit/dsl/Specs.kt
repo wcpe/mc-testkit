@@ -484,6 +484,33 @@ class DependenciesSpec {
         mutablePlugins += envVarOrPath
     }
 
+    private val mutablePluginFiles = mutableListOf<FileCollection>()
+
+    /**
+     * 已声明的依赖插件产物来源（[plugin] 的 `from` 形式，按声明顺序）。
+     *
+     * 与 [plugins] 并列而非互斥：依赖插件可以有多个，各自来源形式独立（ADR-0026）。
+     */
+    internal val pluginFiles: List<FileCollection> get() = mutablePluginFiles.toList()
+
+    /**
+     * 声明一个依赖插件产物来源（ADR-0026）：接受 `project.files(...)` 可接受的任意输入，
+     * **推荐传携带任务信息的 `TaskProvider`**（如 `tasks.named<Jar>("e2eHarnessJar")`）——
+     * 框架据此自动建立产物任务依赖，消费方无需手写任何 `dependsOn`。
+     *
+     * 与 [plugin] 的字符串形式并列（可混用，对应不同的依赖插件），语义差别同
+     * [pluginUnderTest] 的两种形式：字符串是运行期解析，本形式是构建期确定的产物来源。
+     */
+    fun plugin(from: Any) {
+        val resolver = fileResolver
+            ?: error(
+                "mcTestkit 依赖声明尚未就绪：请在应用插件 id \"" +
+                    top.wcpe.mc.testkit.contract.McTestkitContract.PLUGIN_ID +
+                    "\" 之后再调用 plugin(from = …)。",
+            )
+        mutablePluginFiles += resolver(from)
+    }
+
     private val mutableMavenPlugins = mutableListOf<String>()
 
     /** 已声明的依赖插件 Maven 坐标（`group:artifact:version`，按声明顺序）。 */

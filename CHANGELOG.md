@@ -6,6 +6,15 @@
 
 ## [未发布]
 
+### 新增
+
+- **依赖插件产物来源 `plugin(from = …)`（ADR-0026）**：`DependenciesSpec.plugin` 新增 `from` 形式，接受 `project.files(…)` 可接受的任意输入（推荐传 `TaskProvider`），框架据此自动把产物任务接到 `prepareE2e<Key>` 上，消费方无需手写任何 `dependsOn`。解决「依赖插件由独立子工程 / 其它任务产出」的场景——此前只能写死路径，必须先人工构建，否则注入旧 jar 或不存在路径。与路径形式 `plugin("…")` **并列而非互斥**（依赖插件可有多个，来源形式各自独立），语义同 ADR-0025 的 `pluginUnderTest(from = …)`。
+
+### 修复
+
+- **共用同一后端的多个场景在同一条命令请求时互相踩踏（FR-04）**：一个后端名对应唯一的运行目录（`run-<backendName>`）与端口，此前框架只在 `versionMatrix` 展开的场景里挂了串行链，手写 `scenario()` 时完全没有保护。于是 `./gradlew e2eSmoke e2eMobSpawnWithBot e2eCommandCastWithBot`（三个场景共用同一后端）会稳定失败：多个 `prepareE2e<Key>` 并发往同一目录复制服务端运行库报 `FileAlreadyExistsException`，或两个场景同时起服抢同一端口。这与 `org.gradle.parallel` 开关无关——Gradle 本就会并行调度无依赖关系的任务。
+  现按「场景 → 所属后端」归组（显式 `backend` > 经代理路由的第一个后端 > 首个后端），**组内**只挂一条规则：后声明场景的**全部运行期任务**（`prepareE2e<Key>` / `launch<Key>Bot` / `e2e<Key>` / `e2e<Key>WithBot` / `e2e<Key>Cluster` / `e2e<Key>Stress` / `e2e<Key>Via<Proxy>`）排在前一个场景的**全部运行期任务**之后。取全组合而非只牵 `prepare`：否则 `./gradlew e2eA prepareE2eB` 里 B 的 prepare 仍会在 A 的服务端运行期间清空同一运行目录（`cleanRunDirPreservingRuntimeCaches`）。**组间不加约束**——不同后端有独立目录与端口，仍可安全并行。顺序边的计算抽成纯函数 `sharedBackendOrderEdges`，便于穷举测试（`mustRunAfter` 是只写 API、`--dry-run` 输出也不反映它，无法用 TestKit 间接断言）。
+
 ## [0.15.1] - 2026-10-14
 
 ### 变更
@@ -33,7 +42,7 @@
 ## [0.15.0] - 2026-10-05
 
 ### 新增
-- **`dependencies { pluginUnderTest(from = …) }`：待测插件产物来源可配置（FR-04 加法扩展，[ADR-0025](docs/adr/0025-plugin-under-test-artifact-source.md)）**：待测插件此前只有「环境变量名或路径」与「不声明 → 自测模式取本模块 `jar` 产物」两种表达，**用 shadow 插件产 fat jar 的消费方无法声明产物实际来自 `shadowJar`**——真实消费者 TabooLib 的 e2e-harness 只能打补丁：`jar { enabled = false }` 关掉普通 jar（免得自测模式选到错的那个产物）+ `afterEvaluate { tasks.matching { it.name.startsWith("prepareE2e") }.configureEach { dependsOn(shadowJar) } }`（靠字符串匹配任务名接线，失效是静默的，还得先知道自测模式的存在才写得对）。现在直接声明来源即可：`pluginUnderTest(from = tasks.named<ShadowJar>("shadowJar"))` 接受 `project.files(…)` 可接受的任意输入（推荐传 `TaskProvider`——只有携带任务信息的形式才能自动建立依赖），框架从中解析出**恰好一个** jar 作为待测插件，并**自动把产物任务接到需要待测产物的全部任务形态上**（prepare / e2e / 经代理 / 集群 / 压测 / serve），消费方**不再手写任何 `dependsOn`**，也不必再关掉 `jar`。**互斥**：与 `pluginUnderTest = "…"` 同时声明时配置期中文报错，不静默取其一（两种形式的解析时机与语义不同）；来源解析不出恰好一个 jar 同样配置期中文报错。**优先级不变**：执行期 `MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR` 仍最高（可覆盖声明，CI / `GradleRunner` 注入用）；未声明任何形式时仍走自测模式。**纯加法**：`pluginUnderTest` 的字符串形式 / `plugin(...)` 的语义与优先级、任务命名、env 前缀均不变；v1 仍不做 `pluginUnderTest` 的坐标形式——那是「制品从哪个仓库取」，与本次「产物由哪个任务产出」正交。**实机结论（本机自举真机）**：以 `pluginUnderTest(from = …)` 形态声明产物来源的消费者工程已真机跑通 Paper **1.13.2（build 657）** 与 **1.14.4（build 245）** 双版本烟雾——`:jar` 产物任务由框架自动接线（消费方零 `dependsOn`），结果文件 `build/mc-testkit/results/smoke.properties` 两版本均 `status=PASS`。
+- **`dependencies { pluginUnderTest(from = …) }`：待测插件产物来源可配置（FR-04 加法扩展，[ADR-0025](docs/adr/0025-plugin-under-test-artifact-source.md)）**：待测插件此前只有「环境变量名或路径」与「不声明 → 自测模式取本模块 `jar` 产物」两种表达，**用 shadow 插件产 fat jar 的消费方无法声明产物实际来自 `shadowJar`**——真实消费者 某个真实消费方 的 e2e-harness 只能打补丁：`jar { enabled = false }` 关掉普通 jar（免得自测模式选到错的那个产物）+ `afterEvaluate { tasks.matching { it.name.startsWith("prepareE2e") }.configureEach { dependsOn(shadowJar) } }`（靠字符串匹配任务名接线，失效是静默的，还得先知道自测模式的存在才写得对）。现在直接声明来源即可：`pluginUnderTest(from = tasks.named<ShadowJar>("shadowJar"))` 接受 `project.files(…)` 可接受的任意输入（推荐传 `TaskProvider`——只有携带任务信息的形式才能自动建立依赖），框架从中解析出**恰好一个** jar 作为待测插件，并**自动把产物任务接到需要待测产物的全部任务形态上**（prepare / e2e / 经代理 / 集群 / 压测 / serve），消费方**不再手写任何 `dependsOn`**，也不必再关掉 `jar`。**互斥**：与 `pluginUnderTest = "…"` 同时声明时配置期中文报错，不静默取其一（两种形式的解析时机与语义不同）；来源解析不出恰好一个 jar 同样配置期中文报错。**优先级不变**：执行期 `MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR` 仍最高（可覆盖声明，CI / `GradleRunner` 注入用）；未声明任何形式时仍走自测模式。**纯加法**：`pluginUnderTest` 的字符串形式 / `plugin(...)` 的语义与优先级、任务命名、env 前缀均不变；v1 仍不做 `pluginUnderTest` 的坐标形式——那是「制品从哪个仓库取」，与本次「产物由哪个任务产出」正交。**实机结论（本机自举真机）**：以 `pluginUnderTest(from = …)` 形态声明产物来源的消费者工程已真机跑通 Paper **1.13.2（build 657）** 与 **1.14.4（build 245）** 双版本烟雾——`:jar` 产物任务由框架自动接线（消费方零 `dependsOn`），结果文件 `build/mc-testkit/results/smoke.properties` 两版本均 `status=PASS`。
 - **serve 附加控制台（PTY）：跨平台接管原版控制台（FR-25，[ADR-0023](docs/adr/0023-windows-pty4j-console.md)）**：行级补全能补命令名，但**补不了参数、也没法做行内编辑**——因为 Gradle 的终端归客户端进程，构建只拿到整行（ADR-0021 实测），服务端自己在管道 stdin 下也没有终端。这一版把缺的另一半补上：`serve("dev") { attachConsole = true }` 后，框架用**固定版本 pty4j** 把服务端放进伪终端启动——Windows 优先 ConPTY、必要时 WinPty fallback，Linux/macOS 使用 Unix PTY；服务端的 JLine 因此启用（实测：管道下必现的 `Advanced terminal features are not available in this environment` 消失、出现 JLine 绘制），并在就绪时打印一条**可直接粘贴**的命令；在**另一个终端**运行它，那个终端就成为服务端**自己的**控制台：Tab 补全（含参数，命令树来自服务端）、↑↓ 历史、←→ 行编辑、Home/End、颜色、Ctrl+C 停服，全是原版行为。客户端（随插件 jar 发布，框架自己按类源拼类路径）改用 JLine Terminal 管理 Linux/macOS/Windows 当前终端的 raw 模式、尺寸与恢复，只做字节双向搬运；`Ctrl+]` 断开附加（服务端继续运行）。端点只绑 `127.0.0.1`、随机端口 + 随机令牌、同一时刻只服务一个会话，attach 时调用 pty4j 的 `WinSize` 同步尺寸。**默认关闭**：不声明则行为与本功能引入前完全一致；pty4j native backend 不可用时按增强能力处理，中文说明并退回「本终端行级补全」，绝不阻断 serve。开启后 `<key>.log` 记的是服务端**终端流**（含 JLine 转义与提示符重绘，已去 ANSI / `\r` 并应用退格），控制台视图会再去掉提示符残留；收尾在 PTY 模式下多一步「先收尾后代进程」（服务端是 pty4j 进程的子进程）。实现过程中另修一处自愈：命令表抓取的「隐藏窗口」（不让几十行 help 刷进控制台）原先只靠「等日志静默」判断结束，负载高时 dump 断续写入会漏几行进控制台——现在静默点之后若又冒出命令表形态的行，窗口会继续往后吃（有界轮次），实测退化路径不再漏表。Windows CI 另加一层 PTY 冒烟（桩 JLine 控制台进真 PTY + 端点桥接）：子进程必须拿到真终端（ConPTY 未生效会退化成 dumb，直接判失败），命令往返回显、`Tab` 原样送达；真实 Paper 的端到端仍是手动 E2E。
 
 ### 变更
@@ -122,7 +131,7 @@
 ## [0.9.1] - 2026-09-12
 
 ### 修复
-- **自测模式自动接线补齐 serve 任务**：0.9.0 的自测模式只把 `prepareE2e<Key>` / `e2e<Key>` 自动依赖到本模块 `jar` 任务，遗漏了 `serve<Key>`（持久手测）——serve 自行预检并注入插件，jar 未产出时同样会在预检期失败。现自测模式下 serve 任务同样自动依赖 `jar`（真实消费者 MCE 的 `serve("dev")` 手测形态即命中此缺口）。
+- **自测模式自动接线补齐 serve 任务**：0.9.0 的自测模式只把 `prepareE2e<Key>` / `e2e<Key>` 自动依赖到本模块 `jar` 任务，遗漏了 `serve<Key>`（持久手测）——serve 自行预检并注入插件，jar 未产出时同样会在预检期失败。现自测模式下 serve 任务同样自动依赖 `jar`（真实消费者 消费方 的 `serve("dev")` 手测形态即命中此缺口）。
 
 ## [0.9.0] - 2026-09-12
 
@@ -144,7 +153,7 @@
 
 ### 新增
 - **非自包含（thin jar）服务端拉起**（`provision/`）：`ServerLauncher` 识别运行目录下的 `libraries/`，对这类构件改用「只含清单的启动器 jar」传完整 classpath（同时规避 Windows 命令行长度限制）；`Class-Path` 条目按 UTF-8 百分号编码，路径含空格 / 中文时不再被 JVM 截断。自包含 jar 与 paperclip 引导件仍走 `java -jar`，启动前清理上一轮残留的启动器 jar。
-- **共享协议胶水构件（FR-09，ADR-0014 取代 ADR-0002 的「暂不发布」条款）**：桩侧 `harness-core`（`top.wcpe.mc:harness-core:0.1.0`，Maven——契约 env 读取 / 结果文件原子写出 / serve 空闲 / 桩基类 `McTestkitHarnessPlugin`，**纯 Java 零 Kotlin 依赖**）+ 机器人侧 `@wcpe/mc-testkit-bot@0.1.0`（npm——`runBot({ scenarios })` 端口探测 / 重连 / action 分发内核）。`template/harness` 与 `template/bot` 改为依赖构件；真实消费者 MCE（MultiCurrencyEconomy）已迁移并实机跑通离线存款 → relay → 事件投递 E2E。
+- **共享协议胶水构件（FR-09，ADR-0014 取代 ADR-0002 的「暂不发布」条款）**：桩侧 `harness-core`（`top.wcpe.mc:harness-core:0.1.0`，Maven——契约 env 读取 / 结果文件原子写出 / serve 空闲 / 桩基类 `McTestkitHarnessPlugin`，**纯 Java 零 Kotlin 依赖**）+ 机器人侧 `@wcpe/mc-testkit-bot@0.1.0`（npm——`runBot({ scenarios })` 端口探测 / 重连 / action 分发内核）。`template/harness` 与 `template/bot` 改为依赖构件；真实消费者 消费方（某个真实消费方）已迁移并实机跑通离线存款 → relay → 事件投递 E2E。
 
 ## [0.7.0] - 2026-08-29
 
@@ -239,17 +248,17 @@ _（暂无）_
 
 ## [0.2.2] - 2026-06-23
 
-> 单场景多 bot（FR-16）：一个 `scenario { }` 可驱动多个 bot——异质具名角色（如管理 GUI 的 `admin` + `target`）+ 同质批量复制（`bot { count = N }`，各唯一 username、经 `BOT_INDEX` 区分），用于集群多 bot 各自经代理切服、单后端多 bot 直连分角色。复用既有 env / 任务名、零新增，与压测「同质钉服」划清边界。纯增量，向后兼容 0.2.1；交付以解锁下游 AllinInventorySync「N 玩家切服不回档」与「管理 GUI 双角色」两个 E2E（实机由下游接 g16 / gui-edit 闭环验收）。
+> 单场景多 bot（FR-16）：一个 `scenario { }` 可驱动多个 bot——异质具名角色（如管理 GUI 的 `admin` + `target`）+ 同质批量复制（`bot { count = N }`，各唯一 username、经 `BOT_INDEX` 区分），用于集群多 bot 各自经代理切服、单后端多 bot 直连分角色。复用既有 env / 任务名、零新增，与压测「同质钉服」划清边界。纯增量，向后兼容 0.2.1；交付以解锁下游 某个真实消费方「N 玩家切服不回档」与「管理 GUI 双角色」两个 E2E（实机由下游接 g16 / gui-edit 闭环验收）。
 
 ### 新增
-- **单场景多 bot**（FR-16）：一个 `scenario { }` 可驱动多个 bot——**异质**（多个具名 `bot("角色") { }`，各自 `username` / `action` / `env`，如管理 GUI 的 `admin` + `target` 双角色）与**同质批量**（`bot { count = N }` 复制 N 份，各唯一 `username`、经 `BOT_INDEX`（1..N）区分，如集群 N 个并发切服玩家）。用于集群（多 bot 各自经代理 `/server` 切）与单后端（多 bot 直连，可分角色）。**零新增 env / 任务名**：复用 `BOT_USERNAME`（多进程强制唯一）/ `BOT_ACTION` / `BOT_INDEX` / `CLUSTER_BACKENDS`，声明多 bot 时既有 `launch<Key>Bot` / `e2e<Key>` / `e2e<Key>WithBot` / `e2e<Key>Cluster` **起多个 bot 进程**并随场景结束按 pid 全部收尾（集群多 bot 收尾并入 `stop<Key>Cluster`）。与压测 FR-11「同质钉服」划清边界（压测场景禁用 `count` / 多 bot）。结果仍由桩按 username/index 聚合（结果文件唯一权威）。新增纯函数 `BotProcessPlanner`（`expand` 场景 bot 列表 → 每进程身份；`extraEnvironments` → 每进程追加 env：唯一名/序号/共享 `CLUSTER_BACKENDS`，均穷举单测）与配置期校验（`count>=1`、多 bot 须各有唯一 `role`、压测禁 `count`/多 bot，中文报错）。下游 AllinInventorySync 据此迁移「N 玩家切服不回档」与「管理 GUI admin/target 双角色」两个 E2E。见 docs/specs/fr-16-multi-bot-per-scenario.md、ADR-0009。向后兼容：现有单 `bot { }` 行为不变。
+- **单场景多 bot**（FR-16）：一个 `scenario { }` 可驱动多个 bot——**异质**（多个具名 `bot("角色") { }`，各自 `username` / `action` / `env`，如管理 GUI 的 `admin` + `target` 双角色）与**同质批量**（`bot { count = N }` 复制 N 份，各唯一 `username`、经 `BOT_INDEX`（1..N）区分，如集群 N 个并发切服玩家）。用于集群（多 bot 各自经代理 `/server` 切）与单后端（多 bot 直连，可分角色）。**零新增 env / 任务名**：复用 `BOT_USERNAME`（多进程强制唯一）/ `BOT_ACTION` / `BOT_INDEX` / `CLUSTER_BACKENDS`，声明多 bot 时既有 `launch<Key>Bot` / `e2e<Key>` / `e2e<Key>WithBot` / `e2e<Key>Cluster` **起多个 bot 进程**并随场景结束按 pid 全部收尾（集群多 bot 收尾并入 `stop<Key>Cluster`）。与压测 FR-11「同质钉服」划清边界（压测场景禁用 `count` / 多 bot）。结果仍由桩按 username/index 聚合（结果文件唯一权威）。新增纯函数 `BotProcessPlanner`（`expand` 场景 bot 列表 → 每进程身份；`extraEnvironments` → 每进程追加 env：唯一名/序号/共享 `CLUSTER_BACKENDS`，均穷举单测）与配置期校验（`count>=1`、多 bot 须各有唯一 `role`、压测禁 `count`/多 bot，中文报错）。下游 某个真实消费方 据此迁移「N 玩家切服不回档」与「管理 GUI admin/target 双角色」两个 E2E。见 docs/specs/fr-16-multi-bot-per-scenario.md、ADR-0009。向后兼容：现有单 `bot { }` 行为不变。
 
 ## [0.2.1] - 2026-06-23
 
-> 集群代理崩溃接管 fallback（FR-15）：listener `priorities` 含全部后端，默认后端宕机时 bot 重连经代理回退到存活后端，支撑「崩溃接管」类 E2E（消费方 AllinInventorySync G15 实机 PASS）。纯增量，向后兼容 0.2.0。
+> 集群代理崩溃接管 fallback（FR-15）：listener `priorities` 含全部后端，默认后端宕机时 bot 重连经代理回退到存活后端，支撑「崩溃接管」类 E2E（某真实消费方 G15 实机 PASS）。纯增量，向后兼容 0.2.0。
 
 ### 新增
-- **集群代理 listener `priorities` 改为全部后端有序列表**（FR-15，首个仍为默认服 + 其余作 fallback）：默认后端宕机时 bot 重连经代理**回退到下一个存活后端**，支撑「崩溃接管」类 E2E（某后端崩溃 → bot 落到存活后端、由其在归属租约 TTL 过期后接管上线）。正常 `/server` fast-transfer 切换与 `force_default_server` 落默认服行为不受影响。消费方 AllinInventorySync 据此迁移 G15 崩溃接管 E2E（实机 PASS）。`ClusterProxyConfigTest` 增 priorities 含全部后端的断言。
+- **集群代理 listener `priorities` 改为全部后端有序列表**（FR-15，首个仍为默认服 + 其余作 fallback）：默认后端宕机时 bot 重连经代理**回退到下一个存活后端**，支撑「崩溃接管」类 E2E（某后端崩溃 → bot 落到存活后端、由其在归属租约 TTL 过期后接管上线）。正常 `/server` fast-transfer 切换与 `force_default_server` 落默认服行为不受影响。消费方据此迁移 G15 崩溃接管 E2E（实机 PASS）。`ClusterProxyConfigTest` 增 priorities 含全部后端的断言。
 
 ### 修复
 - CI / 构建：`gradlew` 与 `template/harness/gradlew` 之前以非可执行（100644）入库（Windows 提交丢失 Unix 可执行位），导致 Linux runner / Unix 环境 `./gradlew` 报 `Permission denied`、CI 构建失败；改为可执行（100755）入库，修复 CI 与「消费方照抄 `template/` 后在 Unix 上直接跑 `./gradlew`」。

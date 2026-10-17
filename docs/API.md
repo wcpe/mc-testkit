@@ -147,7 +147,7 @@ mcTestkit {
 - **配置期校验**：必须恰为 `group:artifact:version` 三段非空；拒绝动态版本与版本区间（`+` / `latest.*` / `[1.0,2.0)`），因为它们会让同一份声明在不同时刻拉到不同制品。`-SNAPSHOT` 后缀**允许**（测试框架有正当用途），但快照制品不可复现，不适用需要严格重现的回归。
 - **缺失报错**：坐标在仓库里找不到时，`prepareE2e*` 抛中文错误并归因（坐标拼写 / 该坐标的仓库未在本构建声明 / 拉取凭据缺失），不会留下半铺的运行目录。
 - **目标文件名冲突**：多份声明（含坐标与路径 / 环境变量混用）落到同一 `plugins/<文件名>` 时，在铺运行目录前中文报错并列出冲突声明，不再静默覆盖（§1 的启动前资源预检契约；被测插件的目标名固定为 `plugin-under-test.jar`，故依赖插件不得与它同名）。
-- **消费方若用 `RepositoriesMode.PREFER_SETTINGS`**（如 ServerProbe）：**项目级** repositories 会被忽略、只有 **settings 级**生效，请把仓库写在 `settings.gradle.kts` 里；框架不会替你在项目级补仓库。
+- **消费方若用 `RepositoriesMode.PREFER_SETTINGS`**（某些消费方即是）：**项目级** repositories 会被忽略、只有 **settings 级**生效，请把仓库写在 `settings.gradle.kts` 里；框架不会替你在项目级补仓库。
 - **配置缓存的边界**（ADR-0015/0016）：Gradle 原生解析无法真正推迟到任务动作内，故本实现**限定捕获范围**——坐标只被真正需要的任务捕获：起服类任务（`e2e*` / `serve*` 等）捕获依赖插件 + 全部服务端/代理坐标（故其调度时会解析全部已声明坐标）；`prepareE2e*` 只注入插件、不起服务端，只捕获依赖插件坐标；`stop<Key>Serve` / `syncE2eRuntimeCache` / `npmInstallBot` 等一概不解析坐标、不访问仓库。需要坐标的任务在配置缓存下照常存储 / 重用。
 
 v1 **不做** `pluginUnderTest` 的坐标形式（解析机制可复用，待真实需求再加）；`pluginUnderTest` / `plugin(...)` 的语义与优先级完全不变。下条的**产物来源**形式与之不冲突：产物来源声明「待测 jar 由哪个任务产出」，坐标形式要解决的是「制品从哪个仓库取」，两个维度正交（ADR-0025）。
@@ -167,6 +167,35 @@ dependencies {
 - **与 `pluginUnderTest = "…"` 互斥**：两种形式同时声明时**配置期中文报错**，不静默取其一（两种形式的解析时机与语义不同，静默择一会让另一处声明看似生效实则被忽略）。
 - **优先级不变**：执行期 `MC_TESTKIT_E2E_PLUGIN_UNDER_TEST_JAR` 仍最高（可覆盖声明，CI / `GradleRunner` 注入用）；未声明任何形式时仍走自测模式（本模块 `jar` 产物 + 自动接线）。声明了产物来源即不再是自测模式。
 - **边界**：传普通文件路径（无任务信息）时框架无法建立产物依赖，产物仍须由消费方自行保证先于任务产出；本形式只在**配置期**消费，不进入任务动作捕获图（配置缓存约束同 ADR-0015/0016/0017）。
+
+**依赖插件产物来源（`dependencies { plugin(from = …) }`，加法扩展）**：`plugin` 新增 `from` 形式，声明依赖插件 jar 的**产物来源**（[ADR-0026](adr/0026-plugin-artifact-source-and-shared-backend-serial.md)），与上一条的 `pluginUnderTest(from = …)` 同构。用于依赖插件由**其它任务 / 独立子工程**产出的场景——典型是 E2E 桩插件作为自带 `settings.gradle.kts` 的子工程、由它自己的 `jar` 任务产出：
+
+```kotlin
+dependencies {
+    pluginUnderTest(from = tasks.named("shadowJar"))
+    // 桩插件：传携带任务信息的 TaskProvider，框架自动建立产物依赖
+    plugin(from = tasks.named("e2eHarnessJar"))
+    // 与路径形式混用：另一个依赖插件仍按路径声明
+    plugin("libs/some-other-plugin.jar")
+}
+```
+
+- **与路径形式并列而非互斥**：依赖插件可以有多个，各自来源形式独立，可混用（这一点与 `pluginUnderTest` 的两种形式互斥不同——那里是**同一个**待测插件的两种表达）。
+- **无需 `dependsOn`**：框架自动把该来源携带的产物任务接到 `prepareE2e<Key>` 上，消费方不必再手工构建桩、也不必写任务依赖补丁。
+- **优先级**：产物来源在配置期即落成具体文件路径，执行期不再查环境变量；缺失时与路径 / 坐标形式的缺项一起进统一中文报错。
+
+**共用同一后端的场景自动串行（默认行为，无开关）**：一个后端名对应唯一的运行目录（`run-<backendName>`）与端口。若多个场景共用该后端，框架会自动在它们之间挂 `mustRunAfter` 链（[ADR-0026](adr/0026-plugin-artifact-source-and-shared-backend-serial.md)），使它们**串行执行**：
+
+```bash
+# 三个场景都跑在同一后端上——这条命令是安全的，它们会依次执行
+./gradlew e2eSmoke e2eMobSpawnWithBot e2eCommandCastWithBot
+```
+
+- **为什么必要**：不加约束时，多个 `prepareE2e<Key>` 会并发往同一运行目录复制服务端运行库（`FileAlreadyExistsException`），或在对方服务端运行期间清空该目录，或同时起服务端抢同一端口。这与 `org.gradle.parallel` 开关无关——Gradle 本就会并行调度无依赖关系的任务。
+- **归组方式**：显式 `backend = "…"` > 经代理（`via`）路由到的第一个后端 > 首个声明的后端。
+- **不同后端不加约束**：它们有独立目录与端口，可以安全并行（时间按各自独立收敛）。
+- **顺序粒度**：整段串行——后声明场景的**全部运行期任务**（`prepareE2e<Key>` / `launch<Key>Bot` / `e2e<Key>` / `e2e<Key>WithBot` / `e2e<Key>Cluster` / `e2e<Key>Stress`，声明 `via` 时还有 `e2e<Key>Via<Proxy>`）排在前一个场景的**全部运行期任务**之后。取全组合而非只牵 `prepare`：否则 `./gradlew e2eA prepareE2eB` 里 B 的 prepare 仍会在 A 的服务端运行期间清空同一运行目录。各场景形态注册的任务不同，未注册的名字自动跳过。
+- **场景钩子不在串行集内**：`before<Key>Scenario` / `after<Key>Scenario` 由上述任务带出，框架不替消费方决定它们跨场景的顺序（例如共用同一个控制面进程时，串行反而是错的）。
 
 **服务端 / 代理 jar 按 Maven 坐标解析（`backend/proxy { mavenServer(…) }`，加法扩展）**：`BackendSpec` 与 `ProxySpec` 各新增 `mavenServer(coordinate)`，声明该节点的服务端 / 代理软件 jar 来自 Maven 坐标 `group:artifact:version`。用于制品不随公开仓库分发、或需要固定 / 自建构建的场景（ADR-0016）。
 
@@ -415,7 +444,7 @@ ServerProperties.edit(runDir, mapOf("server-port" to "25565"))
 val digest = paper.sha256()
 ```
 
-**外部制品源**（平台枚举之外的第三方制品，如 Hangar 固定版本、API 动态解析的最新版地址）：
+**外部制品源**（平台枚举之外的第三方制品，如固定版本下载端点、API 动态解析的最新版地址）：
 
 ```kotlin
 val external = ExternalArtifactProvisioner(cacheRoot)
@@ -423,8 +452,8 @@ val external = ExternalArtifactProvisioner(cacheRoot)
 // ① 固定 URL
 val fixed = ExternalArtifactSource.FixedUrl(
     id = "placeholderapi",
-    fileName = "PlaceholderAPI-2.12.2.jar",
-    url = "https://hangar.papermc.io/api/v1/projects/PlaceholderAPI/versions/2.12.2/PAPER/download",
+    fileName = "example-plugin-1.0.0.jar",
+    url = "https://artifacts.example.com/api/v1/projects/example-plugin/versions/1.0.0/download",
 )
 
 // ② API 动态解析：先取 apiUrl 响应文本，再交纯函数 resolver 解析地址

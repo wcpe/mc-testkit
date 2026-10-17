@@ -4,7 +4,7 @@
 已接受（补充 [ADR-0008](0008-cluster-and-stress-dsl.md) 的「扩 scenario 块」方向与 [ADR-0006](0006-public-contract-conventions.md) 的 DSL/命名契约，不取代）
 
 ## 背景
-v0.2.1 每个 `scenario { }` 最多一个 `bot { }`：单后端 1 直连、集群 1 经代理 `/server` 切、压测每服 `botsPerServer` 个**钉服同质** bot。下游消费者 `mctk-allininventorysync-e2e` 最后两个受阻 E2E 都卡在「一个场景里要多个、可各自不同的 bot」：① **N 个会切服的玩家**（同质批量、各自经代理切服，校验数据不回档）；② **同后端两个异质角色 bot**（`admin` 经 GUI 编辑 `target`）。压测 bot 钉服不可切、集群单 bot 只有一个，三种现状形态都表达不了。
+v0.2.1 每个 `scenario { }` 最多一个 `bot { }`：单后端 1 直连、集群 1 经代理 `/server` 切、压测每服 `botsPerServer` 个**钉服同质** bot。下游消费方的跨服 E2E 工程最后两个受阻 E2E 都卡在「一个场景里要多个、可各自不同的 bot」：① **N 个会切服的玩家**（同质批量、各自经代理切服，校验数据不回档）；② **同后端两个异质角色 bot**（`admin` 经 GUI 编辑 `target`）。压测 bot 钉服不可切、集群单 bot 只有一个，三种现状形态都表达不了。
 
 约束：ADR-0006 冻结 DSL 四个顶层块、env 前缀 `MC_TESTKIT_E2E_`、任务命名约定；ADR-0008 定下「集群/压测以扩 scenario 块表达、不加顶层块」并预留 `BOT_INDEX` / `CLUSTER_BACKENDS` / `BOT_USERNAME`。须在既有契约内**加法扩展**，不破坏冻结块、不与压测语义混淆。
 

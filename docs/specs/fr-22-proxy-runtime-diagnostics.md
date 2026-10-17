@@ -4,7 +4,7 @@
 
 ## 1. 背景与目标
 
-mc-testkit 当前代理版本由全局默认值决定，代理进程也只能使用当前 Gradle JVM，无法在同一消费者中覆盖 Velocity 3/4 的 Java 断层，也无法给后端/代理注入 ServerProbe premain。FR-22 增加最小、向后兼容的节点运行时声明，支撑 ServerProbe 的跨平台协议与诊断验收。
+mc-testkit 当前代理版本由全局默认值决定，代理进程也只能使用当前 Gradle JVM，无法在同一消费者中覆盖 Velocity 3/4 的 Java 断层，也无法给后端/代理注入消费方自己的 javaagent。FR-22 增加最小、向后兼容的节点运行时声明，支撑 某个真实消费方 的跨平台协议与诊断验收。
 
 ## 2. 需求（要什么）
 
@@ -13,9 +13,9 @@ mc-testkit 当前代理版本由全局默认值决定，代理进程也只能使
 - 所有 e2e、cluster、stress、serve 启动路径使用节点解析后的 Java 与 JVM 参数。
 - 公开配置不写死消费方本机绝对路径；Java 运行时使用 `MC_TESTKIT_JAVA_HOME_<JAVA主版本>`，javaagent 优先从消费方声明的环境变量解析。
 - 保持旧 DSL、任务名、`MC_TESTKIT_E2E_*` 环境契约与未声明运行时字段时的行为。
-- 框架只提供协议客户端/诊断 fixture 的进程接线、env 与结果文件编排，不内置 ServerProbe 业务断言。
+- 框架只提供协议客户端/诊断 fixture 的进程接线、env 与结果文件编排，不内置消费方的业务断言。
 - 范围内：DSL、解析模型、下载版本、Java 选择、JVM 参数、javaagent、所有任务路径、Velocity 矩阵自举。
-- 不做：发布共享 ServerProbe fixture 库、替消费项目决定协议包或 MCP 断言、用 `includeBuild` 接入快照。
+- 不做：发布共享的消费方 fixture 库、替消费项目决定协议包或 MCP 断言、用 `includeBuild` 接入快照。
 
 ## 3. 设计（怎么做）
 
@@ -33,8 +33,8 @@ mc-testkit 当前代理版本由全局默认值决定，代理进程也只能使
 - [x] 扩展 DSL/Resolved 模型并统一所有启动路径。
 - [x] 增加 Velocity 3.1.1、最新 3.x（固定 3.5.1）、4.1.0 下载与 Java 运行矩阵。
 - [x] 增加消费方 fixture 进程接线示例和结果文件门禁测试。
-- [x] 发布 `0.7.0-SNAPSHOT` 到 Maven Local，ServerProbe 按插件版本消费并完成真实矩阵。
-- [x] ServerProbe 验收通过后再走 mc-testkit 正式版本发布。
+- [x] 发布 `0.7.0-SNAPSHOT` 到 Maven Local，消费方按插件版本消费并完成真实矩阵。
+- [x] 消费方验收通过后再走 mc-testkit 正式版本发布。
 - [x] 文档同步：PRD 状态、ARCHITECTURE、DSL、README、CHANGELOG。
 
 ## 5. 验收标准
@@ -44,7 +44,7 @@ mc-testkit 当前代理版本由全局默认值决定，代理进程也只能使
 - 同一消费项目依次拉起 Velocity 3.1.1、最新 3.x（固定 3.5.1）、4.1.0；4.1.0 进程实际由 Java 25 启动。
 - agent 路径可只通过消费方环境变量提供，公共 DSL/日志/结果契约不泄露固定本机路径。
 - 协议流量 fixture 与 MCP 诊断 fixture 的成功与失败均由 harness 结果文件权威判定，异常结束能清理全部进程与端口。
-- mc-testkit 全量测试、自举 E2E 及 ServerProbe 真实消费全部通过后才允许标记交付。
+- mc-testkit 全量测试、自举 E2E 及消费方真实接入全部通过后才允许标记交付。
 
 ## 6. 风险 / 待定
 

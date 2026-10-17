@@ -9,7 +9,7 @@ mc-testkit 现状：每个 `scenario { }` 最多一个 `bot { }`——
 - 集群（FR-10）：1 个 bot 经代理 `/server` 切换；
 - 压测（FR-11）：每服 `botsPerServer` 个 bot，但**钉服、同质**（同 action、不切服、不分角色）。
 
-下游消费者 `mctk-allininventorysync-e2e`（AllinInventorySync 跨服 E2E）最后两个受阻场景三种形态都表达不了，都卡在「一个场景里要**多个、可各自不同**的 bot」：
+下游消费方的跨服 E2E 工程最后两个受阻场景三种形态都表达不了，都卡在「一个场景里要**多个、可各自不同**的 bot」：
 
 1. **多玩家并发切服**：N 个玩家各自经代理落首服 → `/server` 切次服 → 校验数据不回档。即「N 个会切服的 bot」（同质即可，但要 N 个独立玩家）——压测 bot 不能切，集群单 bot 只有一个。
 2. **管理 GUI 双角色**：同一后端要 2 个**不同角色**的 bot——`admin`（OP，经 mineflayer 点管理菜单编辑 target）+ `target`（被编辑对象）。即「同场景多个**异质** bot」。
@@ -62,7 +62,7 @@ mc-testkit 现状：每个 `scenario { }` 最多一个 `bot { }`——
 - [x] 功能测试（TestKit）：集群 `count=N` 与单后端双角色注册任务 + 集群 finalizedBy 收尾 + 配置期中文报错。
 - [x] 文档同步：PRD（FR-16）、ARCHITECTURE（多 bot 机制）、API（DSL + 任务表注）、CHANGELOG、ADR-0009。
 - [x] 单元/TestKit + 根 `build` 绿（含 ktlint），向后兼容既有测试不改语义（184 测试全绿、FR-16 新增 34）。
-- [ ] 实机（PRD §6 维度，下游闭环）：下游 AllinInventorySync 加 g16 / gui-edit 跑通验收 + 退役 `integration-test/`（**待实机确认**）。
+- [ ] 实机（PRD §6 维度，下游闭环）：下游消费方加 g16 / gui-edit 跑通验收 + 退役 `integration-test/`（**待实机确认**）。
 
 ## 5. 验收标准
 

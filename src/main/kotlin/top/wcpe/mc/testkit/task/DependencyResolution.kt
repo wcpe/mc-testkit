@@ -35,6 +35,14 @@ data class DependencyDeclarations(
     val plugins: List<String>,
     val pluginUnderTestSelfJar: Boolean = false,
     val mavenPlugins: List<String> = emptyList(),
+    /**
+     * 依赖插件的**产物来源**（[DependenciesSpec.plugin] 的 `from` 形式，ADR-0026）：
+     * 构建期已确定的 jar 文件绝对路径，按声明顺序。
+     *
+     * 与 [plugins] 并列：依赖插件可以有多个，各自来源形式独立。
+     * 产物来源在配置期已解析为具体文件，故执行期无需再查环境变量。
+     */
+    val pluginFiles: List<String> = emptyList(),
 ) : java.io.Serializable
 
 /**
@@ -217,6 +225,16 @@ fun resolveDependencyJars(
         } else {
             presence[coordinate] = false
             hints[coordinate] = COORDINATE_MISSING_HINT
+        }
+    }
+
+    // 产物来源声明（plugin(from = …)，ADR-0026）：配置期已落成具体文件路径，无需再查环境变量。
+    // 用绝对路径作注入项名，缺失时消费者能直接从报错里看到是哪个产物没生成。
+    declarations.pluginFiles.forEach { path ->
+        val jar = File(path)
+        presence[path] = jar.isFile
+        if (jar.isFile) {
+            resolved += ResolvedPluginJar(path, jar, underTest = false)
         }
     }
 

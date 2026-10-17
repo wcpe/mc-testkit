@@ -115,7 +115,7 @@ mcTestkit {
 }
 ```
 
-> 用私有仓库的坐标时，仓库要写在**生效的那一层**：消费方若启用 `RepositoriesMode.PREFER_SETTINGS`（如 ServerProbe），项目级 `repositories { }` 会被忽略，只有 `settings.gradle.kts` 里的仓库生效。凭据由你自己的 Gradle 配置提供，框架不感知。
+> 用私有仓库的坐标时，仓库要写在**生效的那一层**：消费方若启用 `RepositoriesMode.PREFER_SETTINGS`（某些消费方即是），项目级 `repositories { }` 会被忽略，只有 `settings.gradle.kts` 里的仓库生效。凭据由你自己的 Gradle 配置提供，框架不感知。
 
 ### 3. 接入脚手架并运行
 

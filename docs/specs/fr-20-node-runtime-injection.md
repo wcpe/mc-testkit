@@ -4,7 +4,7 @@
 
 ## 1. 背景与目标
 
-v0.4.2 已能经 `dependencies { }` 向后端注入被测 / 依赖插件，并能经全局 `MC_TESTKIT_E2E_SERVER_TEMPLATE_DIR` 给后端铺模板；但节点声明本身不能携带运行期环境，代理也没有专属插件注入与模板入口。下游 Beacon 需要在真实 BungeeCord 代理中加载其代理侧插件，并让不同 backend / proxy 收到各自配置，当前契约无法表达。
+v0.4.2 已能经 `dependencies { }` 向后端注入被测 / 依赖插件，并能经全局 `MC_TESTKIT_E2E_SERVER_TEMPLATE_DIR` 给后端铺模板；但节点声明本身不能携带运行期环境，代理也没有专属插件注入与模板入口。真实消费方需要在真实 BungeeCord 代理中加载其代理侧插件，并让不同 backend / proxy 收到各自配置，当前契约无法表达。
 
 FR-20 在不改变既有 `dependencies { }` 语义的前提下，为 backend / proxy 增加**每节点环境变量与模板目录**，并只为 proxy 增加**代理节点专属插件注入**。所有 v0.4.2 已存在的自动化 E2E 与 serve 启动路径必须接入同一套准备和环境合并规则。该能力阻断下游真实消费者接入，优先级为 P1。
 
@@ -191,7 +191,7 @@ mcTestkit {
 - [x] 全路径接线：覆盖 §3.5 的 4 条 backend 与 3 条 proxy 启动入口，不新增旁路启动器。
 - [x] 单元测试：DSL 记录 / 覆盖、节点隔离、保留前缀、资源解析、模板与权威文件顺序、代理插件注入与冲突。
 - [x] TestKit / 回归测试：旧 DSL 任务注册与执行计划兼容；多工程中插件应用于子工程时，旧全局模板 env 的相对路径仍按显式可控 Gradle 工作目录解析；直连 / 经代理 / 集群 / 压测 / serve 路径均使用节点声明；公共 DSL / 任务中不存在 `provide`。
-- [x] 真实消费者验收：下游 Beacon 以发布候选 v0.5.0 接入真实 BungeeCord，加载代理专属插件并验证 backend / proxy 节点环境与模板生效；证据见 §5。
+- [x] 真实消费者验收：下游消费方以发布候选 v0.5.0 接入真实 BungeeCord，加载代理专属插件并验证 backend / proxy 节点环境与模板生效；证据见 §5。
 - [x] 实现完成后文档同步：API、ARCHITECTURE、PRD 交付状态、CHANGELOG；本规格阶段不提前更新当前真貌文档或 CHANGELOG。
 
 ## 5. 验收标准
@@ -204,7 +204,7 @@ mcTestkit {
 - **[自动] 代理准备**：三条代理路径每次均清理可重建目录，再铺模板、写权威配置、注入该节点插件后启动；模板同名配置不能改写框架端口 / 路由 / forwarding；代理 A 的插件 / env 不泄漏到代理 B。
 - **[自动] 全路径与收尾回归**：直连、单代理、集群、压测、单 serve、集群 serve 的任务图无环、任务名不变，失败 / 中断仍沿用既有 pid 收尾且端口不残留。
 - **[自动] 无 provide**：源码公共 DSL、生成任务、API 文档与测试夹具中不新增 `provide` 能力；本 FR 不从其它分支移植 provide 代码。
-- [x] **[真实消费 / BungeeCord，已确认]**：Beacon 使用本地 `includeBuild` 加载 v0.5.0 发布候选，原生 BungeeCord 26.1 启动并加载 `BeaconAgentProxy` 与 `BeaconE2EProxy`。`directory` 验证 Paper/backend 与 Bungee/proxy 双 identity 均 active+online、动态 backend 注入、静态 backend 路由保留、`IMPLEMENTATION=BungeeCord`，控制面下线 12 秒后目录仍保留（PASS，134.789 秒）；`override` 两轮独立 `servePaper` 的 inert/filetree/ordering/fail-static 全绿，fail-static 连续 35 秒覆盖 30 秒长轮询（PASS，224.803 秒）。
+- [x] **[真实消费 / BungeeCord，已确认]**：该消费方使用本地 `includeBuild` 加载 v0.5.0 发布候选，原生 BungeeCord 26.1 启动并加载 代理专属桩插件。`directory` 验证 Paper/backend 与 Bungee/proxy 双 identity 均 active+online、动态 backend 注入、静态 backend 路由保留、`IMPLEMENTATION=BungeeCord`，控制面下线 12 秒后目录仍保留（PASS，134.789 秒）；`override` 两轮独立 `servePaper` 的 inert/filetree/ordering/fail-static 全绿，fail-static 连续 35 秒覆盖 30 秒长轮询（PASS，224.803 秒）。
 
 ## 6. 风险 / 待定
 
@@ -212,4 +212,4 @@ mcTestkit {
 - **模板与权威配置冲突**：必须坚持“模板先、框架权威配置后”，否则消费方模板可能悄悄改掉端口 / 路由 / forwarding，造成假阴性或串服。
 - **跨平台环境变量大小写**：Windows 环境名大小写不敏感，保留前缀校验必须不区分大小写；合并测试需覆盖该差异。
 - **代理目录清理**：代理 jar 缓存在运行目录外，`run-proxy` 可整目录重建；若未来出现需保留的代理运行库，应另行明确白名单，不在本 FR 预留抽象。
-- **下游依赖**：Beacon 接入被本 FR 阻断，因此真实 BungeeCord 消费验收是发布 v0.5.0 的门禁，不能仅凭框架自测标记交付。
+- **下游依赖**：该消费方接入被本 FR 阻断，因此真实 BungeeCord 消费验收是发布 v0.5.0 的门禁，不能仅凭框架自测标记交付。

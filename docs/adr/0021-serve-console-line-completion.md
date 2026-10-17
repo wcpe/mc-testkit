@@ -20,7 +20,7 @@
 | 构建跑在守护进程里，**没有终端** | 任务内 `System.console()` 为 `null` |
 | 终端**按行**投递、自己回显、自己处理退格 | pty 下喂 `abc\tdef\n` → 构建侧原样读到该行（含 Tab 与 `ESC[A`）；喂 `pr` + 两个退格 + `\n` → 构建侧只读到 `\n`（退格被终端消掉） |
 | **`inheritIO()` 也拿不到终端** | 同一探针程序：由终端直接启动时 `System.console()` 非空；而在 Gradle 任务里 `inheritIO()` 启动时 `console=false`，且它的输出**根本没到终端**（捕获的终端输出里零次出现），同一任务的管道模式反而能正常回显——守护进程的 stdio 不是用户面前那个终端 |
-| 服务端自己也用不上它的补全 | 管道 stdin 下 Paper 打印 `Advanced terminal features are not available in this environment`（本仓库真机探针与消费者项目 AllinCore 的真实 serve 日志里都能看到该行） |
+| 服务端自己也用不上它的补全 | 管道 stdin 下 Paper 打印 `Advanced terminal features are not available in this environment`（本仓库真机探针与消费方的真实 serve 日志里都能看到该行） |
 | 服务端能给出命令表 | Paper 控制台 `help` **一次**打印全表（1.20.1 实测 91 条含别名）；BungeeCord 26.1 与 Velocity 3.4.0 的控制台**没有** help 命令 |
 
 也就是说：**逐键补全与行内编辑在 Gradle 控制台下达不到**（拿不到按键、也改不了终端模式），但「Tab 落在整行里」这一事实可以被我方利用——补全可以由框架在收到整行后完成。

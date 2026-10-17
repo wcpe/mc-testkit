@@ -8,7 +8,7 @@
 
 `dependencies { }` 的待测插件此前只有两种表达：**环境变量名或路径**（`pluginUnderTest = "…"`，运行期解析）与**不声明**（自测模式：框架按契约默认取本模块 `jar` 任务产物，并自动把 `prepareE2e<Key>` / `e2e<Key>` / `serve<Key>` 接到 `jar` 上）。两者都建立在「产物就是这个模块的 `jar` 任务，或是一个运行期才知道的路径」这一前提上。
 
-有一类消费方不满足该前提：**用 shadow 插件产出 fat jar**，待测产物是 `shadowJar` 而不是 `jar`。它们的 e2e 实际上跑 `shadowJar` 的产物，但 DSL 无法表达「产物来自哪个任务 / 哪个文件集合」，于是只能自己打补丁——真实消费者 TabooLib 的 `e2e-harness` 即如此：
+有一类消费方不满足该前提：**用 shadow 插件产出 fat jar**，待测产物是 `shadowJar` 而不是 `jar`。它们的 e2e 实际上跑 `shadowJar` 的产物，但 DSL 无法表达「产物来自哪个任务 / 哪个文件集合」，于是只能自己打补丁——某真实消费方的 `e2e-harness` 即如此：
 
 - `jar { enabled = false }` 关掉普通 jar，避免自测模式取到错的那个产物；
 - `afterEvaluate { tasks.matching { it.name.startsWith("prepareE2e") }.configureEach { dependsOn(shadowJar) } }` 手工补任务依赖，否则全新检出下 prepare 的前置预检会因产物尚未产出而失败。
@@ -52,7 +52,7 @@
 - **接线由构建图保证**：任务依赖由框架建立，消费方不必再猜任务名，也不会因框架调整注册形态而静默失效（补丁式 `tasks.matching { it.name.startsWith(...) }` 的失效是静默的）。
 - **互斥报错优于优先级仲裁**：两种形式的解析时机与语义都不同，给一个隐含优先级会让「为什么跑的不是我声明的产物」变成排查题；配置期直接失败，问题在最便宜的时刻暴露（口径同 ADR-0015 的「配置期校验坐标」）。
 - **不推翻既有契约**：这是**纯加法**——既有两种表达（字符串声明、自测模式）语义与优先级逐字不变；产物来源是第三条声明路径，不涉任务命名、env 前缀、控制协议与结果文件格式（SemVer minor）。
-- **消费方是具体的**：本次有明确消费方（TabooLib `e2e-harness` 的 shadow fat jar 形态），不是为假想需求预留空壳（守 `.claude/rules/scope-discipline.md`）。
+- **消费方是具体的**：本次有明确消费方（某真实消费方 `e2e-harness` 的 shadow fat jar 形态），不是为假想需求预留空壳（守 `.claude/rules/scope-discipline.md`）。
 - **与「不做坐标形式」不冲突**：坐标形式解决的是「制品**从哪个仓库**取」（ADR-0015 记「待真实需求再加」），产物来源解决的是「制品**由哪个任务产出**」——前者跨网络解析，后者是本地构建产物，两个维度正交（同 [ADR-0016](0016-maven-coordinate-server-jars.md)「`mavenServer` 只决定 jar 从哪来，不影响 `version`」的分维思路）。
 
 ## 后果

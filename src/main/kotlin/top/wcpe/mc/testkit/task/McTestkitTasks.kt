@@ -213,8 +213,18 @@ object McTestkitTasks {
         // ④ 数据驱动：每个场景注册 prepare / e2e（+ bot 时 launch / withBot；+ via 时经代理任务）
         // 显式声明的产物来源（ADR-0025）向下传递，供 prepare / verify / serve 自动接线
         val pluginUnderTestSource = extension.declaredDependencies.pluginUnderTestFiles
+        // 依赖插件的产物来源（ADR-0026）同样向下传递，供 prepare 自动接线
+        val pluginSourceFiles = extension.declaredDependencies.pluginFiles
         extension.declaredScenarios.forEach { scenario ->
-            registerScenarioTasks(project, ctx, topology, scenario, mavenSources, pluginUnderTestSource)
+            registerScenarioTasks(
+                project = project,
+                ctx = ctx,
+                topology = topology,
+                scenario = scenario,
+                mavenSources = mavenSources,
+                pluginUnderTestSource = pluginUnderTestSource,
+                pluginSourceFiles = pluginSourceFiles,
+            )
         }
 
         // ⑤ 持久手测：每个 serve 注册 serve<Key> + stop<Key>Serve（持久手测 serve，ADR-0011）
@@ -225,6 +235,39 @@ object McTestkitTasks {
         // ⑥ 版本矩阵聚合：e2eMatrix<Key> / e2eMatrix<Key>SmokeOnly + mustRunAfter 串行链
         extension.declaredVersionMatrices.forEach { matrix ->
             registerVersionMatrixAggregate(project, matrix)
+        }
+
+        // ⑦ 共享同一后端的场景自动串行（ADR-0026）
+        chainScenariosSharingBackend(project, topology, extension)
+    }
+
+    /**
+     * 让**共用同一后端**的场景自动串行，避免同一条命令里请求多个场景时互相踩踏。
+     *
+     * 问题：一个后端名对应唯一的运行目录（`run-<backendName>`）与端口。共用该后端的两个场景一旦被
+     * 同时请求（`./gradlew e2eA e2eB`），就会并发往同一目录复制服务端运行库（实测
+     * `FileAlreadyExistsException`）、在对方服务端运行期间清空该目录，或争同一端口。这类失败与
+     * `org.gradle.parallel` 无关——Gradle 本就会并行调度没有依赖关系的任务，消费方无从下手。
+     *
+     * 做法见 [sharedBackendOrderEdges]（纯函数，规则与理由都在那里），此处只负责把边落成
+     * `mustRunAfter`。**组间不加约束**：不同后端有独立目录与端口，可以安全并行。
+     *
+     * 与版本矩阵的串行链（[registerVersionMatrixAggregate]）互补：矩阵按版本展开，这里按后端归组。
+     */
+    private fun chainScenariosSharingBackend(
+        project: Project,
+        topology: Topology,
+        extension: McTestkitExtension,
+    ) {
+        val edges = sharedBackendOrderEdges(topology, extension.declaredScenarios)
+        val registered = project.tasks.names
+        edges.forEach { (taskName, afterNames) ->
+            // 各场景形态注册的任务不同（直连 / 经代理 / 集群 / 压测 / 有无 bot），未注册的边直接跳过
+            if (taskName !in registered) return@forEach
+            val existing = afterNames.filter { it in registered }
+            if (existing.isNotEmpty()) {
+                project.tasks.named(taskName).configure { mustRunAfter(existing) }
+            }
         }
     }
 
@@ -299,6 +342,10 @@ object McTestkitTasks {
                 plugins = extension.declaredDependencies.plugins.toList(),
                 pluginUnderTestSelfJar = extension.declaredDependencies.selfJar,
                 mavenPlugins = extension.declaredDependencies.mavenPlugins.toList(),
+                // 产物来源在配置期已解析为具体文件；此处取其路径供执行期注入（ADR-0026）
+                pluginFiles = extension.declaredDependencies.pluginFiles
+                    .flatMap { files -> files.files }
+                    .map { it.absolutePath },
             ),
         )
     }
@@ -439,6 +486,7 @@ object McTestkitTasks {
         scenario: ScenarioSpec,
         mavenSources: MavenCoordinateSources,
         pluginUnderTestSource: FileCollection?,
+        pluginSourceFiles: List<FileCollection> = emptyList(),
     ) {
         // 钩子与场景形态的兼容性在**配置期**校验：不支持的组合直接报错，不静默忽略
         // （静默忽略会让消费方以为初始化生效了，实际没跑，排查成本极高）。
@@ -569,6 +617,8 @@ object McTestkitTasks {
             prepare.get().dependsOn(pluginUnderTestSource)
             verify.get().dependsOn(pluginUnderTestSource)
         }
+        // 依赖插件的产物来源（ADR-0026）：同样自动接线，保证注入前它已构建完成
+        pluginSourceFiles.forEach { prepare.get().dependsOn(it) }
 
         // 有 bot 的场景：一键「启动机器人 + 验证」
         if (launch != null) {

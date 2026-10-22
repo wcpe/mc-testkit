@@ -89,6 +89,11 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
 
 tasks.withType<Test>().configureEach {
     useJUnitPlatform()
+
+    // TestKit 默认的 Gradle 用户主目录会在 build/tmp/test/work/.gradle-test-kit 下再造一份
+    // 约 206M 的 Gradle 缓存（与 test-kit-home 内容相同）。把默认目录也指到共享位置，
+    // 使「未显式设 withTestKitDir 的测试」与「显式设的测试」复用同一份缓存。
+    systemProperty("org.gradle.testkit.dir", layout.buildDirectory.dir("test-kit-home/shared").get().asFile.absolutePath)
 }
 
 // 发布到 maven.wcpe.top；凭据走 Gradle 属性（~/.gradle/gradle.properties）或同名环境变量，不入库

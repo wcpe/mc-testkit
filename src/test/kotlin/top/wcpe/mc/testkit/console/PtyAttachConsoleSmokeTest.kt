@@ -234,10 +234,14 @@ object PtyStubConsole {
     private fun describeProviders(): String = PROVIDER_NAMES.joinToString(",") { name ->
         val outcome = runCatching {
             val provider = TerminalProvider.load(name)
+            // 用 10 参重载：8 参与 11 参版在 JLine 3.30 均已弃用，10 参版是当前推荐签名
+            // （它内部会把 encoding 复制给 stdin/stdout/stderr 再转调 11 参版）。
             val terminal = provider.sysTerminal(
                 "stub",
                 null,
                 false,
+                Charsets.UTF_8,
+                Charsets.UTF_8,
                 Charsets.UTF_8,
                 false,
                 Terminal.SignalHandler.SIG_DFL,

@@ -34,6 +34,16 @@ class DirectE2eResultVerdictFunctionalTest {
     /** 探针 jar 落点（服务端 jar 走既有 `*_JAR` 逃生口指向它）；整个类共享一个。 */
     private val probeJar: File by lazy { createProbeJar() }
 
+    /**
+     * TestKit 的 Gradle 用户主目录；整个类共用一份，不随 `runner()` 调用新建。
+     *
+     * 原先在 [runner] 内按 `System.nanoTime()` 生成路径：每调用一次就多出一个约 188M 的
+     * Gradle 缓存（其中 `generated-gradle-jars` 对所有运行完全一致），单独这个方法就被调用多处。
+     * 现与其余 TestKit 测试共用 [testKitGradleUserHome]；本类只通过 `*_JAR` 覆盖启动服务端，
+     * 不触碰镜像区，故无需额外隔离。
+     */
+    private val testKitDir: File = testKitGradleUserHome
+
     private fun file(relativePath: String): File = File(projectDir, relativePath).apply { parentFile?.mkdirs() }
 
     private fun write(name: String, text: String) = file(name).writeText(text)
@@ -96,7 +106,7 @@ class DirectE2eResultVerdictFunctionalTest {
     private fun runner(vararg arguments: String): GradleRunner =
         GradleRunner.create()
             .withProjectDir(projectDir)
-            .withTestKitDir(File("build/verdict-test-kit-${System.nanoTime()}").canonicalFile)
+            .withTestKitDir(testKitDir)
             .withPluginClasspath()
             .withEnvironment(System.getenv() + mapOf("MC_TESTKIT_E2E_PAPER_JAR" to probeJar.absolutePath))
             .withArguments(arguments.toList())

@@ -6,6 +6,7 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -198,8 +199,11 @@ class ProcessLedgerTest {
             """.trimIndent(),
         )
 
-        val record = ProcessLedger.records(resultsDir).singleOrNull()
-        assertTrue(record != null, "记录可保留用于人工排查（含 key 与端口）")
-        assertFalse(record!!.matchesLiveProcess(), "无从核对身份时必须判定不匹配")
+        // assertNotNull 返回非空值，后续可直接使用，无需 !! 断言
+        val record = assertNotNull(
+            ProcessLedger.records(resultsDir).singleOrNull(),
+            "记录可保留用于人工排查（含 key 与端口）",
+        )
+        assertFalse(record.matchesLiveProcess(), "无从核对身份时必须判定不匹配")
     }
 }

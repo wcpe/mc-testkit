@@ -283,7 +283,7 @@ class BotProcessPlannerTest {
             ),
         )
         assertNotNull(conflict)
-        assertTrue(conflict!!.contains("w-1"), "冲突描述应点出撞车的标识 w-1：$conflict")
+        assertTrue(conflict.contains("w-1"), "冲突描述应点出撞车的标识 w-1：$conflict")
     }
 
     @Test
@@ -301,7 +301,7 @@ class BotProcessPlannerTest {
             ),
         )
         assertNotNull(conflict)
-        assertTrue(conflict!!.contains("用户名"), "应为用户名冲突：$conflict")
+        assertTrue(conflict.contains("用户名"), "应为用户名冲突：$conflict")
     }
 
     @Test

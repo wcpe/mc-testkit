@@ -227,7 +227,10 @@ class NodeRuntimeInjectionFunctionalTest {
             }
             """.trimIndent(),
         )
-        val testKitDirectory = File("build/node-runtime-injection-test-kit-${System.nanoTime()}").canonicalFile.apply { mkdirs() }
+        // 与其余 TestKit 测试共用同一 Gradle 主目录：其中约 188M 的 generated-gradle-jars
+        // 对所有运行完全一致，按用例新建只会反复复制。本用例两次 runner 复用同一份，
+        // 故下方 `canonicalPath` 断言仍成立。
+        val testKitDirectory = testKitGradleUserHome.apply { mkdirs() }
         GradleRunner.create()
             .withProjectDir(projectDir)
             .withTestKitDir(testKitDirectory)

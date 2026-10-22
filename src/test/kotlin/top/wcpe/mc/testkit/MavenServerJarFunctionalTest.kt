@@ -2,6 +2,7 @@ package top.wcpe.mc.testkit
 
 import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -32,8 +33,29 @@ class MavenServerJarFunctionalTest {
     @TempDir
     lateinit var projectDir: File
 
-    /** TestKit 的 Gradle 用户主目录（镜像落点相对它推导）；放 build/ 下避免 @TempDir 清理与守护进程锁冲突。 */
-    private val testKitDir: File = File("build/maven-server-test-kit-${System.nanoTime()}").canonicalFile
+    /**
+     * TestKit 的 Gradle 用户主目录（镜像落点相对它推导）；放 build/ 下避免 @TempDir 清理与守护进程锁冲突。
+     *
+     * 用固定路径而非时间戳：该目录内 ~188M 的 `generated-gradle-jars` 对所有运行完全相同，
+     * 按用例新建只会把同一份文件反复复制进 build/，实测可累积到数 GB。
+     *
+     * 整个测试套件共用一份（见 [testKitGradleUserHome]），因为该缓存内容与测试内容无关；
+     * 用例间的隔离由下方的镜像区清理保证，不靠独立目录。
+     */
+    private val testKitDir: File = testKitGradleUserHome
+
+    /**
+     * 每个用例先清空镜像区（`caches/mc-testkit-jars`），但保留其外的 Gradle 缓存。
+     *
+     * 共享 `testKitDir` 后必须做这一步：多个用例复用同一坐标，且
+     * `preferJarOverrideOverMavenServerCoordinate`（断言无镜像）、
+     * `serverTaskFailsAtConfigurationCacheStoreWhenMirrorMissing`（断言解析失败）都依赖「镜像不存在」，
+     * 前序用例留下的镜像会让它们假通过或假失败。
+     */
+    @BeforeEach
+    fun clearMirrorArea() {
+        File(testKitDir, "caches/mc-testkit-jars").deleteRecursively()
+    }
 
     private fun file(relativePath: String): File = File(projectDir, relativePath).apply { parentFile?.mkdirs() }
 

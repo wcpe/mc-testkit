@@ -399,16 +399,22 @@ bot 先起、后端后起，不存在「全部节点已就绪」的时刻。在�
 
 > **桩怎么知道写哪**：编排起后端时经 `MC_TESTKIT_E2E_SCENARIO` / `MC_TESTKIT_E2E_RESULT_FILE`（§3.3）下发场景与结果文件绝对路径；桩优先读这两个 env（覆盖自身配置默认），把结果写到 `RESULT_FILE` = verify 读取处。这样通用编排无需知道各消费方桩的配置格式即可对齐结果位置。`template/harness` 已按此实现。
 >
+> **取证（probe）与断言（assertion）必须分开——这是踩过的坑**：注册断言（`registerServerAssertion`）一旦返回 `pass`，基类就写结果文件并**关服**，那是判定的正确语义。但如果把「只想看一眼」的取证也注册成断言，它会抢先写出 `PASS`、关掉服务端，于是机器人随后上报的真实 `FAIL` 打在了已关闭的服务端上，**根本到不了**——真实失败被自己的取证结论洗成了通过。
+>
+> 真机上发生过：一个恒 PASS 的名字解析探针掩盖了「状态挂不上」的失败，多次「全绿」里含假绿。这种假通过比直接失败危险得多——它看起来是好的。
+>
+> 因此取证必须走 `registerProbe`：结果只经 `E2E_PROBE_RESULT:<name>:<text>` 回显给触发者，**不写结果文件、不关服**，判定权完全留在机器人/编排那一侧。
+
 > **须原子落盘**：桩写结果文件必须**原子**完成（写同目录临时文件 + 原子 rename 替换），避免编排 verify 读到「写了一半」的结果文件而误判。单后端前台路径靠「后端进程退出后才 verify」时序天然隔离，但集群/压测轮询结果文件、以及消费方桩异步写时存在并发窗口，故约定为契约。共享库 `harness-core` 的 `McTestkitResultWriter` 已按此实现；`template/harness` 继承 `McTestkitHarnessPlugin` 即获得该保证（消费方自写桩须照此保证，见 §4）。
 
 ## 4. 共享构件（FR-09，ADR-0014）
 
 桩与机器人的协议胶水以可发布构件提供，消费方依赖构件而非照抄 / 手写（见 docs/specs/fr-09-shared-harness-bot.md）：
 
-- **`harness-core`**：`top.wcpe.mc:harness-core:0.1.1`（Maven，maven.wcpe.top）。纯 Java、零 Kotlin 依赖、**Java 8 字节码**（兼容 Paper 1.7.10–1.21 多版本烟雾）、paper-api 仅 compileOnly。提供 `McTestkitEnv`（契约 env 常量 / 读取 / serve 空闲判断）、`McTestkitProtocol`（冻结控制协议常量）、`McTestkitResultWriter`（结果文件原子写出）、`McTestkitHarnessPlugin`（Bukkit 抽象基类：场景/结果文件解析、serve 空闲短路、判定收尾、E2E_READY、Paper/Folia 兼容调度）。模板 `plugin.yml` **不声明 `api-version`**（声明 1.20 会拒载旧版，声明 1.8 会被 1.20+ 拒绝）。
+- **`harness-core`**：`top.wcpe.mc:harness-core:0.2.0`（Maven，maven.wcpe.top）。纯 Java、零 Kotlin 依赖、**Java 8 字节码**（兼容 Paper 1.7.10–1.21 多版本烟雾）、paper-api 仅 compileOnly。提供 `McTestkitEnv`（契约 env 常量 / 读取 / serve 空闲判断）、`McTestkitProtocol`（冻结控制协议常量）、`McTestkitResultWriter`（结果文件原子写出）、`McTestkitHarnessPlugin`（Bukkit 抽象基类：场景/结果文件解析、serve 空闲短路、判定收尾、E2E_READY、Paper/Folia 兼容调度、按世界投递 `runOnWorldThread`）。模板 `plugin.yml` **不声明 `api-version`**（声明 1.20 会拒载旧版，声明 1.8 会被 1.20+ 拒绝）。
 - **`@wcpe/mc-testkit-bot`**：`@wcpe/mc-testkit-bot@0.1.0`（npm）。mineflayer 公共内核 `runBot({ scenarios })`（端口探测 / 重试 / action 分发 / 断线重连 / 优雅收尾），子路径 `@wcpe/mc-testkit-bot/lib/{messages,random,normalize,env}`。
 
-**消费方接线**：桩插件 `implementation("top.wcpe.mc:harness-core:0.1.1")`（打进插件 jar），继承 `McTestkitHarnessPlugin` 写业务场景；机器人 `npm i @wcpe/mc-testkit-bot`，入口登记 action → 场景驱动表。`template/` 是这两个构件的示例消费者。
+**消费方接线**：桩插件 `implementation("top.wcpe.mc:harness-core:0.2.0")`（打进插件 jar），继承 `McTestkitHarnessPlugin` 写业务场景；机器人 `npm i @wcpe/mc-testkit-bot`，入口登记 action → 场景驱动表。`template/` 是这两个构件的示例消费者。
 
 ## 5. 编程 API：复用下载/运行基建（FR-23，ADR-0017）
 

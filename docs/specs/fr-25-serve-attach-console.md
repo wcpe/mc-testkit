@@ -1,6 +1,6 @@
 # 功能规格：serve 附加控制台（PTY，原版控制台体验）
 
-> 状态：实现完成（待发版）　·　关联 PRD：FR-25　·　关联决策：[ADR-0023](../adr/0023-windows-pty4j-console.md)（取代 ADR-0022 的 POSIX-only 实现）　·　依赖：FR-17（serve 内核）
+> 状态：已交付@v0.15.0　·　关联 PRD：FR-25　·　关联决策：[ADR-0023](../adr/0023-windows-pty4j-console.md)（取代 ADR-0022 的 POSIX-only 实现）　·　依赖：FR-17（serve 内核）
 
 ## 1. 背景与目标
 

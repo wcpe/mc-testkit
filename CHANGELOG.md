@@ -4,6 +4,16 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+
+- **工程评估完成后才应用插件时整个构建配置期失败**：`McTestkitPlugin.apply` 无条件调用 `project.afterEvaluate { … }`。当本工程**已经**评估完成时才被应用（消费方在 `gradle.projectsEvaluated` / 其它工程的 `afterEvaluate` 里 apply，或基座构建晚挂载插件），Gradle 会直接拒绝并抛 `Cannot run Project.afterEvaluate(Action) when the project is already evaluated.`，构建在配置期就崩在插件内部，报错信息与本框架毫无关系、归因成本高。现改为**先判时机**：`project.state.executed` 为真（已评估）时立即执行装配动作，否则才挂 `afterEvaluate`。两条路径共用同一个装配动作，语义一致——`mcTestkit { }` 在已评估的场景下本就没有后续求值机会，声明此时即最终态。回归锚见 `McTestkitPluginFunctionalTest.applyAfterProjectEvaluatedRegistersTasks`（修复前该用例稳定失败，报的正是上面那句 Gradle 错误）。
+
+### 说明
+
+- **`acceptance-driver` 的 `compileTestKotlin` 任务图里出现 `:ui:ui-server:test` 与本插件无关**：该边来自消费方脚本自身的 `:platform:bukkit:plugin` 里 `tasks.named<Jar>("jar") { dependsOn(":ui:ui-server:test") }`（「打 Bukkit 包前先跑内置 UI/HUD 编译回归」），而 `acceptance-driver` 以 `compileOnly(project(":platform:bukkit:plugin"))` 引用主插件模块，于是 `compileTestKotlin → compileKotlin → plugin:jar → plugin:taboolibMainTask → ui:ui-server:test` 被连带拉入。本插件源码对 `testClasses` / `sourceSets` / `runtimeClasspath` **零引用**，且实测把 `id("top.wcpe.mc-testkit")` 从 `acceptance-driver` 与 `plugin` 两处都注释掉后该任务**仍在图中**（1 → 1），而单注释消费方那行 `dependsOn` 后立刻消失（1 → 0）——**归因确定在消费方脚本，不在本框架**。详见本次任务报告的证据链。
+
 ## [0.16.0] - 2026-10-17
 
 ### 新增

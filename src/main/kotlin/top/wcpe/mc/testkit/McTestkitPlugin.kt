@@ -18,8 +18,9 @@ import java.io.File
  * [McTestkitTasks] 按扩展声明**数据驱动**地注册 e2e 任务（prepare / e2e / 经代理 / 启动机器人 /
  * withBot / 固定名缓存任务），接入已落地各包（provision / serverconfig / bot / verify）。
  *
- * 任务注册放 `afterEvaluate`：消费方 `mcTestkit { }` 在 `apply` 之后才求值，须等其声明就绪再解析
- * 拓扑并注册任务（配置期校验失败抛**中文** `GradleException`）。任务体的副作用全在 `doLast`，
+ * 任务注册默认放 `afterEvaluate`：消费方 `mcTestkit { }` 在 `apply` 之后才求值，须等其声明就绪再解析
+ * 拓扑并注册任务（配置期校验失败抛**中文** `GradleException`）。**若本工程已评估完成**（晚挂载场景）
+ * 则改为 apply 期立即装配，避免 Gradle 拒绝「已评估后再 afterEvaluate」。任务体的副作用全在 `doLast`，
  * 配置期只注册不执行（真实起服 / 起代理 / 起 bot 判定属 首个消费者验证 实机维度）。
  */
 class McTestkitPlugin : Plugin<Project> {
@@ -31,12 +32,23 @@ class McTestkitPlugin : Plugin<Project> {
         extension.runRoot = project.layout.buildDirectory.dir(McTestkitRunDirectories.WORK_DIR_NAME)
         // 依赖声明的产物来源解析能力：spec 只承载声明、不持有 Project（ADR-0025）
         extension.declaredDependencies.fileResolver = { project.files(it) }
-        // 等 mcTestkit { } 声明就绪后，按拓扑数据驱动注册任务（含配置期校验，任务自动编排）
-        project.afterEvaluate {
+        // 装配动作：等 mcTestkit { } 声明就绪后再解析拓扑并注册任务（含配置期校验，任务自动编排）
+        val assembleTasks = Runnable {
             applyPluginUnderTestDeclaration(project, extension)
             // 版阵先展开为 backend + scenario，再走统一拓扑校验与任务注册
             VersionMatrixExpander.expandAll(extension)
             McTestkitTasks.register(project, extension)
+        }
+        // 正常时机：工程尚未评估完，挂 afterEvaluate 等 mcTestkit { } 求值。
+        // 边界时机：本工程**已经**评估完成（例如消费方在 projectsEvaluated / 其它工程的
+        // afterEvaluate 里才 apply 本插件，或基座构建晚挂载）——此时再调 afterEvaluate 会被
+        // Gradle 直接拒绝并抛「Cannot run Project.afterEvaluate(Action) when the project is
+        // already evaluated.」，整个构建配置期失败。故先按 projectState 判时机：已评估则立即装配
+        // （`mcTestkit { }` 已无后续求值机会，声明此时即最终态），未评估才挂 afterEvaluate。
+        if (project.state.executed) {
+            assembleTasks.run()
+        } else {
+            project.afterEvaluate { assembleTasks.run() }
         }
     }
 

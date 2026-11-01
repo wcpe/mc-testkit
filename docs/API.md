@@ -318,8 +318,11 @@ dependencies {
 - `E2E_STRESS_RESULT:ok=<n>,err=<n>,…`：压测机器人向桩上报汇总。
 - `E2E_DISCONNECT_NOW:<…>`：触发机器人在购买中主动断线（中断恢复场景）。
 - `E2E_UI_TOKEN:<uuid>`：经插件消息 UI 通道驱动时下发的会话 token。
+- `E2E_ASSERT:<name>`：机器人触发一条**服务端断言**（桩据结果自行写 PASS/FAIL 并关服）。
+- `E2E_ASSERT_DONE:<name>:<outcome>`：桩回报断言已执行完毕（仅回执用，不替代结果文件）。
+- `E2E_PROBE_RESULT:<name>:<text>`：桩回报一条**取证**的只读结果——**不写结果文件、不关服**，判定权留在机器人/编排侧。
 
-> 以上 4 条为**冻结的框架核心协议**。集群 / 崩溃接管等场景的桩↔bot 还可约定**场景特定标记**——如 `template/harness` 里 bot 到达 / 落到目标后端后发的「到达确认」标记 `E2E_CLUSTER_ARRIVED`，及崩溃接管（FR-15）示例里 bot 触发默认后端模拟宕机的 `E2E_TRIGGER_CRASH`（桩收到即 `Runtime.halt`）——均属 template / 消费方约定、**不进**冻结协议；真实跨服一致性 / 接管判定由消费方桩按业务替换。
+> 以上 7 条为**冻结的框架核心协议**。集群 / 崩溃接管等场景的桩↔bot 还可约定**场景特定标记**——如 `template/harness` 里 bot 到达 / 落到目标后端后发的「到达确认」标记 `E2E_CLUSTER_ARRIVED`，及崩溃接管（FR-15）示例里 bot 触发默认后端模拟宕机的 `E2E_TRIGGER_CRASH`（桩收到即 `Runtime.halt`）——均属 template / 消费方约定、**不进**冻结协议；真实跨服一致性 / 接管判定由消费方桩按业务替换。
 
 ### 3.5 场景生命周期钩子（FR-24，ADR-0020）
 

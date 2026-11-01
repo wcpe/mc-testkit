@@ -163,8 +163,23 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
      * @param body 取证体：返回一段给人读的说明
      */
     protected final void registerProbe(String name, java.util.function.Supplier<String> body) {
-        probes.putIfAbsent(name, body);
-        if (probes.get(name) != body) {
+        // 与 registerServerAssertion 对齐：空名 / 空体在登记期就拒绝，而不是等到机器人触发时
+        // 才炸在 putIfAbsent 的 NPE 上（那会把"登记写错"伪装成"服务端异常"）。
+        if (name == null || name.trim().isEmpty()) {
+            throw new IllegalArgumentException("取证名不得为空白——空名字无法被机器人触发，也就永远不会有结果");
+        }
+        if (body == null) {
+            throw new IllegalArgumentException("取证体不得为 null——登记一条空取证等于承诺一个永远不会到来的结果");
+        }
+        // 与断言共用命名空间：handleAssertionChat 先查 probes 再走断言，若同名两边都登记成功，
+        // 断言会被取证永久遮蔽——机器人发 E2E_ASSERT:<name> 却只收到取证回显，断言体次次不执行，
+        // 表象是"断言永远超时"。故此处跨表查重，让冲突在登记期（onEnable）就暴露。
+        if (assertions.find(name) != null) {
+            throw new IllegalArgumentException(
+                "取证名「" + name + "」与已登记的服务端断言重名——二者共用触发前缀，"
+                    + "同名会让该断言永远不被执行（取证优先分流），因此直接拒绝");
+        }
+        if (probes.putIfAbsent(name, body) != null) {
             throw new IllegalArgumentException("取证名「" + name + "」已被登记，不允许重复登记");
         }
     }

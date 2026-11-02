@@ -1,6 +1,8 @@
 package top.wcpe.mc.testkit.task
 
 import org.gradle.api.GradleException
+import top.wcpe.mc.testkit.config.MinecraftVersionGroup
+import top.wcpe.mc.testkit.config.OpsJson
 import top.wcpe.mc.testkit.config.PaperConfigAdapter
 import top.wcpe.mc.testkit.config.ServerProperties
 import top.wcpe.mc.testkit.config.editYaml
@@ -11,10 +13,15 @@ import top.wcpe.mc.testkit.topology.ResolvedProxy
 import java.io.File
 import java.util.Locale
 
-/** 已预检的单个后端运行时资源。 */
+/** 已预检的单个后端运行时资源。
+ *
+ * @property opNames 该后端起服前要提为原版 OP 的 bot 用户名（空表示不提权；ADR-0027）。
+ *   由调用方按场景 bot 声明派生后传入，本类不自行推导用户名。
+ */
 internal data class BackendRuntimeResources(
     val templateDirectory: File?,
     val dependencyJars: List<ResolvedPluginJar>,
+    val opNames: List<String> = emptyList(),
 )
 
 /** 已预检的单个代理运行时资源。 */
@@ -140,7 +147,12 @@ internal fun composeNodeJvmArgs(
     agentArgs: List<String>,
 ): List<String> = frameworkArgs + configuredArgs + agentArgs
 
-/** 后端顺序：清理可重建内容 → 铺模板 → 写权威基础配置 → 注入 dependencies。 */
+/**
+ * 后端顺序：清理可重建内容 → 铺模板 → 写权威基础配置 → 写 bot 提权 `ops.json` → 注入 dependencies。
+ *
+ * `ops.json` 必须在注入 dependencies **之前**、且必然在起服前落盘：服务端只在启动时读它，
+ * 晚写等于本轮不提权（ADR-0027）。
+ */
 internal fun stageBackendRuntime(
     runDirectory: File,
     backend: ResolvedBackend,
@@ -165,7 +177,27 @@ internal fun stageBackendRuntime(
         logger("已铺后端 ${backend.name} 模板：${template.absolutePath} → ${runDirectory.name}")
     }
     writeBackendAuthority(runDirectory, backend)
+    writeBotOps(runDirectory, backend, resources.opNames, logger)
     injectBackendDependencies(runDirectory, resources.dependencyJars, logger)
+}
+
+/**
+ * 写 bot 提权 `ops.json`（原版 OP 提权，ADR-0027）。
+ *
+ * **1.7.10 等不支持 bot 的版本静默跳过、不打日志**：该版本没有 bot 也就没有要提权的对象，属既定行为
+ * （见 ADR 决策一），不必用一条告警制造噪音。
+ */
+private fun writeBotOps(
+    runDirectory: File,
+    backend: ResolvedBackend,
+    opNames: List<String>,
+    logger: (String) -> Unit,
+) {
+    if (opNames.isEmpty() || !MinecraftVersionGroup.isBotSupported(backend.version)) return
+    val added = OpsJson.write(runDirectory, opNames)
+    if (added.isNotEmpty()) {
+        logger("已为后端 ${backend.name} 写入 bot OP：${added.joinToString("、")}（${OpsJson.FILE_NAME}）")
+    }
 }
 
 /** 代理顺序：整目录清理 → 铺模板 → 写权威配置 → 平台准备 → 注入代理专属插件。 */

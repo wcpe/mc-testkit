@@ -83,6 +83,37 @@ object BotProcessPlanner {
         return null
     }
 
+    /**
+     * 取该组 bot 声明中开启 `op = true` 的**全部进程用户名**（原版 OP 提权，ADR-0027）。
+     *
+     * 以 [expand] 为唯一真源派生用户名，保证写进 `ops.json` 的名字与「实际起进程时用的 username」一致——
+     * 自己另算一遍会漂移，而 OP 条目对不上人时服务端静默无视，表现为「命令还是没权限」。
+     * `count > 1` 的同质复制因此自然展开成 N 个名字。
+     */
+    fun opUsernames(scenarioName: String, bots: List<BotSpec>): List<String> =
+        expand(scenarioName, bots.filter { it.op }).map { it.username }.distinct()
+
+    /** 压测 bot 的用户名基名：显式 `username` > 该场景的 action（与压测起进程处的派生规则同源）。 */
+    fun stressUsernameBase(action: String, bot: BotSpec): String = bot.username ?: action
+
+    /** 压测单个 bot 进程的用户名（钉服压测：`<基名>_s<服序号>_<bot序号>`）。 */
+    fun stressUsername(baseName: String, serverIndex: Int, botIndex: Int): String = "${baseName}_s${serverIndex}_$botIndex"
+
+    /**
+     * 压测场景开启 `op = true` 时**每个后端**要提权的全部用户名（N 服 × M bot）。
+     *
+     * 压测的每服 bot 都用同一套派生规则（见 [stressUsername]），故各后端 `ops.json` 内容相同。
+     *
+     * @param action 该场景的 bot action（`bot.action ?: 场景名`，由调用方解析）。
+     */
+    fun stressOpUsernames(action: String, bot: BotSpec, serverCount: Int, botsPerServer: Int): List<String> {
+        if (!bot.op) return emptyList()
+        val baseName = stressUsernameBase(action, bot)
+        return (1..serverCount)
+            .flatMap { serverIndex -> (1..botsPerServer).map { botIndex -> stressUsername(baseName, serverIndex, botIndex) } }
+            .distinct()
+    }
+
     /** 展开单个 [BotSpec]：`count=1` 一项，`count>1` 复制成 N 项（各唯一 username / key / index）。 */
     private fun expandOne(scenarioName: String, bot: BotSpec): List<BotProcessPlan> {
         // action 默认：显式 action > role > 场景名（保持单 bot 旧默认 `action ?: scenarioName`）

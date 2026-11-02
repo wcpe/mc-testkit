@@ -11,6 +11,7 @@ const runContinuousStress = require('./scenarios/continuousStress')
 const runMultiBot = require('./scenarios/multiBot')
 const runCrashTakeover = require('./scenarios/crashTakeover')
 const runNetworkForensics = require('./scenarios/networkForensics')
+const runExecCommandDemo = require('./scenarios/execCommandDemo')
 
 runBot({
   scenarios: {
@@ -19,6 +20,8 @@ runBot({
     'continuous-stress': runContinuousStress,
     'multi-bot': runMultiBot,
     'crash-takeover': runCrashTakeover,
-    'network-forensics': runNetworkForensics
+    'network-forensics': runNetworkForensics,
+    // 示范「服务端 console 身份执行命令」：走插件消息命令通道（FR-31），不需要 bot 有 OP
+    'exec-command-demo': runExecCommandDemo
   }
 })

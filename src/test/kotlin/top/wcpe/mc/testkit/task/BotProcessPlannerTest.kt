@@ -316,4 +316,73 @@ class BotProcessPlannerTest {
             ),
         )
     }
+
+    // ── opUsernames：bot 原版 OP 提权的用户名派生（ADR-0027）──
+
+    @Test
+    @DisplayName("未开启 op 的 bot 不应产生任何提权用户名")
+    fun opUsernamesEmptyWhenOpDisabled() {
+        val names = BotProcessPlanner.opUsernames(
+            "smoke",
+            listOf(bot("admin") { username = "Admin" }, bot { username = "P" }),
+        )
+
+        assertTrue(names.isEmpty(), "默认 op=false 时不应提权任何用户名：$names")
+    }
+
+    @Test
+    @DisplayName("开启 op 的 bot 应按实际起进程用的用户名提权（含 role / action 兜底）")
+    fun opUsernamesMatchActualProcessUsernames() {
+        // 显式 username 优先，其次 role，再次 action，最后场景名——与实际起进程的派生完全同源
+        val bots = listOf(
+            bot("admin") {
+                username = "Admin"
+                op = true
+            },
+            bot("worker") { op = true },
+            bot {
+                action = "buy-success"
+                op = true
+            },
+        )
+
+        assertEquals(listOf("Admin", "worker", "buy-success"), BotProcessPlanner.opUsernames("smoke", bots))
+    }
+
+    @Test
+    @DisplayName("count > 1 的 op bot 应展开成 N 个提权用户名")
+    fun opUsernamesExpandReplicatedBot() {
+        val names = BotProcessPlanner.opUsernames(
+            "g16",
+            listOf(
+                bot {
+                    username = "P"
+                    count = 3
+                    op = true
+                },
+            ),
+        )
+
+        assertEquals(listOf("P1", "P2", "P3"), names, "同质复制应展开成与进程一一对应的用户名")
+    }
+
+    @Test
+    @DisplayName("压测开启 op 时应按每服每 bot 派生提权用户名，未开启则为空")
+    fun stressOpUsernamesFollowStressNaming() {
+        val action = "continuous-stress"
+        val enabled = bot {
+            username = "P"
+            op = true
+        }
+
+        assertEquals(
+            listOf("P_s1_1", "P_s1_2", "P_s2_1", "P_s2_2"),
+            BotProcessPlanner.stressOpUsernames(action, enabled, serverCount = 2, botsPerServer = 2),
+            "压测提权用户名应与实际起进程的 <基名>_s<服序号>_<bot序号> 一致",
+        )
+        assertTrue(
+            BotProcessPlanner.stressOpUsernames(action, bot { username = "P" }, 2, 2).isEmpty(),
+            "未开启 op 的压测 bot 不应提权",
+        )
+    }
 }

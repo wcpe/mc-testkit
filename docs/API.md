@@ -129,7 +129,34 @@ mcTestkit {
 
 节点 `env(...)` 的名称不能为空、不得含等号或空字符，也不得以 `MC_TESTKIT_E2E_` 开头（大小写不敏感）；该保留前缀限制不影响把同前缀字符串用于 `plugin(...)` / `templateDirectory(...)` 的资源定位。子进程环境优先级固定为**宿主环境 < 节点环境 < 框架权威环境**；后端节点环境只进入对应后端，代理节点环境只进入对应代理，`ServerLauncher` 启动日志不输出环境值。
 
-> 平台枚举只含后端 Paper/Folia/Spigot、代理 Velocity/Waterfall/BungeeCord，不含 Bukkit/Sponge（不列入计划，见 ADR-0013）。DSL 字段细节可能随 FR-03/04 在 `dsl/` 包内微调，但四个顶层块形态已冻结。集群（FR-10）经 scenario 块**加法新增** `backends(...)` 声明、压测（FR-11）加 `stress {}` 维度，均为加法扩展，不新增顶层块、不改既有字段语义（ADR-0008）。单场景多 bot（FR-16）经 **bot 声明加法扩展**：一个场景可声明多个 bot——具名 `bot("角色") { }`（异质，各自 `username`/`action`/`env`）与 `bot { count = N }`（同质复制 N 份），复用既有 env / 任务名、不新增顶层块；同场景声明 ≥2 个 bot 时每个须有唯一角色名，`count` 须 >0，压测场景禁用 `count`/多 bot（规模用 `botsPerServer`），违反配置期中文报错（ADR-0009）。
+**bot 原版 OP 提权（`bot { op = true }`，FR-29，[ADR-0027](adr/0027-bot-command-channels.md)）**：`BotSpec` 新增显式开关 `op`，默认 `false`。开启后框架在**起服前**按该 bot 的用户名写后端运行目录的 `ops.json`，机器人就能以**普通玩家身份**执行需要权限的命令，且完整走一遍服务端的玩家权限检查路径（`PlayerCommandPreprocessEvent`、权限节点校验、指令拦截都会真的被过一遍）：
+
+```kotlin
+scenario("admin-flow") {
+    backend = "s1"
+    bot("admin") {
+        username = "Admin"
+        op = true               // 该 bot 以 OP 身份入服
+    }
+}
+
+// 同质复制同样生效：count = 4 会展开成 4 个用户名，全部提权
+scenario("batch-admin") {
+    bot { username = "P"; action = "admin-batch"; count = 4 }
+}
+```
+
+- **写什么**：`{"uuid":"…","name":"<用户名>","level":4,"bypassesPlayerLimit":true}`。`uuid` 按离线模式算法派生（`MD5("OfflinePlayer:<name>")`，带连字符小写、version 3 / IETF variant）。写错会被服务端**静默忽略**——不报错、不告警，只是命令仍然没权限，所以框架替你算。
+- **用哪个名字**：与实际起进程用的 `…BOT_USERNAME` **同源**（显式 `username` > 角色名 > action > 场景名；`count > 1` 展开成 `<基名><序号>`），无需自己推导。
+- **覆盖范围**：直连 / 经代理 / 集群 / 压测的**每个后端**各写一份（集群 / 压测有 N 个后端就有 N 份 `ops.json`；压测的用户名形如 `<基名>_s<服序号>_<bot序号>`）。
+- **合并而非覆盖**：消费方模板自带 `ops.json` 时保留其**全部原有条目**（含字段值），只追加缺失的 bot 条目——覆盖会静默剥夺已有的 OP。若已有文件顶层不是 JSON 数组，起服前以中文错误拦下，不静默覆盖。
+- **1.7.10 静默跳过**：该版本本身不支持 bot（`MinecraftVersionGroup.isBotSupported` 为 false），没有 bot 也就没有要提权的对象，不写文件也不打日志。
+- **权限是显式开关而非默认全开**：默认提权会静默放大权限、掩盖「这个场景其实不该需要 OP」这一信息；代价是忘了开就会遇到服务端的「你没有权限」——报错来自服务端、指向明确。
+- **边界**：`ops.json` 是三端通用格式，本次只保证 Paper / Folia（受测的后端平台）；运行期手工改它会被下一轮 prepare 覆盖回来（运行目录每轮重铺的既有语义）。
+
+> 需要 **console 身份**或**结构化命令结果**时用另一条通道（FR-30/31 的 `E2E_CMD` 协议与 `execCommand`）：OP 走玩家权限路径，console 通道走服务端权限，两者互补、不能互相替代。
+
+> 平台枚举只含后端 Paper/Folia/Spigot、代理 Velocity/Waterfall/BungeeCord，不含 Bukkit/Sponge（不列入计划，见 ADR-0013）。DSL 字段细节可能随 FR-03/04 在 `dsl/` 包内微调，但四个顶层块形态已冻结。集群（FR-10）经 scenario 块**加法新增** `backends(...)` 声明、压测（FR-11）加 `stress {}` 维度，均为加法扩展，不新增顶层块、不改既有字段语义（ADR-0008）。单场景多 bot（FR-16）经 **bot 声明加法扩展**：一个场景可声明多个 bot——具名 `bot("角色") { }`（异质，各自 `username`/`action`/`env`）与 `bot { count = N }`（同质复制 N 份），复用既有 env / 任务名、不新增顶层块；同场景声明 ≥2 个 bot 时每个须有唯一角色名，`count` 须 >0，压测场景禁用 `count`/多 bot（规模用 `botsPerServer`），违反配置期中文报错（ADR-0009）。bot 原版 OP 提权（FR-29）同属 bot 声明**加法扩展**：新增一个默认关闭的 `op` 开关，不改既有字段语义、不新增任务名（ADR-0027）。
 
 > **持久手测 serve（FR-17，ADR-0011）经新增第 5 个顶层块** `serve("name") { backend = …; via = … }` 引入：声明「把后端（+ 可选经代理）拉起并**挂住**供真人客户端手测」。这是 DSL 由「四块」演进为「五块」的**加法、非破坏**变更（既有声明不受影响，按 SemVer minor；不改既有四块语义）。与 `scenario` 区别：serve **不跑 bot、不判 PASS/FAIL**，只起服并阻塞到手动停。`backend` 省略=默认/单后端，`via` 省略=直连（设了 `via` 则该代理须 `routesTo` 目标后端，配置期校验）。声明 `backends(...)`（与 `backend` 互斥、须配 `via`）即**集群 serve**（FR-18）：N 后端 + 代理整套挂起，真人经代理 `/server` 切服手测（复用 FR-10 集群编排）。可选 `bot { }` / `bot("角色") { }`（FR-19，多 bot 规则同 FR-16）：serve 起声明的 bot 把环境驱到某状态、**不判定**，挂住「人机混场」让真人同时连入——bot 应是**自驱** action（serve 桩空闲、不发 `E2E_READY`，勿复用等桩 ready 的场景 action）。
 
@@ -321,8 +348,89 @@ dependencies {
 - `E2E_ASSERT:<name>`：机器人触发一条**服务端断言**（桩据结果自行写 PASS/FAIL 并关服）。
 - `E2E_ASSERT_DONE:<name>:<outcome>`：桩回报断言已执行完毕（仅回执用，不替代结果文件）。
 - `E2E_PROBE_RESULT:<name>:<text>`：桩回报一条**取证**的只读结果——**不写结果文件、不关服**，判定权留在机器人/编排侧。
+- `E2E_CMD:<id>:<command>` / `E2E_CMD_DONE:<id>:<PASS|FAIL>:<output>`：console 命令通道（FR-30，见 §3.4.1）。
 
-> 以上 7 条为**冻结的框架核心协议**。集群 / 崩溃接管等场景的桩↔bot 还可约定**场景特定标记**——如 `template/harness` 里 bot 到达 / 落到目标后端后发的「到达确认」标记 `E2E_CLUSTER_ARRIVED`，及崩溃接管（FR-15）示例里 bot 触发默认后端模拟宕机的 `E2E_TRIGGER_CRASH`（桩收到即 `Runtime.halt`）——均属 template / 消费方约定、**不进**冻结协议；真实跨服一致性 / 接管判定由消费方桩按业务替换。
+> 以上 8 条为**冻结的框架核心协议**。集群 / 崩溃接管等场景的桩↔bot 还可约定**场景特定标记**——如 `template/harness` 里 bot 到达 / 落到目标后端后发的「到达确认」标记 `E2E_CLUSTER_ARRIVED`，及崩溃接管（FR-15）示例里 bot 触发默认后端模拟宕机的 `E2E_TRIGGER_CRASH`（桩收到即 `Runtime.halt`）——均属 template / 消费方约定、**不进**冻结协议；真实跨服一致性 / 接管判定由消费方桩按业务替换。
+
+#### 3.4.1 console 命令通道（`E2E_CMD`，FR-30，[ADR-0027](adr/0027-bot-command-channels.md)）
+
+机器人让**服务端以 console 身份**执行一条命令的双向消息，走 Minecraft 自定义 payload（插件消息）而**不走聊天**。
+
+| 方向 | 消息 | 说明 |
+|---|---|---|
+| bot → 桩 | `E2E_CMD:<id>:<command>` | 请求以 console 身份执行 `<command>`；`<id>` 由机器人生成，用于配对 |
+| 桩 → bot | `E2E_CMD_DONE:<id>:<PASS\|FAIL>:<output>` | 执行结果；`<output>` 为单行化的结果说明 / 失败原因 |
+
+**为什么不用聊天**（三条都是通道本身的属性，没有实现技巧能绕过）：聊天有 256 字符硬上限，长命令（带 NBT 的 `/give`、长 `/execute` 链）会被**静默截断**；控制流量会污染其他玩家的聊天记录；测试控制流不该出现在任何玩家屏幕上。
+
+**通道名**：`mc-testkit:cmd`。1.13+ 要求 `namespace:path` 形式的 `Identifier`，1.12 及更早是裸字符串（旧版上限 20 字符）——该名对两段格式都合法，故**同一常量覆盖全部支持版本**。桩基类 `McTestkitHarnessPlugin` 在 `onEnable` 自动注册入站 + 出站通道，消费方**无需任何接线**；覆盖 `onDisable()` 时须调用 `super.onDisable()`（否则重载后同一通道堆积多个注册，一条命令被执行多次）。
+
+**解析规则（必须按此实现）**：请求在**首个**冒号处切出 `<id>`，其余全部是 `<command>`；回执**最多切 4 段**——第 1 段前缀、第 2 段 `<id>`、第 3 段判定、第 4 段 `<output>` 全文。`<output>` 是最后一段，**可以含冒号**（如 `已给予 minecraft:stone x1`），按无上限切分会把它截断成 `stone x1`——这是静默失真。`<output>` 中的换行 / 回车由桩侧压成空格（一条回执不该在日志里断成几行）。
+
+**执行语义与线程**：桩收到请求后**投主线程**执行 `server.dispatchCommand(server.getConsoleSender(), command)`（命令会读写世界对象，Folia 上跨线程直接抛线程检查异常、Paper 的 `AsyncCatcher` 也会拦），回执也在主线程发。`<PASS>` 只表示「命令被服务端接受并执行」（`dispatchCommand` 返回 `true`），**不表示**「世界状态已符合预期」——后者是服务端断言要回答的问题。
+
+**`<output>` 的限制（如实说明，不假装能拿到全部输出）**：服务端把命令输出写给传入的 `CommandSender`，而 console 发送者的实现是直接 `System.out.println`，方法内没有可拦截的接缝；换成自定义包装 sender 也不行——Paper 的 `VanillaCommandWrapper.getListener` 只认实体 / 方块 / 远程控制台 / console / 代理 sender 这几种具体类型，遇到别的类型直接抛 `IllegalArgumentException`，那样连命令都跑不起来。因此这里的 `<output>` 是**执行结果说明**：命令未被接受（含常见原因）、或执行时抛出的异常类型与消息；命令成功时的业务输出仍只出现在服务端控制台日志。
+
+**机器人侧**：`@wcpe/mc-testkit-bot/lib/commands` 提供通信原语 `sendCommandPayload(bot, id, command)` / `waitForCommandResult(bot, id, timeoutMs)`。它在首次发送前调用 mineflayer 的 `registerChannel(name, parser, custom=true)` 声明通道——**这一步不能省**：服务端把回执发给某个玩家前会检查该玩家是否声明过接收这个通道（已核对 Paper 1.20.1 / 1.20.4 的 `CraftPlayer.sendPluginMessage`；旧版服务端未逐一核对，但声明通道是协议标准动作，对旧版同样必需），未声明则**静默丢弃**，机器人侧只会看到超时。「发命令 → 拿到结构化结果」的高层封装见 §3.4.2，本层不做、也不替调用方重试。
+
+**版本**：需要桩升级 `harness-core` 才有这条能力（旧桩照常工作，只是没有它）。通道对 1.8–1.21 的协议线形态一致（包名 `custom_payload`、字段 `channel` + `data`），无需按版本分支。
+
+#### 3.4.2 机器人命令执行 API（`execCommand` / `execCommands`，FR-31）
+
+§3.4.1 那对通信原语要求调用方自己拼前缀、生成 id、处理超时、解析回执——这些事每个消费方都会各自写错一遍。`@wcpe/mc-testkit-bot/lib/exec` 把它们包成一行调用（ADR-0027 里写的是从 `lib/commands` 取，两个路径都能用、是同一份实现；新代码建议用 `lib/exec`——通信原语所在的 `lib/commands` 职责更窄）：
+
+```js
+const { execCommand, execCommands } = require('@wcpe/mc-testkit-bot/lib/exec')
+
+// 一条命令
+const result = await execCommand(bot, 'time set day')
+if (!result.ok) {
+  log(`命令执行失败: ${result.output}`)
+  return
+}
+log(`命令执行成功: ${result.output}`)
+
+// 多条命令：顺序执行，任一条失败即停并返回那一条
+const batch = await execCommands(bot, [
+  { command: 'gamerule doDaylightCycle false', label: '关昼夜循环' },
+  { command: 'time set day', label: '设为白天' }
+])
+if (!batch.ok) throw new Error(batch.output)
+```
+
+| 函数 | 返回 |
+|---|---|
+| `execCommand(bot, command, options?)` | `Promise<{ ok: boolean, output: string }>` |
+| `execCommands(bot, commands, options?)` | `Promise<{ ok: boolean, output: string, results: Array<{ command, label, ok, output }> }>` |
+
+- `options.timeoutMs`：单条命令的回执等待上限，默认 `10000`（每条命令各自计一次）。缺省或非法值（`NaN` / 负数）回落默认值，不会变成「立即超时」。
+- `commands` 元素可以是字符串，也可以是 `{ command, label }`——带 `label` 时失败说明能说清「第几步是哪件事」失败了。
+- **顺序而非并发**：命令之间常有因果（先设游戏模式再发物品、先 `setblock` 再 `execute if block`），并发发出后服务端按什么顺序执行不由调用方决定，场景会随机失败。
+
+**`output` 是执行结果说明，不是命令的业务输出。** 与 §3.4.1「`<output>` 的限制」同源：桩侧用的是真实的 console 发送者，它直接 `System.out.println`，没有可拦截的接缝，换自定义包装 sender 又会让 Paper 的 `VanillaCommandWrapper.getListener` 抛 `IllegalArgumentException`、命令连跑都跑不起来。因此：
+
+- `ok: true` **只**表示「命令被服务端接受并执行」，**不**表示「世界状态已符合预期」——后者是服务端断言（在桩侧真的检查世界状态、据此写结果文件）要回答的问题。
+- 命令成功时的实际业务输出**拿不到**，仍只出现在服务端控制台日志里。要断言执行效果，用服务端断言或由桩在命令后自行检查世界状态。
+- 失败时 `output` 是具体原因：命令未被接受（含常见原因）、或命令执行体抛出的异常类型与消息。
+
+**不 reject**：所有失败都体现在 `ok: false` 与 `output` 里，`await` 之后直接判 `ok` 即可，不必写 `try/catch`。刻意不 reject 的理由是——这些都不是「异常」，而是场景要写进日志、并据此判失败的**正常结果**；做成 reject 会逼每个调用方各写一遍 `try/catch`，漏掉的那条要等到场景超时才暴露。
+
+**必被拦下的失败路径**（都返回 `ok: false`，且**不会发包**）：
+
+| 情形 | `output` 说明 |
+|---|---|
+| 命令为空字符串 / 全空白 / 非字符串（`null`、数字等） | 直接判失败，不发包，并说明收到的类型 |
+| `bot` 未暴露 `bot._client` | 拿到的不是 mineflayer bot |
+| `bot._client.ended === true`（未连上或已断开），或 socket 已 `destroyed` | 命令无法送达；**提前拦下**，不让调用方干等一个注定不来的回执 |
+| 发包时连接刚断（上面预检之后的窗口） | 如实返回发包失败的原因 |
+
+已发出但等不到回执时（**这是超时路径**）：返回 `ok: false`，`output` 带**命令原文 + 超时毫秒 + 最可能的原因**——桩未装载该通道（消费方桩的 `harness-core` 版本过旧）、通道未注册，或命令卡在主线程未返回。注意「桩没装这条通道」与「命令没执行」在机器人侧**看起来完全一样**（都是超时），所以失败说明里点明这一点，避免往错的方向排查。
+
+**请求 id**：由 API 内部生成（时间戳 base36 + 单调递增序号，不含冒号——它是协议的第一个字段）。同一 bot 上并发调用 `execCommand` 时 id 保证互不相同，因此并发命令的回执不会串台；调用方不必也不能指定 id。
+
+**与 `bot { op = true }`（ADR-0027 第一部分）的分工**：本 API 走**服务端权限**，bot 本身不需要 OP；`bot.chat('/cmd')` 走**玩家权限检查路径**，需要 `op = true` 才有权限，但也正因为如此才会真的过一遍被测插件挂在 `PlayerCommandPreprocessEvent` 上的逻辑与权限节点校验。要验「玩家做这件事时被测插件怎么反应」，用 `bot.chat` + `op = true`；要验「服务端直接改世界 / 执行 console-only 命令之后系统变成什么样」，用 `execCommand`。两条通道互补，理由见 ADR-0027。
+
+**示范**：`template/bot/src/scenarios/execCommandDemo.js`（在 `connectAndWait.js` 里登记为 action `exec-command-demo`）。
 
 ### 3.5 场景生命周期钩子（FR-24，ADR-0020）
 
@@ -415,7 +523,7 @@ bot 先起、后端后起，不存在「全部节点已就绪」的时刻。在�
 桩与机器人的协议胶水以可发布构件提供，消费方依赖构件而非照抄 / 手写（见 docs/specs/fr-09-shared-harness-bot.md）：
 
 - **`harness-core`**：`top.wcpe.mc:harness-core:0.2.0`（Maven，maven.wcpe.top）。纯 Java、零 Kotlin 依赖、**Java 8 字节码**（兼容 Paper 1.7.10–1.21 多版本烟雾）、paper-api 仅 compileOnly。提供 `McTestkitEnv`（契约 env 常量 / 读取 / serve 空闲判断）、`McTestkitProtocol`（冻结控制协议常量）、`McTestkitResultWriter`（结果文件原子写出）、`McTestkitHarnessPlugin`（Bukkit 抽象基类：场景/结果文件解析、serve 空闲短路、判定收尾、E2E_READY、Paper/Folia 兼容调度、按世界投递 `runOnWorldThread`）。模板 `plugin.yml` **不声明 `api-version`**（声明 1.20 会拒载旧版，声明 1.8 会被 1.20+ 拒绝）。
-- **`@wcpe/mc-testkit-bot`**：`@wcpe/mc-testkit-bot@0.1.0`（npm）。mineflayer 公共内核 `runBot({ scenarios })`（端口探测 / 重试 / action 分发 / 断线重连 / 优雅收尾），子路径 `@wcpe/mc-testkit-bot/lib/{messages,random,normalize,env}`。
+- **`@wcpe/mc-testkit-bot`**：`@wcpe/mc-testkit-bot@0.1.0`（npm）。mineflayer 公共内核 `runBot({ scenarios })`（端口探测 / 重试 / action 分发 / 断线重连 / 优雅收尾），子路径 `@wcpe/mc-testkit-bot/lib/{messages,random,normalize,env,commands,exec}`（`commands` 为命令通道通信原语、`exec` 为命令执行 API，见 §3.4.1 / §3.4.2；`exec` 的两个函数在 `commands` 上也有惰性别名）。
 
 **消费方接线**：桩插件 `implementation("top.wcpe.mc:harness-core:0.2.0")`（打进插件 jar），继承 `McTestkitHarnessPlugin` 写业务场景；机器人 `npm i @wcpe/mc-testkit-bot`，入口登记 action → 场景驱动表。`template/` 是这两个构件的示例消费者。
 

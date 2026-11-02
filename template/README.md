@@ -29,7 +29,8 @@ template/
     src/
       connectAndWait.js          # 入口：探测端口 → 登录 → 按 action 分发场景 → 等结果；集中读环境变量
       lib/{env,messages,normalize}.js  # 环境变量读取 / 消息等待 / 文本归一（纯函数）
-      scenarios/exampleBot.js    # 机器人驱动示例（同目录还有 crossServerBot / continuousStress / multiBot / crashTakeover）
+      scenarios/exampleBot.js    # 机器人驱动示例（同目录还有 crossServerBot / continuousStress / multiBot / crashTakeover / execCommandDemo）
+      scenarios/execCommandDemo.js  # 示范 execCommand：以服务端 console 身份执行命令（FR-31，不需 bot 有 OP）
   README.md       # 本文件
 ```
 
@@ -125,3 +126,4 @@ npm run connect-and-wait
 - 模板刻意做到最薄：示例机器人不点 GUI、不断言背包，避免把任何业务玩法固化进骨架。窗口点击 / 背包断言等辅助按你的真实场景自行补。
 - 桩骨架已**兼容 Folia**：`plugin.yml` 声明 `folia-supported: true`（否则 Folia 拒绝加载插件），运行期探测到 Folia 时改用 `GlobalRegionScheduler` 调度（否则用 Bukkit 调度器），同一份桩可直接用于 Paper 或 Folia 后端、无需改代码（用反射调用，不引入对 Folia 专有 API 的编译依赖）。仅在 Paper 上跑可删 `folia-supported`（Paper 忽略它）。
 - **持久手测 serve 空闲场景**（`ScenarioName.SERVE`，持久手测 serve）：mc-testkit 的 `serve<Key>` 任务（起拓扑挂住供真人客户端手测）经保留场景 id `__mc_testkit_serve__` 下发，桩据此**空闲**——不驱动任何场景、不挂超时、不写结果、不关服。这是 serve 模式的对接点，**不要删**（删了 serve 起服后桩会默认跑 `smoke` 把服务端关掉）；它不是业务场景，无需为它写 bot。
+- **执行服务端命令**（FR-31）：`execCommand(bot, 'time set day')` 走**插件消息 console 通道**，服务端以 console 身份执行，**不需要 bot 有 OP**；`await` 后直接判 `result.ok`，不会 reject。**它拿不到命令的业务输出**——`ok` 只表示「命令被服务端接受并执行」，`output` 是执行结果说明（未被接受的原因 / 抛出的异常）。要看执行效果，用服务端断言或由桩在命令后检查世界状态；实际输出仍在服务端控制台日志里。反过来，`bot.chat('/time set day')` 走玩家权限路径，**必须** `bot { op = true }`，但正因如此才会真的过一遍被测插件的命令拦截与权限校验。示范见 `bot/src/scenarios/execCommandDemo.js`（action `exec-command-demo`，需照第 3 节在桩侧与编排侧同步登记同一个 id 才能真正跑起来）。

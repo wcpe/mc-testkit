@@ -27,7 +27,7 @@ dependencies {
     compileOnly("io.papermc.paper:paper-api:1.20.1-R0.1-SNAPSHOT")
     // 共享协议胶水库（共享胶水构件）：契约 env 读取 / 结果文件原子写出 / 桩基类（serve 空闲、收尾、Folia 调度）。
     // 会打进插件 jar（harness-core 的 paper-api 是 compileOnly、不在 runtimeClasspath，不会带进去）。
-    implementation("top.wcpe.mc:harness-core:0.1.1")
+    implementation("top.wcpe.mc:harness-core:0.2.0")
     implementation(kotlin("stdlib"))
 }
 

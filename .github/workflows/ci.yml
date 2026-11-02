@@ -39,6 +39,13 @@ jobs:
       - name: 构建 + 风格检查 + 测试（编译 + ktlintCheck + 单元/TestKit）
         run: ./gradlew build --no-daemon --stacktrace
 
+      # 模板桩依赖 harness-core。本地开发时它可能来自 mavenLocal、也可能来自远端已发布版本，
+      # 但 CI 是全新环境：远端只有**已发布**的那些版本，因此这里先把本分支的 harness-core 发布到
+      # mavenLocal，让「校验模板桩可独立编译」编译的是**当前代码**而不是某个旧发布版。
+      # 不这么做时，桩一旦用到未发布的新 API（如命令通道），CI 会拿旧构件去编译并报找不到符号。
+      - name: 发布 harness-core 到 mavenLocal（供模板桩编译）
+        run: ./gradlew -p harness-core publishToMavenLocal --no-daemon --stacktrace
+
       - name: 校验模板桩骨架可独立编译
         run: ./gradlew -p template/harness compileKotlin --no-daemon --stacktrace
 

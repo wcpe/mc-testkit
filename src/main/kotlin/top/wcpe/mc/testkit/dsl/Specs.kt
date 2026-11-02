@@ -208,6 +208,15 @@ class BotSpec(val role: String? = null) : java.io.Serializable {
      */
     var count: Int = 1
 
+    /**
+     * 是否把该 bot 提为原版 OP（默认 false，见 ADR-0027）。
+     *
+     * 开启后框架在**起服前**按该 bot 的用户名（与实际起进程用的用户名一致）写后端运行目录的 `ops.json`，
+     * 使 `bot.chat("/gamemode creative")` 这类需要权限的命令真的能执行。显式开关而非默认全开：默认提权会
+     * 静默放大权限，掩盖「这个场景其实不该需要 OP」这一信息。
+     */
+    var op: Boolean = false
+
     private val mutableEnv = LinkedHashMap<String, String>()
 
     /** 透传给机器人进程的**业务特定**环境变量（如商店标题/槽位/期望奖励等，消费方自定名）。 */

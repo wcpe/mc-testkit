@@ -541,7 +541,13 @@ object McTestkitTasks {
                 val runtime = preflightRuntimeForTask(ctx, listOf(backend), mavenSources = prepareSources)
                 clearPreviousScenarioResult(ctx.layout.resultsDir, scenario.name)
                 val backendRunDir = ctx.layout.backendRunDir(backend.name)
-                prepareRunDirectory(ctx, backend, backendRunDir, runtime.backends.getValue(backend.name))
+                prepareRunDirectory(
+                    ctx,
+                    backend,
+                    backendRunDir,
+                    runtime.backends.getValue(backend.name),
+                    opNames = BotProcessPlanner.opUsernames(scenario.name, scenario.botSpecs),
+                )
                 if (viaProxy?.platform == ProxyPlatform.VELOCITY) {
                     BackendVelocityConfig.apply(backendRunDir, backend.version)
                 }
@@ -840,7 +846,13 @@ object McTestkitTasks {
                             )
                         }
                         val runDir = layout.clusterBackendRunDir(backend.name)
-                        prepareRunDirectory(ctx, backend, runDir, runtime.backends.getValue(backend.name))
+                        prepareRunDirectory(
+                            ctx,
+                            backend,
+                            runDir,
+                            runtime.backends.getValue(backend.name),
+                            opNames = BotProcessPlanner.opUsernames(scenario.name, scenario.botSpecs),
+                        )
                         if (proxy.platform == ProxyPlatform.VELOCITY) {
                             BackendVelocityConfig.apply(runDir, backend.version)
                         } else {
@@ -1190,9 +1202,19 @@ object McTestkitTasks {
                     )
 
                     // ① 每后端独立运行目录 prepare（+ BungeeCord 模式 if via）+ 后台起（同 SCENARIO、各自 per-server RESULT_FILE）
+                    // 压测 bot 用户名基名 = 显式 username > action，派生规则与 BotProcessPlanner 同源（OP 提权须与真人同名）
+                    val stressOpNames = scenario.botSpec?.let { bot ->
+                        BotProcessPlanner.stressOpUsernames(action, bot, stressBackends.size, stress.botsPerServer)
+                    } ?: emptyList()
                     stressBackends.forEach { backend ->
                         val runDir = layout.clusterBackendRunDir(backend.name)
-                        prepareRunDirectory(ctx, backend, runDir, runtime.backends.getValue(backend.name))
+                        prepareRunDirectory(
+                            ctx,
+                            backend,
+                            runDir,
+                            runtime.backends.getValue(backend.name),
+                            opNames = stressOpNames,
+                        )
                         if (proxy != null) BackendBungeeCordConfig.apply(runDir, backend.version)
                         backendProcesses[backend.name] =
                             startBackendBackground(
@@ -1322,12 +1344,13 @@ object McTestkitTasks {
                 "未找到机器人入口脚本：${botScript.absolutePath}。请把 template/bot 照抄到 $botDir（或用 -P$BOT_DIR_PROPERTY=<目录> 指定机器人目录）。",
             )
         }
-        // 用户名基（Minecraft 离线名 ≤16 字符，bot 数多时请用短基名避免超限）
-        val baseName = bot.username ?: action
+        // 用户名基（Minecraft 离线名 ≤16 字符，bot 数多时请用短基名避免超限）；
+        // 派生规则统一走 BotProcessPlanner，保证与写进 ops.json 的 OP 名字同源（ADR-0027）
+        val baseName = BotProcessPlanner.stressUsernameBase(action, bot)
         val processes = mutableListOf<Process>()
         for (i in 1..stress.botsPerServer) {
             val key = stressBotKey(action, serverIndex, i)
-            val username = "${baseName}_s${serverIndex}_$i"
+            val username = BotProcessPlanner.stressUsername(baseName, serverIndex, i)
             val connection = BotConnection(action = action, username = username, port = botPort, version = protocolVersion)
             // 强制唯一名（经 extraEnv 末位合入，覆盖消费方单值 BOT_USERNAME override）+ 压测维度 env
             val extraEnv = bot.env + mapOf(
@@ -1587,7 +1610,14 @@ object McTestkitTasks {
         // ⓪' 附加控制台（可选）：先探测 PTY 分配器——不可用就退回本终端行级补全，不阻断 serve
         val attachEnabled = resolveAttachConsole(ctx, attachConsole)
         // ① 准备运行目录（注入被测 + 依赖插件，含桩；桩由哨兵场景置空闲）
-        prepareRunDirectory(ctx, backend, backendRunDir, runtime.backends.getValue(backend.name))
+        // 声明 op = true 的 bot 同时写进 ops.json，serve 挂住期间真人 / bot 都能直接跑需要权限的命令
+        prepareRunDirectory(
+            ctx,
+            backend,
+            backendRunDir,
+            runtime.backends.getValue(backend.name),
+            opNames = BotProcessPlanner.opUsernames(serveName, botSpecs),
+        )
 
         var proxyProcess: Process? = null
         var backendProcess: Process? = null
@@ -1994,7 +2024,13 @@ object McTestkitTasks {
             // ① 每后端独立运行目录 prepare + 代理模式配置 + 后台起（哨兵场景使桩空闲）
             clusterBackends.forEach { backend ->
                 val runDir = layout.clusterBackendRunDir(backend.name)
-                prepareRunDirectory(ctx, backend, runDir, runtime.backends.getValue(backend.name))
+                prepareRunDirectory(
+                    ctx,
+                    backend,
+                    runDir,
+                    runtime.backends.getValue(backend.name),
+                    opNames = BotProcessPlanner.opUsernames(serveName, botSpecs),
+                )
                 if (proxy.platform == ProxyPlatform.VELOCITY) {
                     BackendVelocityConfig.apply(runDir, backend.version)
                 } else {
@@ -2107,18 +2143,25 @@ object McTestkitTasks {
 
     // ── 任务体的实际副作用实现（均在 doLast 内被调用，配置期不执行）──
 
-    /** 使用已预检资源准备后端运行目录，避免目录清理后才发现其它节点资源缺失。 */
+    /**
+     * 使用已预检资源准备后端运行目录，避免目录清理后才发现其它节点资源缺失。
+     *
+     * @param opNames 本后端起服前要提为原版 OP 的 bot 用户名（ADR-0027；空表示不提权）。
+     *   由各编排路径按自己的 bot 声明派生后传入，本函数不推导用户名。
+     */
     private fun prepareRunDirectory(
         ctx: TaskExecutionContext,
         backend: ResolvedBackend,
         runDir: File,
         resources: BackendRuntimeResources,
+        opNames: List<String> = emptyList(),
     ) {
         ctx.layout.resultsDir.mkdirs()
         stageBackendRuntime(
             runDir,
             backend,
-            resources,
+            // 只把「本后端要提权的用户名」并入资源，不改动预检结果里的模板 / 依赖插件
+            resources.copy(opNames = opNames),
             cacheDirectory = ctx.layout.persistentBackendCacheDir(backend.name),
         ) { ctx.info(it) }
     }

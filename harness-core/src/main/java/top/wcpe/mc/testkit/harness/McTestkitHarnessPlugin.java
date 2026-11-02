@@ -1,14 +1,17 @@
 package top.wcpe.mc.testkit.harness;
 
 import org.bukkit.Bukkit;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.plugin.messaging.PluginMessageListener;
 
 import java.io.File;
+import java.nio.charset.Charset;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -25,15 +28,31 @@ import java.util.function.Consumer;
  *   <li>判定收尾：{@link #pass(String, Map)} / {@link #fail(String)} 经
  *       {@link McTestkitResultWriter} **原子**写出结果文件后延迟关服（幂等门防重复写 / 重复关服）；</li>
  *   <li>控制消息：{@link #sendReady(Player)} 发 {@code E2E_READY:<scenario>}（冻结协议）；</li>
+ *   <li>console 命令通道（FR-30，ADR-0027）：自动注册插件消息通道
+ *       {@link McTestkitProtocol#COMMAND_CHANNEL}，收到 {@code E2E_CMD:<id>:<command>} 后
+ *       <b>投主线程</b>以服务端 console 身份执行，并通过同一通道回
+ *       {@code E2E_CMD_DONE:<id>:<PASS|FAIL>:<output>}。消费方无需任何接线；</li>
  *   <li>调度：{@link #runLater(long, Runnable)} / {@link #runOnMainThread(Runnable)} 兼容
  *       Paper（Bukkit 调度器）与 Folia（GlobalRegionScheduler，反射调用、编译期不依赖 Folia 专有类）。</li>
  * </ul>
  *
  * <p>消费方继承本类，在 {@link #onHarnessEnabled()} 里驱动 / 判定自己的业务场景；
  * 监听自己的 Bukkit 事件注册到 {@code server.getPluginManager()} 即可。
- * 本类刻意**不含**任何业务逻辑与示例场景。
+ * 本类刻意**不含**任何业务逻辑与示例场景。覆盖 {@link #onDisable()} 时须调用 {@code super.onDisable()}。
  */
 public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Listener {
+
+    /**
+     * console 命令回执里 output 的字符上限。
+     *
+     * <p>自定义 payload 有硬性大小上限（Bukkit {@code Messenger.MAX_MESSAGE_SIZE} = 32766 字节，
+     * 超出时 {@code sendPluginMessage} 直接抛 {@code IllegalArgumentException}）。UTF-8 下一个汉字
+     * 占 3 字节，故按字符留足余量取 8000；截断时**明确写出已被截断**，不静默丢内容。
+     */
+    private static final int MAX_OUTPUT_CHARS = 8000;
+
+    /** 命令通道载荷的字符集（与机器人侧 {@code Buffer.from(text, 'utf8')} 对齐）。 */
+    private static final Charset CHANNEL_CHARSET = Charset.forName("UTF-8");
 
     /** 编排下发的场景 id（未下发为 null；serve 空闲时为空闲保留 id）。 */
     protected final String scenarioId = McTestkitEnv.scenarioIdOrNull();
@@ -54,6 +73,14 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
 
     /** Folia 全局区域调度器（仅 Folia 运行时非 null；反射取，避免编译期依赖 Folia 专有类）。 */
     private volatile Object foliaGlobalScheduler;
+
+    /**
+     * 命令通道的入站监听器（FR-30，ADR-0027）。
+     *
+     * <p>做成字段而不是匿名内部类：注销入站通道时 {@code unregisterIncomingPluginChannel} 要求
+     * 传入**同一个监听器实例**，否则注销不生效、重载后同一个包会被处理两次。
+     */
+    private final PluginMessageListener commandListener = new CommandChannelListener();
 
     /**
      * 消费方业务启动钩子：在 onEnable 完成协议准备（场景 / 结果文件 / serve 判断）后调用。
@@ -78,6 +105,10 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
         String resultName = fromConfig == null || fromConfig.isEmpty() ? DEFAULT_RESULT_FILE : fromConfig;
         this.resultFile = fromEnv != null ? new File(fromEnv) : new File(getDataFolder(), resultName);
 
+        // 命令通道在 serve 空闲判断之前接上：它在 serve 下同样有用（人手测时也能驱动 console 命令），
+        // 而注册本身不驱动、不判定、不关服，不违背 serve「桩空闲」的语义。
+        registerCommandChannel();
+
         // serve 空闲：不注册监听、不启动业务，把服务端留给真人客户端手测（与旧模板行为一致）
         if (McTestkitEnv.isServeIdle()) {
             getLogger().info("[E2E] 持久手测模式（serve）：桩空闲，不驱动场景、不判定、不关服。");
@@ -100,6 +131,25 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
      */
     private boolean hasBundledConfig() {
         return getResource("config.yml") != null;
+    }
+
+    /**
+     * 注销命令通道。
+     *
+     * <p>子类覆盖本方法时**必须调用 {@code super.onDisable()}**：入站 / 出站通道不注销的话，
+     * 插件重载后同一个通道会堆积多个注册，一条请求被处理多次（命令被执行多次）。
+     */
+    @Override
+    public void onDisable() {
+        try {
+            getServer().getMessenger()
+                .unregisterIncomingPluginChannel(this, McTestkitProtocol.COMMAND_CHANNEL, commandListener);
+            getServer().getMessenger()
+                .unregisterOutgoingPluginChannel(this, McTestkitProtocol.COMMAND_CHANNEL);
+        } catch (RuntimeException e) {
+            // 收尾阶段抛异常会让停服流程报错，且它不影响测试结论——记录后继续
+            getLogger().warning("[E2E] 注销命令通道失败：" + e.getMessage());
+        }
     }
 
     /** 判 PASS：原子写结果文件 + 延迟关服（幂等）。 */
@@ -379,6 +429,179 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
         player.sendMessage(message);
     }
 
+    /**
+     * 注册 console 命令通道（入站 + 出站）。
+     *
+     * <p><b>出站必须一起注册</b>：Bukkit 的 {@code sendPluginMessage} 会先校验
+     * {@code isOutgoingChannelRegistered}，不注册则回执直接抛 {@code ChannelNotRegisteredException}。
+     *
+     * <p>注册失败只记 warn、不让 onEnable 抛出去：这条通道是新增能力，缺了它场景照常跑完，
+     * 但**不能静默**——否则机器人侧只会等到超时，看不出是这里没注册成功。
+     */
+    private void registerCommandChannel() {
+        try {
+            getServer().getMessenger().registerOutgoingPluginChannel(this, McTestkitProtocol.COMMAND_CHANNEL);
+            getServer().getMessenger()
+                .registerIncomingPluginChannel(this, McTestkitProtocol.COMMAND_CHANNEL, commandListener);
+        } catch (RuntimeException e) {
+            getLogger().warning("[E2E] 注册命令通道 " + McTestkitProtocol.COMMAND_CHANNEL
+                + " 失败，FR-30 的 console 命令通道在本服不可用：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 处理一条 console 命令请求，并把回执发回请求者。
+     *
+     * <h2>线程约定</h2>
+     *
+     * 入站 payload 回调发生在网络线程，而命令会读写世界对象（Folia 上跨线程直接抛线程检查异常、
+     * Paper 的 {@code AsyncCatcher} 也会拦），因此**整段执行投到主线程**。
+     * 回执也在主线程发（Bukkit 发包须主线程）。
+     *
+     * <h2>输出捕获</h2>
+     *
+     * 优先走 Paper 的 {@code Server#createCommandSender(Consumer&lt;Component&gt;)}：它返回
+     * {@code FeedbackForwardingSender}，把命令输出转发给给定的消费者，因此能拿到真实业务输出。
+     * 而 {@code VanillaCommandWrapper.getListener} 明确支持该类型（走 {@code asVanilla()}），
+     * 命令照常执行——这一点已由反编译 1.20.1 服务端确认，不是推测。
+     *
+     * <p>该 API 自 Paper 1.16 起提供；更早的纯 Spigot / 老 Paper 上不存在，此时回退到真实
+     * console 发送者，{@code output} 只报执行结果说明。回退是**降级而非失败**：命令照常执行，
+     * 只是拿不到业务输出。用反射调用是因为 harness-core 的编译目标是 Java 8 且要跨
+     * 1.7.10–1.21 运行，直接调 {@code createCommandSender} 会在缺该方法的服务端上抛
+     * {@code NoSuchMethodError}，把「降级」变成「崩溃」。
+     *
+     * @param requester 触发者（回执发回给他；已离线时只记日志）
+     * @param id        请求 id
+     * @param raw       原始命令（可带前导 {@code /}）
+     */
+    private void runConsoleCommand(Player requester, String id, String raw) {
+        String command = raw.startsWith("/") ? raw.substring(1) : raw;
+        boolean passed;
+        String output;
+        if (command.trim().isEmpty()) {
+            passed = false;
+            output = "命令为空";
+        } else {
+            // 收集命令往 sender 写的每一行；拿不到捕获通道时保持为空，此时只回执行结果说明
+            java.util.List<String> captured = new java.util.ArrayList<>();
+            CommandSender sender = commandFeedbackSender(captured);
+            try {
+                passed = getServer().dispatchCommand(sender, command);
+                if (!passed) {
+                    output = "命令未被服务端接受（未知命令或无控制台权限）";
+                } else if (captured.isEmpty()) {
+                    output = "命令已被服务端接受并执行";
+                } else {
+                    output = String.join(" | ", captured);
+                }
+            } catch (RuntimeException e) {
+                // 命令执行体自己抛出的异常：必须带上类型与消息，否则「失败」二字对排查毫无帮助
+                passed = false;
+                output = "命令执行时抛出 " + e.getClass().getSimpleName() + "：" + e.getMessage();
+            }
+        }
+        // 超长输出会撞自定义 payload 的硬上限（超出即抛异常、回执发不出去），故截断并明说
+        if (output.length() > MAX_OUTPUT_CHARS) {
+            output = output.substring(0, MAX_OUTPUT_CHARS) + "…（回执超出插件消息上限，已截断）";
+        }
+        if (passed) {
+            getLogger().info("[E2E] console 命令完成 -> " + requester.getName() + " id=" + id
+                + " 命令=/" + command + " 结果=" + output);
+        } else {
+            getLogger().warning("[E2E] console 命令失败 -> " + requester.getName() + " id=" + id
+                + " 命令=/" + command + " 结果=" + output);
+        }
+        sendCommandDone(requester, McTestkitProtocol.commandDone(id, passed, output));
+    }
+
+    /**
+     * 取一个能把命令输出回传的 sender；拿不到就退回真实 console sender。
+     *
+     * <p>走 Paper 的 {@code Server#createCommandSender(Consumer)}：它返回
+     * {@code FeedbackForwardingSender}，命令写的每一行都会转给这个消费者。用反射调用有两个
+     * 硬理由，缺一不可：
+     *
+     * <ol>
+     *   <li><b>版本兼容</b>：该方法在 Paper 1.16+ 才有，纯 Spigot / 更早的 Paper 上没有。
+     *       直接调用会在这些服务端上抛 {@code NoSuchMethodError}，把「降级」变成「崩溃」。</li>
+     *   <li><b>Java 8 字节码</b>：harness-core 编译目标是 Java 8 且跨 1.7.10–1.21 运行，
+     *       编译期不假设该方法存在更安全。</li>
+     * </ol>
+     *
+     * <p>消费者收到的 {@code Component} 转成纯文本再收集：回执是给断言与日志看的，
+     * 保留颜色码会让「输出里到底写了什么」更难读。
+     *
+     * @param captured 收集命令输出的列表（按服务端调用顺序）
+     * @return 能捕获输出的 sender；该服务端不支持时返回真实 console sender（此时列表保持为空）
+     */
+    private CommandSender commandFeedbackSender(final java.util.List<String> captured) {
+        CommandSender console = getServer().getConsoleSender();
+        try {
+            java.lang.reflect.Method create = getServer().getClass()
+                .getMethod("createCommandSender", java.util.function.Consumer.class);
+            Object sender = create.invoke(getServer(), new java.util.function.Consumer<Object>() {
+                @Override
+                public void accept(Object component) {
+                    String text = componentText(component);
+                    if (text != null && !text.trim().isEmpty()) {
+                        captured.add(text.trim());
+                    }
+                }
+            });
+            if (sender instanceof CommandSender) {
+                return (CommandSender) sender;
+            }
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+            // 该方法不存在（纯 Spigot / 老 Paper）或签名不同：降级到 console sender，
+            // 命令照常执行，只是拿不到业务输出。不告警——这是预期内的版本差异，不是故障。
+        }
+        return console;
+    }
+
+    /**
+     * 把 Adventure {@code Component} 转成不带颜色码的纯文本。
+     *
+     * <p>同样用反射：harness-core 不能编译期依赖 Adventure（旧服务端没有），
+     * 而 {@code PlainTextComponentSerializer} 在 Paper 各版本上都在。
+     *
+     * @param component Adventure 组件
+     * @return 纯文本；转换失败时返回 {@code null}（调用方会跳过这一行）
+     */
+    private String componentText(Object component) {
+        if (component == null) {
+            return null;
+        }
+        try {
+            Class<?> serializerClass =
+                Class.forName("net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer");
+            Object serializer = serializerClass.getMethod("plainText").invoke(null);
+            Object text = serializerClass.getMethod("serialize", Class.forName("net.kyori.adventure.text.Component"))
+                .invoke(serializer, component);
+            return text == null ? null : text.toString();
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * 经命令通道把回执发回请求者。
+     *
+     * <p>单个玩家发、不广播：控制流量只该走触发-应答这一条点对点的边。
+     * 发送失败（玩家已离线 / 通道未注册）只记日志——此时回执无处可去，机器人侧会按超时收场。
+     */
+    private void sendCommandDone(Player requester, String message) {
+        try {
+            if (!requester.isOnline()) {
+                getLogger().warning("[E2E] 命令回执无处发送，触发者已离线：" + message);
+                return;
+            }
+            requester.sendPluginMessage(this, McTestkitProtocol.COMMAND_CHANNEL, message.getBytes(CHANNEL_CHARSET));
+        } catch (RuntimeException e) {
+            getLogger().warning("[E2E] 发送命令回执失败（" + e.getClass().getSimpleName() + "）：" + e.getMessage());
+        }
+    }
+
     /** 延迟在主线程 / 全局区域执行（Folia 走 GlobalRegionScheduler.runDelayed，否则 Bukkit runTaskLater）。 */
     protected final void runLater(long delayTicks, Runnable task) {
         Object folia = resolveFoliaScheduler();
@@ -524,6 +747,39 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
             scheduler.getClass().getMethod(method, paramTypes).invoke(scheduler, args);
         } catch (Throwable t) {
             throw new IllegalStateException("反射调用 Folia 调度器失败：" + method, t);
+        }
+    }
+
+    /**
+     * 命令通道的入站监听器（FR-30，ADR-0027）：解出 {@code <id>:<command>} 并投主线程执行。
+     *
+     * <p>做成独立类而不是让基类直接实现 {@link PluginMessageListener}：基类已实现
+     * {@link Listener}，两者方法签名无关但混在一起会让「注销时须传同一实例」这件事更难做对。
+     */
+    private final class CommandChannelListener implements PluginMessageListener {
+
+        @Override
+        public void onPluginMessageReceived(String channel, Player player, byte[] message) {
+            // 先记一条到达日志：通道「收不到」是最难排查的故障（机器人侧只表现为超时），
+            // 有这一行就能立刻区分「payload 没到」与「到了但解析/执行有问题」。
+            getLogger().info("[E2E] 收到命令通道消息 channel=" + channel
+                + " 来自=" + (player == null ? "<null>" : player.getName())
+                + " 字节数=" + (message == null ? -1 : message.length));
+            if (!McTestkitProtocol.COMMAND_CHANNEL.equals(channel)) {
+                return;
+            }
+            // 载荷按 UTF-8 解码（与机器人侧 Buffer.from(text, 'utf8') 对齐）
+            String payload = new String(message, CHANNEL_CHARSET);
+            String id = McTestkitProtocol.commandRequestId(payload);
+            String command = McTestkitProtocol.commandRequestBody(payload);
+            if (id == null || command == null) {
+                // 不是命令请求（或 id 缺失）：不猜、不执行，只记日志——
+                // 静默忽略会让机器人侧一直等到超时，看不出是载荷格式不对
+                getLogger().warning("[E2E] 收到无法解析的命令请求，已忽略：" + payload);
+                return;
+            }
+            // 回调多半在网络线程：命令会读写世界对象，必须切主线程（与 E2E_ASSERT 的线程约定一致）
+            runOnMainThread(() -> runConsoleCommand(player, id, command));
         }
     }
 }

@@ -44,6 +44,51 @@ public final class McTestkitProtocol {
      */
     public static final String ASSERTION_DONE_PREFIX = "E2E_ASSERT_DONE:";
 
+    /**
+     * 命令通道的 Minecraft 自定义 payload 通道名（FR-30，ADR-0027）：{@code mc-testkit:cmd}。
+     *
+     * <p>通道名格式随版本而变，本名对两段格式都合法，故**同一个名字**覆盖全部支持版本：
+     *
+     * <ul>
+     *   <li><b>1.13 及以后</b>：通道名是 {@code namespace:path} 形式的 {@code Identifier}，
+     *       Bukkit 侧会拒绝不含冒号的名字（{@code StandardMessenger.validateAndCorrectChannel}）。</li>
+     *   <li><b>1.12 及更早</b>：通道名只是裸字符串，约束是有长度上限（旧版上限 20 字符），
+     *       本名 14 字符，同样在限内。</li>
+     * </ul>
+     *
+     * <p>注意：通道名合法只是**必要条件**。服务端把回执发回给某个玩家时，
+     * 还会检查该玩家是否声明过接收这个通道（Paper 的 {@code CraftPlayer.sendPluginMessage}
+     * 会比对玩家已 REGISTER 的通道集合，未声明则**静默丢弃**）。因此机器人侧必须先声明该通道，
+     * 见 {@code @wcpe/mc-testkit-bot/lib/commands}。
+     */
+    public static final String COMMAND_CHANNEL = "mc-testkit:cmd";
+
+    /**
+     * 机器人请求以 console 身份执行一条命令：{@code E2E_CMD:<id>:<command>}。
+     *
+     * <p>{@code <id>} 由机器人生成，用于配对请求与回执；{@code <command>} 是**其余全部内容**，
+     * 因此命令里出现的冒号（例如 {@code give <玩家> minecraft:stone}）原样保留。
+     * 解析方必须按「在**首个**冒号处切分」取值，不能按段数切。
+     */
+    public static final String COMMAND_PREFIX = "E2E_CMD:";
+
+    /**
+     * console 命令的执行回执：{@code E2E_CMD_DONE:<id>:<PASS|FAIL>:<output>}。
+     *
+     * <h2>解析规则（必须按此实现，否则 output 里的冒号会被切坏）</h2>
+     *
+     * 前两段位置固定——{@code <id>} 与 {@code <PASS|FAIL>} 都不得含冒号；
+     * {@code <output>} 是**最后一段**，可以是任意内容。故正确做法是
+     * <b>最多切成 4 段</b>（{@code split(":", 4)}）：第 1 段是前缀 {@code E2E_CMD_DONE}，
+     * 第 2 段是 id，第 3 段是判定，第 4 段是 output 全文（其中的冒号原样保留）。
+     *
+     * <p>反例：{@code "a:b".split(":")} 会把 {@code output=a:b} 切出第 5 段，
+     * 于是末段只剩 {@code b}，回执看起来「有输出」但内容已被截断——属于静默失真。
+     *
+     * <p>另见 {@link #commandDone(String, boolean, String)} 对 {@code <output>} 的单行化约定。
+     */
+    public static final String COMMAND_DONE_PREFIX = "E2E_CMD_DONE:";
+
     private McTestkitProtocol() {
     }
 
@@ -91,5 +136,84 @@ public final class McTestkitProtocol {
     public static String probeResult(String name, String text) {
         String flat = text == null ? "" : text.replace('\n', ' ').replace('\r', ' ');
         return PROBE_RESULT_PREFIX + name + ":" + flat;
+    }
+
+    /**
+     * 拼接「console 命令请求」完整消息：{@code E2E_CMD:<id>:<command>}。
+     *
+     * @param id      请求 id（**不得含冒号**——它是第一个字段，含冒号会让接收方配错请求）
+     * @param command 待执行命令（可带前导 {@code /}，桩侧会去掉；其中的冒号原样保留）
+     * @return 消息
+     * @throws IllegalArgumentException id 为空或含冒号时抛出，消息为中文
+     */
+    public static String commandRequest(String id, String command) {
+        if (id == null || id.isEmpty()) {
+            throw new IllegalArgumentException("命令请求 id 不得为空——没有 id 的回执无法与请求配对");
+        }
+        if (id.indexOf(':') >= 0) {
+            throw new IllegalArgumentException(
+                "命令请求 id 不得含冒号（收到：" + id + "）——它是第一个字段，含冒号会让接收方配错请求");
+        }
+        return COMMAND_PREFIX + id + ":" + (command == null ? "" : command);
+    }
+
+    /**
+     * 拼接「console 命令执行回执」完整消息：{@code E2E_CMD_DONE:<id>:<PASS|FAIL>:<output>}。
+     *
+     * <p>{@code output} 会被**单行化**（换行 / 回车压成空格）：回执是一条消息而不是一段文本，
+     * 留换行会让读日志与解析的人看到被切断的回执。
+     *
+     * @param id     请求 id（与 {@link #commandRequest(String, String)} 的 id 逐字一致）
+     * @param passed 命令是否被服务端接受并执行
+     * @param output 单行化的命令输出 / 失败原因（可为 null，按空串处理）
+     * @return 消息
+     */
+    public static String commandDone(String id, boolean passed, String output) {
+        return COMMAND_DONE_PREFIX + id + ":" + (passed ? "PASS" : "FAIL") + ":" + singleLine(output);
+    }
+
+    /**
+     * 从 {@code E2E_CMD:<id>:<command>} 取出 id。
+     *
+     * @param payload 收到的消息
+     * @return id；消息不是命令请求（无 {@link #COMMAND_PREFIX} 前缀或缺 id）时返回 null
+     */
+    public static String commandRequestId(String payload) {
+        if (payload == null || !payload.startsWith(COMMAND_PREFIX)) {
+            return null;
+        }
+        int end = payload.indexOf(':', COMMAND_PREFIX.length());
+        if (end < 0) {
+            return null;
+        }
+        String id = payload.substring(COMMAND_PREFIX.length(), end);
+        return id.isEmpty() ? null : id;
+    }
+
+    /**
+     * 从 {@code E2E_CMD:<id>:<command>} 取出命令全文。
+     *
+     * <p>在**首个**冒号处切分，故命令里出现的冒号（如 {@code minecraft:stone}）原样保留。
+     *
+     * @param payload 收到的消息
+     * @return 命令；消息不是命令请求时返回 null（空命令返回空串）
+     */
+    public static String commandRequestBody(String payload) {
+        if (payload == null || !payload.startsWith(COMMAND_PREFIX)) {
+            return null;
+        }
+        int end = payload.indexOf(':', COMMAND_PREFIX.length());
+        if (end < 0) {
+            return null;
+        }
+        return payload.substring(end + 1);
+    }
+
+    /** 压成单行：换行 / 回车变空格，避免一条回执在日志里被切成几行。 */
+    private static String singleLine(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text.replace('\n', ' ').replace('\r', ' ');
     }
 }

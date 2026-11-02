@@ -258,6 +258,53 @@ class NodeRuntimeInjectionTest {
         assertFalse(File(runDir, "stale-sentinel.txt").exists())
     }
 
+    @Test
+    @DisplayName("后端 staging 时应按 opNames 写入 bot 的 ops.json（默认不写）")
+    fun stageBackendRuntimeWritesBotOpsWhenNamesProvided() {
+        val runDir = file("backend-run-ops-sentinel").apply { mkdirs() }
+        val backend = resolvedBackend()
+
+        stageBackendRuntime(runDir, backend, BackendRuntimeResources(templateDirectory = null, dependencyJars = emptyList()))
+
+        assertFalse(File(runDir, "ops.json").exists(), "未声明 opNames 时不应创建 ops.json")
+
+        stageBackendRuntime(
+            runDirectory = runDir,
+            backend = backend,
+            resources = BackendRuntimeResources(
+                templateDirectory = null,
+                dependencyJars = emptyList(),
+                opNames = listOf("test_bot"),
+            ),
+        )
+
+        val text = File(runDir, "ops.json").readText(Charsets.UTF_8)
+        assertTrue("\"name\":\"test_bot\"" in text, "应按 opNames 写入 OP 条目，实际：$text")
+        assertTrue("\"level\":4" in text, "条目应为 level 4，实际：$text")
+    }
+
+    @Test
+    @DisplayName("不支持 bot 的版本（1.7.10）应静默跳过写 ops.json 且不打日志")
+    fun stageBackendRuntimeSkipsBotOpsOnUnsupportedVersion() {
+        val runDir = file("backend-run-legacy-sentinel").apply { mkdirs() }
+        val backend = resolvedBackend { version = "1.7.10" }
+        val logs = mutableListOf<String>()
+
+        stageBackendRuntime(
+            runDirectory = runDir,
+            backend = backend,
+            resources = BackendRuntimeResources(
+                templateDirectory = null,
+                dependencyJars = emptyList(),
+                opNames = listOf("test_bot"),
+            ),
+            logger = { logs += it },
+        )
+
+        assertFalse(File(runDir, "ops.json").exists(), "1.7.10 无 bot，不应写 ops.json")
+        assertTrue(logs.none { "OP" in it }, "既定行为是静默跳过，不应打任何相关日志：$logs")
+    }
+
     private fun resolvedBackend(configure: BackendSpec.() -> Unit = {}) =
         TopologyResolver.resolve(
             backends = listOf(BackendSpec("backend-sentinel").apply(configure)),

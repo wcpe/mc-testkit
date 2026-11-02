@@ -165,6 +165,7 @@ class McTestkitE2eHarnessPlugin : McTestkitHarnessPlugin(), Listener {
             ScenarioName.EXAMPLE_BOT -> prepareExampleBotScenario(player)
             ScenarioName.CROSS_SERVER -> prepareCrossServerScenario(player)
             ScenarioName.CRASH_TAKEOVER -> prepareCrashTakeoverScenario(player)
+            ScenarioName.BOT_COMMAND -> prepareBotCommandScenario(player)
             // 持续压测 / 单场景多 bot 在 onPlayerJoin 前置分支处理（不走单次 started 门），不到此
             ScenarioName.CONTINUOUS_STRESS -> Unit
             ScenarioName.MULTI_BOT -> Unit
@@ -173,6 +174,24 @@ class McTestkitE2eHarnessPlugin : McTestkitHarnessPlugin(), Listener {
             // smoke 不经玩家驱动；其余场景由消费方补充分支
             ScenarioName.SMOKE -> Unit
         }
+    }
+
+    /**
+     * bot 命令通道自检场景（FR-29 / FR-30 / FR-31，ADR-0027）——**框架能力的实机验证**。
+     *
+     * 机器人会用 `execCommand` 以 console 身份执行若干命令，并用 `bot.chat` 以玩家身份执行需要 OP
+     * 的命令。桩侧在这里只做一件事：装备玩家（**但不给 OP**，OP 由框架写 `ops.json` 保证）并发就绪
+     * 信号，然后等机器人把两段验完，最后按结果文件判定。
+     *
+     * 判定不在这里做——机器人侧把结论经聊天标记回传（[BOT_COMMAND_PASS_MARKER] /
+     * [BOT_COMMAND_FAIL_MARKER]），桩收到即落结论。这样「命令是否真的执行成功、输出是否真的拿到」
+     * 由**发起方**判定，而不是由服务端自证。
+     */
+    private fun prepareBotCommandScenario(player: Player) {
+        // 只清背包，不给权限附件：本场景验的就是「OP 由框架的 ops.json 提供」而非桩内授权
+        player.inventory.clear()
+        sendReadySignal(player)
+        armScenarioTimeout()
     }
 
     /**
@@ -311,6 +330,11 @@ class McTestkitE2eHarnessPlugin : McTestkitHarnessPlugin(), Listener {
             return
         }
         val message = event.message.trim()
+        // bot 命令通道自检：机器人验完两段后经标记回传结论，桩据此落判定
+        if (scenario == ScenarioName.BOT_COMMAND) {
+            handleBotCommandVerdict(event.player.name, message)
+            return
+        }
         // 崩溃接管：默认后端收到崩溃触发标记 → 模拟宕机（不写结果，由存活后端判定）
         if (scenario == ScenarioName.CRASH_TAKEOVER && message == TRIGGER_CRASH_MARKER) {
             simulateCrash()
@@ -335,6 +359,33 @@ class McTestkitE2eHarnessPlugin : McTestkitHarnessPlugin(), Listener {
                     "backendName" to harnessBackendName(),
                 ),
             )
+        }
+    }
+
+    /**
+     * 处理 bot 命令通道自检的结论标记。
+     *
+     * 机器人把两段验证（console 通道拿输出、玩家 OP 发命令）的结果拼成
+     * `E2E_BOT_COMMAND_PASS:<明细>` 或 `E2E_BOT_COMMAND_FAIL:<原因>` 回传，桩据此落结论。
+     */
+    private fun handleBotCommandVerdict(playerName: String, message: String) {
+        val passed = message.startsWith(BOT_COMMAND_PASS_MARKER)
+        val failed = message.startsWith(BOT_COMMAND_FAIL_MARKER)
+        if (!passed && !failed) {
+            return
+        }
+        val detail = message.substring(
+            if (passed) BOT_COMMAND_PASS_MARKER.length else BOT_COMMAND_FAIL_MARKER.length,
+        ).trim()
+        runOnMainThread {
+            if (passed) {
+                pass(
+                    "bot 命令通道实机验证通过：console 通道拿到真实输出 + 玩家 OP 生效",
+                    mapOf("player" to playerName, "detail" to detail),
+                )
+            } else {
+                fail("bot 命令通道实机验证失败：$detail")
+            }
         }
     }
 
@@ -389,6 +440,12 @@ class McTestkitE2eHarnessPlugin : McTestkitHarnessPlugin(), Listener {
 
         /** 崩溃接管：机器人发给默认后端的「立即崩溃」触发标记（聊天）；桩收到即 halt 模拟宕机（template 约定，非冻结契约）。 */
         const val TRIGGER_CRASH_MARKER = "E2E_TRIGGER_CRASH"
+
+        /** bot 命令通道自检通过标记（聊天）；桩收到即判 PASS（template 约定，非冻结契约）。 */
+        const val BOT_COMMAND_PASS_MARKER = "E2E_BOT_COMMAND_PASS:"
+
+        /** bot 命令通道自检失败标记（聊天）；桩收到即判 FAIL 并带原因。 */
+        const val BOT_COMMAND_FAIL_MARKER = "E2E_BOT_COMMAND_FAIL:"
 
         /** 模拟崩溃的 JVM 退出码（`Runtime.halt`）。 */
         const val CRASH_EXIT_CODE = 70

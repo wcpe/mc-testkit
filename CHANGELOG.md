@@ -30,6 +30,7 @@
 ### 修复
 
 - **老 paperclip 服务端无法从深层缓存路径启动（FR-02 / FR-21）**：Paper 1.12.2 的 paperclip（`io.papermc.paperclip.Paperclip`）**读不到位于 `~/.gradle/caches/mc-testkit-jars/...` 的自身 jar**，绝对路径与相对路径都报 `Error: Unable to access jarfile`；同一文件拷到浅层目录即正常，原因在 paperclip 自己的路径处理，不在编排器。现对 paperclip 引导件（按包前缀 `io.papermc.paperclip.` 识别）**先把 jar 拷进运行目录**为 `.mc-testkit-<key>-server.jar`，再用相对路径 `java -jar` 启动。拷贝按「长度 + 修改时间」判断、一致即跳过，故换构建才真正付一次拷贝开销；先写 `.tmp` 再原子改名，避免上一轮被强杀留下半截 jar 被下一轮接着用；副本名带 key，多后端不互相覆盖。自包含 jar 与 thin jar 不受影响，不走这条路。
+- **机器人依赖安装联网失败会打断整条 e2e 链（FR-04 / FR-06）**：每个场景都会跑一次 `npm install`，而 npm 即使依赖已完整也会向 registry 请求核对 dist-tags——依赖就绪时白等数秒，网络一抖就直接失败（实测两次 `SSLHandshakeException: Remote host terminated the handshake`，与本次要跑的测试毫无关系）。现加 `--prefer-offline`：优先用本地缓存、**只在缺包时联网**，保留首次运行可安装的能力。不用 `--offline`，那会让首次运行直接失败。
 
 ## [0.16.0] - 2026-10-17
 

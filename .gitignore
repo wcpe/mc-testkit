@@ -35,3 +35,6 @@ Thumbs.db
 **/node_modules/
 *.log
 /.workbuddy/
+
+# npm pack 产物（bot-core 等包的发版压缩包，内容由 src/ + package.json 派生，registry 才是分发真源）
+*.tgz

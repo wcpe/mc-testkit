@@ -77,9 +77,7 @@ module.exports = async function runBotCommand(context) {
   }
 
   // ── 回传结论 ──
-  const detail = failures.length === 0
-    ? evidence.join(' ; ')
-    : failures.join(' ; ')
+  const detail = failures.length === 0 ? evidence.join(' ; ') : failures.join(' ; ')
 
   if (failures.length === 0) {
     log(`命令通道自检全部通过：${detail}`)

@@ -27,6 +27,10 @@
 
 - **`acceptance-driver` 的 `compileTestKotlin` 任务图里出现 `:ui:ui-server:test` 与本插件无关**：该边来自消费方脚本自身的 `:platform:bukkit:plugin` 里 `tasks.named<Jar>("jar") { dependsOn(":ui:ui-server:test") }`（「打 Bukkit 包前先跑内置 UI/HUD 编译回归」），而 `acceptance-driver` 以 `compileOnly(project(":platform:bukkit:plugin"))` 引用主插件模块，于是 `compileTestKotlin → compileKotlin → plugin:jar → plugin:taboolibMainTask → ui:ui-server:test` 被连带拉入。本插件源码对 `testClasses` / `sourceSets` / `runtimeClasspath` **零引用**，且实测把 `id("top.wcpe.mc-testkit")` 从 `acceptance-driver` 与 `plugin` 两处都注释掉后该任务**仍在图中**（1 → 1），而单注释消费方那行 `dependsOn` 后立刻消失（1 → 0）——**归因确定在消费方脚本，不在本框架**。详见本次任务报告的证据链。
 
+### 修复
+
+- **老 paperclip 服务端无法从深层缓存路径启动（FR-02 / FR-21）**：Paper 1.12.2 的 paperclip（`io.papermc.paperclip.Paperclip`）**读不到位于 `~/.gradle/caches/mc-testkit-jars/...` 的自身 jar**，绝对路径与相对路径都报 `Error: Unable to access jarfile`；同一文件拷到浅层目录即正常，原因在 paperclip 自己的路径处理，不在编排器。现对 paperclip 引导件（按包前缀 `io.papermc.paperclip.` 识别）**先把 jar 拷进运行目录**为 `.mc-testkit-<key>-server.jar`，再用相对路径 `java -jar` 启动。拷贝按「长度 + 修改时间」判断、一致即跳过，故换构建才真正付一次拷贝开销；先写 `.tmp` 再原子改名，避免上一轮被强杀留下半截 jar 被下一轮接着用；副本名带 key，多后端不互相覆盖。自包含 jar 与 thin jar 不受影响，不走这条路。
+
 ## [0.16.0] - 2026-10-17
 
 ### 新增

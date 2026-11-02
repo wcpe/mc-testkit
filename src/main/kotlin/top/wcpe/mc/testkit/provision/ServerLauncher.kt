@@ -81,6 +81,10 @@ fun provisionPidFile(runDirectory: File, key: String): File = File(runDirectory,
 internal fun provisionClasspathFile(runDirectory: File, key: String): File =
     File(runDirectory, ".mc-testkit-$key-classpath.jar")
 
+/** 某进程 key 的 paperclip 引导 jar 副本：`.mc-testkit-<key>-server.jar`（仅 paperclip 场景生成，见 [ServerLauncher]）。 */
+internal fun provisionStagedServerJar(runDirectory: File, key: String): File =
+    File(runDirectory, ".mc-testkit-$key-server.jar")
+
 /**
  * 精简的服务端 / 代理启动助手（内置下载与运行）。
  *
@@ -195,7 +199,15 @@ object ServerLauncher {
                 add(executable)
                 addAll(jvmArgs)
                 add("-jar")
-                add(launchArgument(runDirectory, jar))
+                // paperclip 必须用运行目录里的副本（见 paperclipLaunchArgument 里的真机记录）：
+                // 它无法从 ~/.gradle/caches/... 这样的深层路径启动。
+                add(
+                    if (mainClass != null && mainClass.startsWith(PAPERCLIP_MAIN_CLASS_PREFIX)) {
+                        paperclipLaunchArgument(runDirectory, jar, key)
+                    } else {
+                        launchArgument(runDirectory, jar)
+                    },
+                )
                 addAll(serverArgs)
             }
         }
@@ -280,6 +292,28 @@ object ServerLauncher {
      */
     private fun launchArgument(runDirectory: File, target: File): String =
         relativeClasspath(runDirectory, target)?.replace('/', File.separatorChar) ?: target.absolutePath
+
+    private fun paperclipLaunchArgument(runDirectory: File, jar: File, key: String): String {
+        val staged = provisionStagedServerJar(runDirectory, key)
+        // 长度与修改时间都一致就认为内容没变：换构建才会触发真正的拷贝。
+        val needsCopy = !staged.isFile ||
+            staged.length() != jar.length() ||
+            staged.lastModified() != jar.lastModified()
+        if (needsCopy) {
+            // 先写临时文件再原子改名：避免上一轮被强杀时留下半截 jar，下一轮接着用而启动失败。
+            val tmp = File(runDirectory, "${staged.name}.tmp")
+            jar.copyTo(tmp, overwrite = true)
+            if (staged.exists() && !staged.delete()) {
+                throw IllegalStateException("无法替换旧的 paperclip 启动 jar：${staged.absolutePath}")
+            }
+            if (!tmp.renameTo(staged)) {
+                throw IllegalStateException("无法把 paperclip 启动 jar 就位：${tmp.absolutePath} → ${staged.absolutePath}")
+            }
+            // 保持原文件的修改时间，让下一次判断可靠命中“无需拷贝”。
+            staged.setLastModified(jar.lastModified())
+        }
+        return launchArgument(runDirectory, staged)
+    }
 
     /** 运行库相对运行目录的路径（`/` 分隔）；跨盘符等无法相对化时返回 null。 */
     private fun relativeClasspath(runDirectory: File, entry: File): String? = try {

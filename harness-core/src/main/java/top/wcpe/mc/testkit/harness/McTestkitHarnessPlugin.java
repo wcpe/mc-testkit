@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit.harness;
 
 import org.bukkit.Bukkit;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -457,18 +458,18 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
      * Paper 的 {@code AsyncCatcher} 也会拦），因此**整段执行投到主线程**。
      * 回执也在主线程发（Bukkit 发包须主线程）。
      *
-     * <h2>输出捕获的真实限制（不假装能拿到全部输出）</h2>
+     * <h2>输出捕获</h2>
      *
-     * 服务端把命令输出写给传入的 {@code CommandSender}，而 console 发送者的实现是直接
-     * {@code System.out.println}，**方法内没有可供拦截的接缝**。想换成自定义包装 sender 去收
-     * {@code sendMessage} 也不可行：Paper 的 {@code VanillaCommandWrapper.getListener} 只认
-     * 实体 / 方块 / 远程控制台 / console / 代理 sender 这几种具体类型，遇到别的类型直接抛
-     * {@code IllegalArgumentException}——那样连命令都跑不起来，属于为了输出而毁掉执行。
+     * 优先走 Paper 的 {@code Server#createCommandSender(Consumer&lt;Component&gt;)}：它返回
+     * {@code FeedbackForwardingSender}，把命令输出转发给给定的消费者，因此能拿到真实业务输出。
+     * 而 {@code VanillaCommandWrapper.getListener} 明确支持该类型（走 {@code asVanilla()}），
+     * 命令照常执行——这一点已由反编译 1.20.1 服务端确认，不是推测。
      *
-     * <p>因此这里**只用真实的 console 发送者**，回执的 {@code output} 是诚实的执行结果说明：
-     * 命令未被接受（含常见原因）或执行时抛出的异常类型与消息；命令成功时的实际业务输出
-     * 仍只出现在服务端控制台日志里。{@code PASS} 只表示「命令被服务端接受并执行」，不表示
-     * 「网络状态已符合预期」——后者正是 {@code E2E_ASSERT} 那类服务端断言要回答的问题。
+     * <p>该 API 自 Paper 1.16 起提供；更早的纯 Spigot / 老 Paper 上不存在，此时回退到真实
+     * console 发送者，{@code output} 只报执行结果说明。回退是**降级而非失败**：命令照常执行，
+     * 只是拿不到业务输出。用反射调用是因为 harness-core 的编译目标是 Java 8 且要跨
+     * 1.7.10–1.21 运行，直接调 {@code createCommandSender} 会在缺该方法的服务端上抛
+     * {@code NoSuchMethodError}，把「降级」变成「崩溃」。
      *
      * @param requester 触发者（回执发回给他；已离线时只记日志）
      * @param id        请求 id
@@ -482,9 +483,18 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
             passed = false;
             output = "命令为空";
         } else {
+            // 收集命令往 sender 写的每一行；拿不到捕获通道时保持为空，此时只回执行结果说明
+            java.util.List<String> captured = new java.util.ArrayList<>();
+            CommandSender sender = commandFeedbackSender(captured);
             try {
-                passed = getServer().dispatchCommand(getServer().getConsoleSender(), command);
-                output = passed ? "命令已被服务端接受并执行" : "命令未被服务端接受（未知命令或无控制台权限）";
+                passed = getServer().dispatchCommand(sender, command);
+                if (!passed) {
+                    output = "命令未被服务端接受（未知命令或无控制台权限）";
+                } else if (captured.isEmpty()) {
+                    output = "命令已被服务端接受并执行";
+                } else {
+                    output = String.join(" | ", captured);
+                }
             } catch (RuntimeException e) {
                 // 命令执行体自己抛出的异常：必须带上类型与消息，否则「失败」二字对排查毫无帮助
                 passed = false;
@@ -503,6 +513,75 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
                 + " 命令=/" + command + " 结果=" + output);
         }
         sendCommandDone(requester, McTestkitProtocol.commandDone(id, passed, output));
+    }
+
+    /**
+     * 取一个能把命令输出回传的 sender；拿不到就退回真实 console sender。
+     *
+     * <p>走 Paper 的 {@code Server#createCommandSender(Consumer)}：它返回
+     * {@code FeedbackForwardingSender}，命令写的每一行都会转给这个消费者。用反射调用有两个
+     * 硬理由，缺一不可：
+     *
+     * <ol>
+     *   <li><b>版本兼容</b>：该方法在 Paper 1.16+ 才有，纯 Spigot / 更早的 Paper 上没有。
+     *       直接调用会在这些服务端上抛 {@code NoSuchMethodError}，把「降级」变成「崩溃」。</li>
+     *   <li><b>Java 8 字节码</b>：harness-core 编译目标是 Java 8 且跨 1.7.10–1.21 运行，
+     *       编译期不假设该方法存在更安全。</li>
+     * </ol>
+     *
+     * <p>消费者收到的 {@code Component} 转成纯文本再收集：回执是给断言与日志看的，
+     * 保留颜色码会让「输出里到底写了什么」更难读。
+     *
+     * @param captured 收集命令输出的列表（按服务端调用顺序）
+     * @return 能捕获输出的 sender；该服务端不支持时返回真实 console sender（此时列表保持为空）
+     */
+    private CommandSender commandFeedbackSender(final java.util.List<String> captured) {
+        CommandSender console = getServer().getConsoleSender();
+        try {
+            java.lang.reflect.Method create = getServer().getClass()
+                .getMethod("createCommandSender", java.util.function.Consumer.class);
+            Object sender = create.invoke(getServer(), new java.util.function.Consumer<Object>() {
+                @Override
+                public void accept(Object component) {
+                    String text = componentText(component);
+                    if (text != null && !text.trim().isEmpty()) {
+                        captured.add(text.trim());
+                    }
+                }
+            });
+            if (sender instanceof CommandSender) {
+                return (CommandSender) sender;
+            }
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+            // 该方法不存在（纯 Spigot / 老 Paper）或签名不同：降级到 console sender，
+            // 命令照常执行，只是拿不到业务输出。不告警——这是预期内的版本差异，不是故障。
+        }
+        return console;
+    }
+
+    /**
+     * 把 Adventure {@code Component} 转成不带颜色码的纯文本。
+     *
+     * <p>同样用反射：harness-core 不能编译期依赖 Adventure（旧服务端没有），
+     * 而 {@code PlainTextComponentSerializer} 在 Paper 各版本上都在。
+     *
+     * @param component Adventure 组件
+     * @return 纯文本；转换失败时返回 {@code null}（调用方会跳过这一行）
+     */
+    private String componentText(Object component) {
+        if (component == null) {
+            return null;
+        }
+        try {
+            Class<?> serializerClass =
+                Class.forName("net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer");
+            Object serializer = serializerClass.getMethod("plainText").invoke(null);
+            Object text = serializerClass.getMethod("serialize", Class.forName("net.kyori.adventure.text.Component"))
+                .invoke(serializer, component);
+            return text == null ? null : text.toString();
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+            return null;
+        }
     }
 
     /**
@@ -681,6 +760,11 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
 
         @Override
         public void onPluginMessageReceived(String channel, Player player, byte[] message) {
+            // 先记一条到达日志：通道「收不到」是最难排查的故障（机器人侧只表现为超时），
+            // 有这一行就能立刻区分「payload 没到」与「到了但解析/执行有问题」。
+            getLogger().info("[E2E] 收到命令通道消息 channel=" + channel
+                + " 来自=" + (player == null ? "<null>" : player.getName())
+                + " 字节数=" + (message == null ? -1 : message.length));
             if (!McTestkitProtocol.COMMAND_CHANNEL.equals(channel)) {
                 return;
             }

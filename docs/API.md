@@ -369,7 +369,9 @@ dependencies {
 
 **执行语义与线程**：桩收到请求后**投主线程**执行 `server.dispatchCommand(server.getConsoleSender(), command)`（命令会读写世界对象，Folia 上跨线程直接抛线程检查异常、Paper 的 `AsyncCatcher` 也会拦），回执也在主线程发。`<PASS>` 只表示「命令被服务端接受并执行」（`dispatchCommand` 返回 `true`），**不表示**「世界状态已符合预期」——后者是服务端断言要回答的问题。
 
-**`<output>` 的限制（如实说明，不假装能拿到全部输出）**：服务端把命令输出写给传入的 `CommandSender`，而 console 发送者的实现是直接 `System.out.println`，方法内没有可拦截的接缝；换成自定义包装 sender 也不行——Paper 的 `VanillaCommandWrapper.getListener` 只认实体 / 方块 / 远程控制台 / console / 代理 sender 这几种具体类型，遇到别的类型直接抛 `IllegalArgumentException`，那样连命令都跑不起来。因此这里的 `<output>` 是**执行结果说明**：命令未被接受（含常见原因）、或执行时抛出的异常类型与消息；命令成功时的业务输出仍只出现在服务端控制台日志。
+**`<output>` 是真实业务输出（Paper 1.16+）**：桩优先用 Paper 的 `Server#createCommandSender(Consumer<Component>)` 取一个能回传输出的 sender——它返回 `FeedbackForwardingSender`，命令写的每一行都会转给给定消费者，因此 `<output>` 就是命令真的打印了什么。`VanillaCommandWrapper.getListener` 对该类型有专门分支（走 `asVanilla()`），命令照常执行（已由反编译 1.20.1 服务端确认）。实测输出形如 `There are 1 of a max of 20 players online: CmdBot`、`Set the time to 1000`。
+
+**旧服务端降级**：该 API 自 Paper 1.16 起提供；纯 Spigot / 更早的 Paper 上不存在，此时回退到真实 console 发送者，`<output>` 退化为**执行结果说明**（命令未被接受的原因 / 抛出的异常类型与消息），业务输出只留在服务端控制台日志。回退是降级而非失败：命令照常执行。桩用反射调用它，避免在缺该方法的服务端上抛 `NoSuchMethodError` 把降级变成崩溃。
 
 **机器人侧**：`@wcpe/mc-testkit-bot/lib/commands` 提供通信原语 `sendCommandPayload(bot, id, command)` / `waitForCommandResult(bot, id, timeoutMs)`。它在首次发送前调用 mineflayer 的 `registerChannel(name, parser, custom=true)` 声明通道——**这一步不能省**：服务端把回执发给某个玩家前会检查该玩家是否声明过接收这个通道（已核对 Paper 1.20.1 / 1.20.4 的 `CraftPlayer.sendPluginMessage`；旧版服务端未逐一核对，但声明通道是协议标准动作，对旧版同样必需），未声明则**静默丢弃**，机器人侧只会看到超时。「发命令 → 拿到结构化结果」的高层封装见 §3.4.2，本层不做、也不替调用方重试。
 
@@ -407,10 +409,10 @@ if (!batch.ok) throw new Error(batch.output)
 - `commands` 元素可以是字符串，也可以是 `{ command, label }`——带 `label` 时失败说明能说清「第几步是哪件事」失败了。
 - **顺序而非并发**：命令之间常有因果（先设游戏模式再发物品、先 `setblock` 再 `execute if block`），并发发出后服务端按什么顺序执行不由调用方决定，场景会随机失败。
 
-**`output` 是执行结果说明，不是命令的业务输出。** 与 §3.4.1「`<output>` 的限制」同源：桩侧用的是真实的 console 发送者，它直接 `System.out.println`，没有可拦截的接缝，换自定义包装 sender 又会让 Paper 的 `VanillaCommandWrapper.getListener` 抛 `IllegalArgumentException`、命令连跑都跑不起来。因此：
+**`output` 是命令的真实业务输出（Paper 1.16+）**，见 §3.4.1 的「`<output>` 是真实业务输出」：
 
-- `ok: true` **只**表示「命令被服务端接受并执行」，**不**表示「世界状态已符合预期」——后者是服务端断言（在桩侧真的检查世界状态、据此写结果文件）要回答的问题。
-- 命令成功时的实际业务输出**拿不到**，仍只出现在服务端控制台日志里。要断言执行效果，用服务端断言或由桩在命令后自行检查世界状态。
+- `ok: true` 表示「命令被服务端接受并执行」，`output` 里是命令实际打印的内容（如 `Set the time to 1000`）。它**仍不表示**「世界状态已符合预期」——那要由服务端断言或桩在命令后自行检查世界状态来回答。
+- 旧服务端（纯 Spigot / Paper < 1.16）上 `output` 退化为执行结果说明，业务输出只留在服务端控制台日志。
 - 失败时 `output` 是具体原因：命令未被接受（含常见原因）、或命令执行体抛出的异常类型与消息。
 
 **不 reject**：所有失败都体现在 `ok: false` 与 `output` 里，`await` 之后直接判 `ok` 即可，不必写 `try/catch`。刻意不 reject 的理由是——这些都不是「异常」，而是场景要写进日志、并据此判失败的**正常结果**；做成 reject 会逼每个调用方各写一遍 `try/catch`，漏掉的那条要等到场景超时才暴露。

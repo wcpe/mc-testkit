@@ -28,6 +28,16 @@ enum class ScenarioName(val id: String) {
     CRASH_TAKEOVER("crash-takeover"),
 
     /**
+     * bot 命令通道自检场景（FR-29 / FR-30 / FR-31，ADR-0027）：机器人先用 `execCommand` 以
+     * console 身份执行命令并断言**能拿到真实输出**，再用 `bot.chat` 以玩家身份执行需要 OP 的
+     * 命令验证 `op = true` 生效。两段都通过才 PASS。
+     *
+     * <p>这是框架自身能力的**实机验证场景**，不是业务示例——它存在的意义是把
+     * 「命令通道到底通不通、output 到底拿不拿得到」从推测变成事实。
+     */
+    BOT_COMMAND("bot-command"),
+
+    /**
      * 持久手测（serve）空闲场景（持久手测 serve，ADR-0011）：mc-testkit serve 模式经 `MC_TESTKIT_E2E_SCENARIO`
      * 下发此**保留 id**（字面量对齐 `McTestkitContract.SERVE_SCENARIO_ID`，不 import 插件包）。
      * 桩据此**空闲**：不驱动任何场景、不挂超时、不写结果、不关服——把服务端留给真人客户端手测。

@@ -15,7 +15,9 @@ plugins {
 }
 
 group = "top.wcpe.mc"
-version = "0.1.1"
+// 0.2.0：新增 McTestkitServerAssertions（服务端断言登记表）与桩基类的
+// registerServerAssertion / handleAssertionChat。属于**新增能力**，按语义化版本升 minor。
+version = "0.2.0"
 
 repositories {
     mavenCentral()
@@ -61,6 +63,10 @@ publishing {
         }
     }
     repositories {
+        // 本地发布入口：`./gradlew publishToMavenLocal` 后可被同机其它工程
+        // 以 `mavenLocal()` 解析。开发期用它验证桩与胶水层的联动，
+        // 不必每改一次就推到远端仓库。
+        mavenLocal()
         maven {
             name = "wcpe"
             url = uri(

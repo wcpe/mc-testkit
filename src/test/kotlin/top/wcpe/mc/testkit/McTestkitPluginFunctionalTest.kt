@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * 以真实消费者视角驱动插件（Gradle TestKit，集成测试）。
@@ -66,5 +67,47 @@ class McTestkitPluginFunctionalTest {
             .build()
 
         assertEquals(TaskOutcome.SUCCESS, result.task(":help")?.outcome)
+    }
+
+    @Test
+    @DisplayName("工程评估完成后再应用插件应显式失败而非静默丢弃声明")
+    fun applyAfterProjectEvaluatedFailsLoudly() {
+        write("settings.gradle.kts", """rootProject.name = "late-apply-consumer"""")
+        write(
+            "build.gradle.kts",
+            """
+            import top.wcpe.mc.testkit.dsl.McTestkitExtension
+
+            plugins {
+                java
+                // apply false：先把插件类加载进构建脚本类路径，但不在 plugins 块立即应用
+                id("top.wcpe.mc-testkit") apply false
+            }
+
+            // 晚挂载：等到工程评估完成才 apply，并在 apply 之后声明 DSL。
+            // 这是本框架**刻意不支持**的用法（见 CHANGELOG「已知限制」）：
+            // 装配依赖 project.afterEvaluate 等 mcTestkit { } 求值完，而晚挂载时
+            // 声明必然发生在装配之后——即便不崩，声明也会被丢弃。
+            gradle.projectsEvaluated {
+                project.pluginManager.apply("top.wcpe.mc-testkit")
+                val ext = project.extensions.getByType(McTestkitExtension::class.java)
+                ext.backend("s1", { port = 25565 })
+                ext.scenario("smoke", { backend = "s1" })
+            }
+            """.trimIndent(),
+        )
+
+        // 断言「显式失败」而不是「静默继续」：崩溃信息与框架有关、可归因，
+        // 而静默丢弃声明会让消费方以为配置生效，直到跑 E2E 才发现没跑起来。
+        val result = GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withPluginClasspath()
+            .withArguments("tasks", "--stacktrace")
+            .buildAndFail()
+
+        assertTrue(
+            result.output.contains("Cannot run Project.afterEvaluate(Action) when the project is already evaluated"),
+            "晚挂载应以 Gradle 的 afterEvaluate 时机错误显式失败，实际输出：\n${result.output}",
+        )
     }
 }

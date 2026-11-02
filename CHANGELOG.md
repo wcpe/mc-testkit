@@ -4,6 +4,19 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+### 新增
+
+- **`harness-core` 0.2.0：服务端断言登记表，并把取证（probe）与断言（assertion）分成两条通道**：此前桩只能把"想看一眼"的取证明成断言，而断言一旦返回 `pass` 就写结果文件并关服——机器人随后上报的真实 `FAIL` 打在已关闭的服务端上根本到不了，**真实失败被自己的取证结论洗成通过**（真机出现过：恒 PASS 的名字解析探针掩盖了"状态挂不上"的失败，多次"全绿"含假绿）。现新增 `McTestkitServerAssertions` 承载断言登记，基类补 `registerServerAssertion`（判定，写结果文件并关服，语义不变）与 `registerProbe`（只经 `E2E_PROBE_RESULT:<name>:<text>` 回显给触发者，**不写结果文件、不关服**，判定权留在机器人/编排侧）。二者共用触发前缀与命名空间，重名在**登记期**（onEnable）即中文报错——若放任同名，取证会永久遮蔽断言、该断言次次不执行而表现为"永远超时"。纯新增：既有 `pass` / `fail` / `onHarnessEnabled` 等 API 与「继承基类自行判定」的路径完全不变（SemVer minor）。
+
+### 已知限制
+
+- **不支持在工程评估完成后才应用本插件（晚挂载）**：`McTestkitPlugin.apply` 依赖 `project.afterEvaluate` 等待 `mcTestkit { }` 求值完毕再装配任务；若工程已评估完成才 apply（消费方在 `gradle.projectsEvaluated` / 其它工程的 `afterEvaluate` 里 apply，或基座构建晚挂载），Gradle 会直接抛 `Cannot run Project.afterEvaluate(Action) when the project is already evaluated.`，构建在配置期失败。**这是刻意的**：插件契约要求「先 `apply` 再配置」——`mcTestkit { }` 扩展由 `apply` 创建，晚挂载时消费方的声明必然发生在装配之后，即便把崩溃改成静默继续，声明也会被丢弃，反而把「配置没生效」伪装成「配置好了」。故此处保持显式失败，不做兼容。请改用 `plugins { id("top.wcpe.mc-testkit") }` 正常应用。
+
+### 说明
+
+- **`acceptance-driver` 的 `compileTestKotlin` 任务图里出现 `:ui:ui-server:test` 与本插件无关**：该边来自消费方脚本自身的 `:platform:bukkit:plugin` 里 `tasks.named<Jar>("jar") { dependsOn(":ui:ui-server:test") }`（「打 Bukkit 包前先跑内置 UI/HUD 编译回归」），而 `acceptance-driver` 以 `compileOnly(project(":platform:bukkit:plugin"))` 引用主插件模块，于是 `compileTestKotlin → compileKotlin → plugin:jar → plugin:taboolibMainTask → ui:ui-server:test` 被连带拉入。本插件源码对 `testClasses` / `sourceSets` / `runtimeClasspath` **零引用**，且实测把 `id("top.wcpe.mc-testkit")` 从 `acceptance-driver` 与 `plugin` 两处都注释掉后该任务**仍在图中**（1 → 1），而单注释消费方那行 `dependsOn` 后立刻消失（1 → 0）——**归因确定在消费方脚本，不在本框架**。详见本次任务报告的证据链。
+
+
 ## [0.16.0] - 2026-10-17
 
 ### 新增

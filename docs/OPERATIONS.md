@@ -21,6 +21,8 @@
 
 > **`harness-core` 是独立版本的共享构件**，不在根工程（root `settings.gradle.kts` 刻意不 include 它），故 `./gradlew publish` 覆盖不到，发布步骤单独用 `-p harness-core` 执行。它的版本号（`harness-core/build.gradle.kts` 的 `version`）与插件 tag **独立演进**，工作流不做 tag 比对，只做「远端已存在该版本则跳过」的幂等判断——Maven 构件不可覆盖，重复发布会红掉整条链。消费方的桩插件 / `template/harness` 按版本号依赖它，所以**发版时必须一起发**，否则会出现「模板与文档已引用新版本、远端却没有」的错位，消费方解析失败且看不出原因。
 
+> **`@wcpe/mc-testkit-bot` 同理**（`bot-core/package.json` 的 `version`，发布到 maven.wcpe.top 的 **npm-release** 源）。它此前完全没有进入任何 CI 工作流，只能靠手工 `npm publish`——于是 `0.1.0` 之后新增的 `lib/commands` / `lib/exec` 长期没发出去，而模板已 `import` 它们，消费方装完模板一跑就报模块找不到。现已纳入 `release.yml`，同样按「远端已有该版本则跳过」保证幂等（npm 版本不可覆盖）。消费方安装该包需先声明作用域源：`@wcpe:registry=https://maven.wcpe.top/repository/npm-release/`（**匿名可读**，安装不需要凭据；只有 `npm publish` 需要，凭据复用 `WCPE_MAVEN_USERNAME` / `WCPE_MAVEN_PASSWORD`）。
+
 **发布凭据**（只存 GitHub，不入库）：
 
 | 名称 | 承载位置 | 用途 |
@@ -35,7 +37,7 @@
 | 工作流 | 触发 | 内容 |
 |---|---|---|
 | `ci.yml` | 每个 PR + `master` 推送 | 插件构建 + ktlint + 单元/TestKit；模板 bot 静态检查。**是合并门禁**（master 分支保护的必需检查）。**不**拉起真实服务端 |
-| `release.yml` | **推 `v*` tag** | 校验版本一致 → 重跑验证门 → 发布根插件与 `harness-core` 到 maven.wcpe.top → 建 GitHub Release |
+| `release.yml` | **推 `v*` tag** | 校验版本一致 → 重跑验证门 → 发布根插件与 `harness-core` 到 maven.wcpe.top，以及 `@wcpe/mc-testkit-bot` 到 npm 源 → 建 GitHub Release |
 | `e2e.yml` | **仅手动**（Actions → E2E → Run workflow） | 并行矩阵：Paper 10 代表版本 `e2eSmoke` + Waterfall 全场景 / BungeeCord 集群 / Velocity 代理 / Folia 烟雾 |
 
 实机 E2E 会下载服务端/代理 jar；工作流用 `actions/cache` 复用 `~/.gradle/caches/mc-testkit-jars`。**发版前应手动跑一遍 E2E**（`testing-and-quality.md`）。矩阵与缓存设计见 `docs/specs/e2e-parallel-matrix.md`。

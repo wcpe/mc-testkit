@@ -49,6 +49,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # bot-core 的发布步骤要用 node / npm 读版本号并执行 npm publish
+      - name: 安装 Node 18
+        uses: actions/setup-node@v5
+        with:
+          node-version: '18'
+
       - name: 配置 Gradle（带依赖 / 构建缓存）
         uses: gradle/actions/setup-gradle@v5
 
@@ -120,6 +126,50 @@ jobs:
           else
             echo "远端尚无 harness-core $HARNESS_VERSION，开始发布。"
             ./gradlew -p harness-core publish --no-daemon --stacktrace
+          fi
+
+      # bot-core 同样是**独立版本**的共享构件（`bot-core/package.json` 的 version），发布到
+      # maven.wcpe.top 的 npm 源。此前它一直靠手工 `npm publish`，没有任何 CI 步骤——结果是
+      # 0.1.0 之后新增的 `lib/commands` / `lib/exec` 长期没发出去，而模板已经 import 它们，
+      # 消费方装模板后一跑就报模块找不到。
+      #
+      # 与 harness-core 同样只做「已发布则跳过」：npm 版本同样不可覆盖，重复发布会 403 并红掉整条链。
+      # 幂等判断刻意用 curl 读 registry 元数据而不用 `npm view`：后者会受运行器上 npmrc 里残留配置
+      # （如失效的 _authToken）影响而非零退出，从而把「已发布」误判成「未发布」并触发重复发布。
+      - name: 发布 bot-core 到 npm 源（已发布则跳过）
+        env:
+          WCPE_MAVEN_USERNAME: ${{ secrets.WCPE_MAVEN_USERNAME }}
+          WCPE_MAVEN_PASSWORD: ${{ secrets.WCPE_MAVEN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          BOT_NAME="$(node -p "require('./bot-core/package.json').name")"
+          BOT_VERSION="$(node -p "require('./bot-core/package.json').version")"
+          BOT_REGISTRY="https://maven.wcpe.top/repository/npm-release/"
+          # 作用域包在 registry URL 里要转义成 %2f（@wcpe/mc-testkit-bot → @wcpe%2fmc-testkit-bot）
+          PKG_PATH="${BOT_NAME/\//%2f}"
+          echo "bot-core 版本：$BOT_NAME@$BOT_VERSION（与插件版本 ${{ github.ref_name }} 独立演进）"
+
+          META="$(curl -fsS "${BOT_REGISTRY}${PKG_PATH}" || echo '{}')"
+          # 只认 versions 对象里的键，避免版本号恰好出现在别的字段里造成误判
+          if printf '%s' "$META" | node -e '
+              let raw = ""
+              process.stdin.on("data", (c) => { raw += c })
+              process.stdin.on("end", () => {
+                try {
+                  const versions = Object.keys(JSON.parse(raw).versions || {})
+                  process.exit(versions.includes(process.argv[1]) ? 0 : 1)
+                } catch { process.exit(1) }
+              })
+            ' "$BOT_VERSION"; then
+            echo "$BOT_NAME@$BOT_VERSION 已存在于远端，跳过发布（npm 版本不可覆盖）。"
+          else
+            echo "远端尚无 $BOT_NAME@$BOT_VERSION，开始发布。"
+            # 凭据只写进临时 userconfig，不落进仓库、也不覆盖运行器的全局 npmrc
+            TMP_NPMRC="$(mktemp)"
+            trap 'rm -f "$TMP_NPMRC"' EXIT
+            printf '//maven.wcpe.top/repository/npm-release/:_auth=%s\n' \
+              "$(printf '%s:%s' "$WCPE_MAVEN_USERNAME" "$WCPE_MAVEN_PASSWORD" | base64 -w0)" > "$TMP_NPMRC"
+            npm publish ./bot-core --userconfig "$TMP_NPMRC"
           fi
 
       - name: 建 GitHub Release（正文由 PR 自动生成）

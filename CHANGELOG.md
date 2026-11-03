@@ -6,6 +6,11 @@
 
 ## [未发布]
 
+### 修复
+
+- **`@wcpe/mc-testkit-bot` 的新增能力从未发布到 npm 源，照模板接过的人一跑就报模块找不到（FR-09 / FR-30 / FR-31）**：远端 npm 源长期停在 `0.1.0`，其 tarball 里**不含** `src/lib/commands.js` 与 `src/lib/exec.js`——而 `template/bot` 的 `execCommandDemo` 已经 `import` 了 `lib/exec`，依赖却写 `^0.1.0`。也就是说模板是"拷走即可用"的说法在这一点上不成立。原因不是漏执行，而是**整条发布链路缺失**：`.github/workflows/` 里没有任何 npm 发布步骤，`docs/` 也没记录发布方式，只能靠手工 `npm publish`，且当时本机凭据已失效。现发布 `0.2.0`（纯新增 API，按 SemVer 升 minor，与 `harness-core` 对齐），并把发布纳入 `release.yml`：打 tag 时自动发布，用 `-p`/`npm publish` 各自独立版本，配「远端已有该版本则跳过」的幂等判断（npm 版本不可覆盖）。幂等判断刻意用 HTTP 读 registry 元数据而非 `npm view`，因为后者会被运行器上残留的 npmrc 配置干扰而非零退出，把「已发布」误判成「未发布」并触发重复发布。
+- **`template/README.md` 声称「本机 npmrc 已配 `@wcpe:registry`」，实际没有任何地方配过**：不声明作用域源时 `npm install` 会去公共 registry 找 `@wcpe/*` 并报 404。现改为给出可直接粘贴的一行配置，并点明该包**匿名可读**（公开源不需要凭据，只有 `npm publish` 才需要），以及本机若残留过期 `_authToken` 反而会让安装报 401。
+
 ## [0.17.0] - 2026-11-03
 
 ### 新增

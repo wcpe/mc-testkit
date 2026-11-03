@@ -1,11 +1,14 @@
 {
   "name": "@wcpe/mc-testkit-bot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "mc-testkit E2E 机器人公共内核（mineflayer）：端口探测 / 重连 / action 分发 / 优雅收尾（共享胶水构件 共享机器人包）",
   "main": "src/kernel.js",
   "exports": {
     ".": "./src/kernel.js",
     "./lib/*": "./src/lib/*.js"
+  },
+  "publishConfig": {
+    "registry": "https://maven.wcpe.top/repository/npm-release/"
   },
   "files": [
     "src/"

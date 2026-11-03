@@ -360,7 +360,23 @@ object McTestkitTasks {
             // 工作目录 / 命令在配置期定形（不执行 npm）；真正安装在任务执行期
             val botDir = layout.botDir(project.findProperty(BOT_DIR_PROPERTY)?.toString())
             task.workingDir = botDir
-            task.commandLine(npmExecutable(), "install", "--no-audit", "--no-fund")
+            // `--prefer-offline`：依赖已在本地缓存时**不访问网络**。
+            //
+            // ## 为何必须加这个参数
+            //
+            // 每启动一个场景都跑一次 `npm install`。而 npm 默认即使依赖已完整，
+            // 也会向 registry 发请求核对 dist-tags——在依赖已就绪时要等几秒，
+            // 网络一抖就直接失败：
+            //
+            //     javax.net.ssl.SSLHandshakeException: Remote host terminated the handshake
+            //
+            // 真机上见过两次，两次都把整条 e2e 链打断，而它跟被测代码毫无关系。
+            //
+            // `--prefer-offline` 让 npm 优先用本地缓存，**只在缺包时**才联网。
+            // 这保留了“首次运行能装上”的能力，同时把后续场景的网络依赖降到零。
+            //
+            // 不用 `--offline`：那会让首次运行直接失败（缓存里什么都没有）。
+            task.commandLine(npmExecutable(), "install", "--no-audit", "--no-fund", "--prefer-offline")
         }
 
         registerTask(project, McTestkitTaskNames.SYNC_RUNTIME_CACHE) { task ->

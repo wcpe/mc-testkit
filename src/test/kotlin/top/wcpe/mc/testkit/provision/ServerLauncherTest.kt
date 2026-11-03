@@ -11,6 +11,7 @@ import java.util.jar.JarFile
 import java.util.jar.JarOutputStream
 import java.util.jar.Manifest
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -276,7 +277,7 @@ class ServerLauncherTest {
     }
 
     @Test
-    @DisplayName("组装命令时 paperclip 主入口应保留 java -jar 引导流程")
+    @DisplayName("组装命令时 paperclip 主入口应从运行目录内的副本启动")
     fun buildCommandKeepsJarModeForPaperclipMain() {
         val workDir = File("build/test-command-paperclip-${System.nanoTime()}").apply { mkdirs() }
         createThinServerLayout(workDir)
@@ -285,8 +286,70 @@ class ServerLauncherTest {
         val command = ServerLauncher.buildCommand(paperclipJar, workDir, "paperclip", emptyList(), emptyList(), null)
 
         assertTrue(command.contains("-jar"), "paperclip 必须自己引导，不得替它拼 classpath：$command")
-        assertEquals(paperclipJar.name, command[command.indexOf("-jar") + 1], "jar 应相对运行目录给出：$command")
+        // 老 paperclip 无法从深层缓存路径启动，故启动的是运行目录内的副本而非原 jar（见 paperclipLaunchArgument）
+        val staged = provisionStagedServerJar(workDir, "paperclip")
+        assertEquals(staged.name, command[command.indexOf("-jar") + 1], "应从运行目录内的副本启动：$command")
+        assertTrue(staged.isFile, "副本必须已落在运行目录：${staged.absolutePath}")
         assertFalse(provisionClasspathFile(workDir, "paperclip").exists(), "paperclip 场景不应生成 classpath 启动器")
+    }
+
+    @Test
+    @DisplayName("paperclip 副本与缓存 jar 内容一致且重复组装不重拷")
+    fun paperclipStagedCopyIsIdempotent() {
+        val workDir = File("build/test-paperclip-staged-${System.nanoTime()}").apply { mkdirs() }
+        // 源 jar 放在运行目录之外，模拟 ~/.gradle/caches/mc-testkit-jars/... 这类深层缓存路径
+        val cacheJar = createMainOnlyJar(
+            File("build/test-paperclip-cache-${System.nanoTime()}/1620.jar"),
+            "io.papermc.paperclip.Paperclip",
+        )
+        cacheJar.writeBytes(cacheJar.readBytes() + ByteArray(2048) { it.toByte() })
+
+        ServerLauncher.buildCommand(cacheJar, workDir, "v12", emptyList(), emptyList(), null)
+        val staged = provisionStagedServerJar(workDir, "v12")
+        assertTrue(staged.isFile, "首次组装应把 jar 拷进运行目录：${staged.absolutePath}")
+        assertContentEquals(cacheJar.readBytes(), staged.readBytes(), "副本内容必须与缓存 jar 一致")
+
+        val firstModified = staged.lastModified()
+        ServerLauncher.buildCommand(cacheJar, workDir, "v12", emptyList(), emptyList(), null)
+
+        assertEquals(firstModified, staged.lastModified(), "长度与修改时间未变时不得重拷")
+    }
+
+    @Test
+    @DisplayName("paperclip 副本按长度与修改时间判断，源 jar 变了就重新拷贝")
+    fun paperclipStagedCopyRefreshesWhenSourceChanges() {
+        val workDir = File("build/test-paperclip-refresh-${System.nanoTime()}").apply { mkdirs() }
+        val cacheJar = createMainOnlyJar(File(workDir, "source.jar"), "io.papermc.paperclip.Paperclip")
+        ServerLauncher.buildCommand(cacheJar, workDir, "v12", emptyList(), emptyList(), null)
+        val staged = provisionStagedServerJar(workDir, "v12")
+        val firstModified = staged.lastModified()
+
+        // 换构建：源 jar 变大且修改时间推后
+        cacheJar.writeBytes(cacheJar.readBytes() + ByteArray(1024) { 7 })
+        assertTrue(cacheJar.setLastModified(firstModified + 5_000), "前置条件：源 jar 修改时间应能推后")
+
+        ServerLauncher.buildCommand(cacheJar, workDir, "v12", emptyList(), emptyList(), null)
+
+        assertEquals(cacheJar.length(), staged.length(), "源 jar 变了应重新拷贝")
+        assertContentEquals(cacheJar.readBytes(), staged.readBytes(), "副本内容必须跟上源 jar")
+    }
+
+    @Test
+    @DisplayName("paperclip 副本按服务键隔离，不同后端互不覆盖")
+    fun paperclipStagedCopyIsolatesByKey() {
+        val workDir = File("build/test-paperclip-keys-${System.nanoTime()}").apply { mkdirs() }
+        val firstJar = createMainOnlyJar(File(workDir, "a.jar"), "io.papermc.paperclip.Paperclip")
+        firstJar.writeBytes(firstJar.readBytes() + ByteArray(16) { 1 })
+        val secondJar = createMainOnlyJar(File(workDir, "b.jar"), "io.papermc.paperclip.Paperclip")
+        secondJar.writeBytes(secondJar.readBytes() + ByteArray(32) { 2 })
+
+        ServerLauncher.buildCommand(firstJar, workDir, "node1", emptyList(), emptyList(), null)
+        ServerLauncher.buildCommand(secondJar, workDir, "node2", emptyList(), emptyList(), null)
+
+        val firstStaged = provisionStagedServerJar(workDir, "node1")
+        val secondStaged = provisionStagedServerJar(workDir, "node2")
+        assertContentEquals(firstJar.readBytes(), firstStaged.readBytes(), "node1 的副本不得被 node2 覆盖")
+        assertContentEquals(secondJar.readBytes(), secondStaged.readBytes(), "node2 的副本应独立存在")
     }
 
     @Test
@@ -339,7 +402,7 @@ class ServerLauncherTest {
     }
 
     @Test
-    @DisplayName("组装命令时旧版 paperclip 入口即使存在注入运行库也应走 java -jar")
+    @DisplayName("组装命令时旧版 paperclip 入口即使存在注入运行库也应从运行目录副本启动")
     fun buildCommandKeepsJarModeForLegacyPaperclipMain() {
         val workDir = File("build/test-command-paperclip-legacy-${System.nanoTime()}").apply { mkdirs() }
         // 1.8.8–1.17.1 的 paperclip 入口是 io.papermc.paperclip.Paperclip（与新版 Main 不同名）
@@ -349,7 +412,9 @@ class ServerLauncherTest {
         val command = ServerLauncher.buildCommand(paperclipJar, workDir, "paperclip", emptyList(), emptyList(), null)
 
         assertTrue(command.contains("-jar"), "paperclip 必须自己引导，不得替它拼 classpath：$command")
-        assertEquals(paperclipJar.name, command[command.indexOf("-jar") + 1], "jar 应相对运行目录给出：$command")
+        val staged = provisionStagedServerJar(workDir, "paperclip")
+        assertEquals(staged.name, command[command.indexOf("-jar") + 1], "应从运行目录内的副本启动：$command")
+        assertTrue(staged.isFile, "副本必须已落在运行目录：${staged.absolutePath}")
         assertFalse(provisionClasspathFile(workDir, "paperclip").exists(), "paperclip 场景不应生成 classpath 启动器")
     }
 

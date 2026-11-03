@@ -17,7 +17,7 @@ FR-04 是第一期（MVP）的**整合器**：把已落地的各包（`contract/
     - `e2e<Key>`：依赖 `prepareE2e<Key>` → 前台起后端（`provision` 解析+下载 jar、`ServerLauncher` 起子进程、桩跑完自停 → `waitFor`）→ `ResultReader` 读 `<scenario>.properties` 判 PASS/FAIL（**只认结果文件**）。
     - 有 bot 的场景额外：`launch<Key>Bot`（`BotLauncher.launch`，env 由 `BotConnection.toEnvironment` 建）、`e2e<Key>WithBot`（依赖 launch + verify 一键跑）。
     - 经代理（`via` 非空）的场景：`e2e<Key>Via<Proxy>`——prepare 后按代理平台决定是否 `BackendBungeeCordConfig.apply`、`provision` 后台起代理（写 pid）、bot 经代理端口进服且用 `ProxyProtocolVersion.forBackend` 固定协议版本、前台起后端、verify、`finalizedBy` 停代理。
-  - **固定名任务**：`npmInstallE2eBot`（`Exec`：bot 目录 `npm install`）、`syncE2eRuntimeCache`（运行库缓存回写持久缓存，**由各终态任务 `finalizedBy` 自动挂载**）、`purgeE2eRuntimeCache`（清空持久缓存）。
+  - **固定名任务**：`npmInstallE2eBot`（`Exec`：bot 目录 `npm install --prefer-offline`——依赖已就绪时不联网核对 dist-tags）、`syncE2eRuntimeCache`（运行库缓存回写持久缓存，**由各终态任务 `finalizedBy` 自动挂载**）、`purgeE2eRuntimeCache`（清空持久缓存）。
   - **进程收尾**（高风险区）：后台代理/机器人在任务结束/失败/中断都被 pid 收尾杀掉、端口释放、无残留——后台代理用 `finalizedBy` 停代理任务 + `try/finally` 双保险，统一走 `stopProcessByPidFile`。
   - **bot 目录定位**：消费方照抄 `template/bot` 到其项目；用 Gradle 属性 `mcTestkit.botDir`（项目属性）定位，缺省相对路径 `e2e-bot`，可移植、不写死绝对路径。入口脚本固定 `src/connectAndWait.js`（template 既定）。
 - 不做（范围外）：

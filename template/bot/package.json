@@ -12,7 +12,7 @@
     "format": "prettier --write ."
   },
   "dependencies": {
-    "@wcpe/mc-testkit-bot": "^0.1.0",
+    "@wcpe/mc-testkit-bot": "^0.2.0",
     "mineflayer": "^4.23.0"
   },
   "devDependencies": {

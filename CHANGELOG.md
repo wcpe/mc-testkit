@@ -6,6 +6,8 @@
 
 ## [未发布]
 
+## [0.17.0] - 2026-11-03
+
 ### 新增
 
 - **插件消息 console 命令通道（`E2E_CMD` 协议，FR-30，[ADR-0027](docs/adr/0027-bot-command-channels.md)）**：新增一条 bot ↔ 桩的结构化命令通道，走 Minecraft 自定义 payload（插件消息）而**不走聊天**——不污染其他玩家聊天记录、无 256 字符硬上限（长命令此前会被**静默截断**）、测试控制流对玩家不可见。机器人发 `E2E_CMD:<id>:<command>`，桩侧以**服务端 console 身份**执行并回 `E2E_CMD_DONE:<id>:<PASS|FAIL>:<output>`，解决「mineflayer 拿不到 console 身份」与「靠聊天文本解析命令结果既脆弱又不完整（`/save-all` 这类根本不写聊天）」两个缺口，与 FR-29 的 OP 通道互补——OP 走玩家权限路径，本通道走服务端权限。协议常量与拼接 / 解析辅助新增在 `McTestkitProtocol`（`COMMAND_PREFIX` / `COMMAND_DONE_PREFIX` / `COMMAND_CHANNEL` / `commandRequest` / `commandDone` 等）。**回执按「最多切 4 段」解析**：`<output>` 是最后一段、可含冒号（如 `minecraft:stone`），按无上限切分会把它截断且看起来「有输出」——属静默失真，解析规则已写进 KDoc 与 `docs/API.md` §3.4.1。

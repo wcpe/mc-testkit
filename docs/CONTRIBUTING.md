@@ -101,7 +101,8 @@
 4. **CI 自动发布**：tag 推送触发 [release.yml](../.github/workflows/release.yml)，依次执行
    - 校验 **tag 与 `VERSION` 一致**（不一致即失败，绝不发布错版本）；`CHANGELOG` 缺该段只告警不阻断（见下）；
    - 再跑一遍验证门（`./gradlew build`），兜底防止 tag 打在门禁未过的提交上；
-   - 用仓库密钥（`release` environment 的 `WCPE_MAVEN_USERNAME` / `WCPE_MAVEN_PASSWORD`）发布构件到 **maven.wcpe.top**；
+   - 用仓库密钥（`release` environment 的 `WCPE_MAVEN_USERNAME` / `WCPE_MAVEN_PASSWORD`）发布**根插件**构件到 **maven.wcpe.top**；
+   - 再单独发布 **`harness-core`**（它不在根工程，用 `-p harness-core` 发；版本号与插件 tag 独立演进，远端已有该版本则跳过——Maven 构件不可覆盖）。消费方的桩插件与 `template/harness` 按版本号依赖它，漏发会造成「模板已引用新版本、远端没有」的错位；
    - 建 **GitHub Release**，正文由 **GitHub 从 PR 自动生成**（`gh release create --generate-notes`：汇总该 tag 区间内合并的 PR 与贡献者，并自动识别上一个 tag 作比较基准）。
 
 > **Release 正文为什么自动生成**：Release 面向的是「这个版本相对上个版本变了什么」，而每个改动都已经 PR 说明与评审——由 PR 自动汇总既不用另写一遍，也不会与 PR 描述漂移。`CHANGELOG.md` 仍是仓库内的**手写活文档**（写明「为什么改」，随发版 PR 定稿），两者分工不同、不互相复制（doc-sync 的单一真源）。

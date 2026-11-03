@@ -91,6 +91,37 @@ jobs:
           fi
           ./gradlew publish --no-daemon --stacktrace
 
+      # harness-core 是**独立版本**的共享胶水构件（`harness-core/build.gradle.kts` 里的 version），
+      # 不在根工程（root settings 刻意不 include 它，它是仓库内独立工程），故 `./gradlew publish`
+      # 覆盖不到——必须单独用 `-p harness-core` 发布。
+      #
+      # 为什么必须在这里发：消费方的桩插件与 template/harness 按版本号依赖它。只发根插件而漏发
+      # harness-core，会让"文档与模板已引用新版本、远端却没有该版本"的错位长期存在，消费方解析
+      # 失败且看不出原因（Maven 只报找不到构件）。
+      #
+      # 版本一致性：它有自己的版本号，**不与 tag 比对**（两者本就独立演进）。这里只做「已发布则跳过」
+      # 的幂等判断——Maven 构件不可覆盖，同一版本重复 publish 会失败并让整条发布链红掉。
+      - name: 发布 harness-core 到 maven.wcpe.top（已发布则跳过）
+        env:
+          WCPE_MAVEN_USERNAME: ${{ secrets.WCPE_MAVEN_USERNAME }}
+          WCPE_MAVEN_PASSWORD: ${{ secrets.WCPE_MAVEN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          HARNESS_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' harness-core/build.gradle.kts | head -1)"
+          if [ -z "$HARNESS_VERSION" ]; then
+            echo "::error::无法从 harness-core/build.gradle.kts 解析 version，请检查该文件的版本声明写法。"
+            exit 1
+          fi
+          echo "harness-core 版本：$HARNESS_VERSION（与插件版本 ${{ github.ref_name }} 独立演进）"
+
+          POM_URL="https://maven.wcpe.top/repository/maven-releases/top/wcpe/mc/harness-core/${HARNESS_VERSION}/harness-core-${HARNESS_VERSION}.pom"
+          if curl -fsS -u "${WCPE_MAVEN_USERNAME}:${WCPE_MAVEN_PASSWORD}" -o /dev/null "$POM_URL"; then
+            echo "harness-core $HARNESS_VERSION 已存在于远端，跳过发布（Maven 构件不可覆盖）。"
+          else
+            echo "远端尚无 harness-core $HARNESS_VERSION，开始发布。"
+            ./gradlew -p harness-core publish --no-daemon --stacktrace
+          fi
+
       - name: 建 GitHub Release（正文由 PR 自动生成）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,7 +1,11 @@
 # ADR-0018：发布流程改为「分支保护 + PR 门禁 + 打 tag 触发 CI 发布」
 
 ## 状态
-已接受（Release 正文的来源经 [ADR-0019](0019-release-notes-from-prs.md) 补充修正：改为 GitHub 从 PR 自动生成；本 ADR 其余决策不变）
+决策 1（「一切改动必须经 PR」）**已被 [ADR-0028](0028-pr-gating-by-change-nature.md) 取代**：改为按变更性质分级——发版提交与纯文档更新可直接推 `master`，代码修复 / 功能 / 重构等仍必须经 PR。
+
+其余决策仍有效（分支保护 + 必需检查 + squash + 线性史、tag 触发发布、凭据只存 GitHub、禁止本地发布）。
+
+> Release 正文的来源另经 [ADR-0019](0019-release-notes-from-prs.md) 补充修正：改为 GitHub 从 PR 自动生成。
 
 ## 背景
 此前发布**全靠手工**：

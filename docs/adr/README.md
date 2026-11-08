@@ -20,7 +20,7 @@
 | [0015](0015-maven-coordinate-plugin-dependencies.md) | 依赖插件制品按 Maven 坐标解析，交给 Gradle 原生依赖解析（限定捕获范围以兼容配置缓存） | 已接受 |
 | [0016](0016-maven-coordinate-server-jars.md) | 服务端 / 代理 jar 支持按 Maven 坐标解析（注册期查镜像以真正短路解析，镜像进 mc-testkit-jars） | 已接受 |
 | [0017](0017-provision-api-and-external-artifact-sources.md) | 开放下载/运行基建为公开 API，并引入声明式外部制品源（固定 URL / API 动态解析） | 已接受 |
-| [0018](0018-ci-release-and-pr-gating.md) | 发布流程改为「分支保护 + PR 门禁 + 打 tag 触发 CI 发布」 | 已接受 |
+| [0018](0018-ci-release-and-pr-gating.md) | 发布流程改为「分支保护 + PR 门禁 + 打 tag 触发 CI 发布」 | 已接受（决策 1 的「一切改动必须走 PR」被 0028 取代） |
 | [0019](0019-release-notes-from-prs.md) | Release 正文改为「GitHub 从 PR 自动生成」（补充 0018） | 已接受 |
 | [0020](0020-scenario-lifecycle-hooks.md) | 场景生命周期钩子：beforeScenario / readyScenario / afterScenario 三个时序点，含失败路径收尾保障 | 已接受 |
 | [0021](0021-serve-console-line-completion.md) | serve 控制台采用「框架侧行级补全 + 历史」，不引入 PTY（补充 0011） | 已接受（PTY 一条被 0022 部分修正） |
@@ -30,6 +30,7 @@
 | [0025](0025-plugin-under-test-artifact-source.md) | 待测插件产物来源可配置：`pluginUnderTest(from = …)` + 与字符串形式互斥（配置期中文报错）+ 框架自动建立产物任务依赖（扩展 0015） | 已接受 |
 | [0026](0026-plugin-artifact-source-and-shared-backend-serial.md) | 依赖插件产物来源 `plugin(from = …)`（扩展 0015）+ 共用同一后端的场景自动串行（补齐 FR-04 的多场景并行缺口） | 已接受 |
 | [0027](0027-bot-command-channels.md) | bot 命令执行通道：原版 OP 提权（`bot { op = true }`）+ 插件消息 console 通道（`E2E_CMD` 协议）+ 机器人侧 `execCommand` 封装 | 已接受 |
+| [0028](0028-pr-gating-by-change-nature.md) | PR 门禁按变更性质分级：发版提交与纯文档更新可直推 `master`，代码修复 / 功能 / 重构仍必须走 PR（取代 0018 决策 1） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

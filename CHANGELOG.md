@@ -4,6 +4,13 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 变更
+
+- **PR 门禁按变更性质分级，发版与纯文档更新不再强制走 PR（[ADR-0028](docs/adr/0028-pr-gating-by-change-nature.md)，取代 ADR-0018 决策 1）**：此前「一切改动（功能、修复、重构、文档、发版）都必须经 PR」属实过严——发版提交只改根 `VERSION` 与 `CHANGELOG` 的段落定稿（零代码），却要先开分支、开 PR、等一轮 `构建与测试（插件）`（约 5.5 分钟）+ `Windows PTY 构建与测试`（约 6 分钟），而**打 tag 后的 `release.yml` 本来就会再跑一遍 `./gradlew build`**，那一轮 CI 对发版而言几乎完全重复；纯文档改动（错别字、措辞、链接失效）天然不可能让构建变红，同样在收 6 分钟的流程税。现改为分级：**发版提交**（`chore(release): 发布 X.Y.Z`）与**纯文档更新**（只改 Markdown、不碰代码 / 构建脚本 / CI / 配置）可直接推 `master`；**其余一切代码改动**——`feat` / `fix` / `refactor` / `perf` / `test` / `build` / `ci`，以及任何触碰 `src/**`、`*.gradle.kts`、`.github/workflows/**`、`bot-core/**`、`harness-core/**`、`template/**` 的提交——**仍必须走 PR** 且必需检查全绿。**一个提交里只要含代码文件就不算纯文档**（「顺手带一点代码」不豁免）。squash、`required_linear_history`、禁止本地 `publish` / 手建 Release 等约束全部不变；`ci.yml` 仍监听 `push: master`，直推后照跑但降为**事后告警**。
+  **须知晓的代价**：① 要落地此规则必须把分支保护的 `enforce_admins` 关掉（否则管理员也推不上去），这意味着**分级靠纪律而非服务器强制**——判断标准只有一条：这个提交是否触碰了代码 / 构建 / CI；② `--generate-notes` 只汇总该 tag 区间内的 PR，故直推的发版提交与文档提交**不会出现在 Release 正文里**（判定可接受：发版提交是元数据不是变更内容，此前出现在列表里反而是噪声；真正的代码变更照旧走 PR、照旧被汇总）。
+
 ## [0.17.1] - 2026-11-08
 
 ### 修复

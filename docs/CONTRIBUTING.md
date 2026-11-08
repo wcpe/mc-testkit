@@ -54,7 +54,7 @@
 4. 改 API.md                    接口契约变更
 5. 实现 + 测试                  过验证门（`./gradlew test` 全绿 + 接入项目 E2E 验收）
 6. 记 CHANGELOG（未发布段）       用户可见变更，引用具体模块/能力
-7. 发版                         bump 版本号、定稿 CHANGELOG 本版本段
+7. 发版                         bump 版本号、定稿 CHANGELOG 本版本段（可直推，免 PR）
 ```
 
 > 一次只做一件事；破坏性变更必须在 CHANGELOG + 相关文档写清迁移。
@@ -80,11 +80,13 @@
 
 采用 GitHub Flow（适合小团队 + 持续发布），并以**分支保护 + CI 门禁**强制执行：
 
-- **`master`（默认分支，受保护）**：**禁止直接推送**——一切改动（功能、修复、重构、文档、发版）都必须经 PR 合入。
-  - 分支保护要求 **PR + 必需状态检查全绿**：`构建与测试（插件）`、`静态检查（模板 bot）`（即 `.github/workflows/ci.yml` 的两个 job）。
+- **`master`（默认分支，受保护）**：改动**按变更性质分级**（[ADR-0028](adr/0028-pr-gating-by-change-nature.md) 取代 ADR-0018 决策 1）。
+  - **必须走 PR**：一切**代码改动**——`feat` / `fix` / `refactor` / `perf` / `test` / `build` / `ci`，及任何触碰 `src/**`、`*.gradle.kts`、`.github/workflows/**`、`bot-core/**`、`harness-core/**`、`template/**` 的提交。
+  - **可直接推 `master`**（免 PR，仅限两类）：① **发版提交**（只含 `VERSION` bump + `CHANGELOG` 段落定稿）；② **纯文档更新**（只改 Markdown，不碰代码 / 构建脚本 / CI / 配置）。**一个提交里含代码文件就不算纯文档**。
+  - PR 的分支保护要求 **必需状态检查全绿**：`构建与测试（插件）`、`静态检查（模板 bot）`（即 `.github/workflows/ci.yml` 的两个 job）。直推的提交无法做「合并前」校验，故 `ci.yml` 仍监听 `push: master` 并在直推后照跑，**作为事后告警**，红了立即修。
   - **合并必须用 squash（压制合并），禁止 merge（合并提交）与 rebase 合并**。仓库已把 `allow_merge_commit` / `allow_rebase_merge` 关掉（PR 上只留 Squash and merge），并开启分支保护的 **required linear history**——两道锁叠加，让 `master` 保持线性、每个 PR 恰好落成一条提交。
   - **squash 的提交标题即 Release 条目**：GitHub 自动生成的 Release 正文按提交/PR 标题罗列（ADR-0019），故合并时标题须写清改了什么、并带 PR 编号（`gh pr merge --squash --subject "..." --body "..."`，或网页端确认默认标题）。
-  - 例外只有仓库管理员在紧急情况下显式绕过保护，事后须在 PR / Issue 记录原因。
+  - 例外：仓库管理员可直推（`enforce_admins` 已关），但**只允许用于 ADR-0028 定义的两类免 PR 变更**（发版提交、纯文档更新）；其他情况下绕过保护须在 PR / Issue 记录原因。
 - **`feature/*`、`fix/*`、`refactor/*`、`docs/*`、`ci/*`、`chore/*`**：短生命周期分支，做完发 PR 回 `master`。
 - **回滚**优先 `git revert`（同样走 PR），不重写已 push 历史。
 - **`hotfix/*`**：从出问题的发布 tag 切分支紧急修，出补丁版后**回流 `master`**。
@@ -95,8 +97,8 @@
 
 版本号唯一来源仍是根 `VERSION` 文件；发布动作**全部由 CI 完成**，维护者不再本地跑 `./gradlew publish`、不手工建 Release、不手写 Release 正文（正文由 GitHub 从 PR 自动生成）。
 
-1. **定稿（发版 PR）**：在 PR 里把 `CHANGELOG.md` 的 `## [未发布]` 段定稿为 `## [X.Y.Z] - YYYY-MM-DD`，并把根 `VERSION` 改成 `X.Y.Z`（SemVer：破坏性变更升 major）。PR 模板里有「是否为发版 PR」勾选项。
-2. **合入**：PR 经 CI 全绿后合入 `master`。
+1. **定稿（发版提交，免 PR）**：单条提交：把 `CHANGELOG.md` 的 `## [未发布]` 段定稿为 `## [X.Y.Z] - YYYY-MM-DD`，并把根 `VERSION` 改成 `X.Y.Z`（SemVer：破坏性变更升 major）。提交信息用 `chore(release): 发布 X.Y.Z`，**直接推 `master`**（ADR-0028：发版提交不碰代码，且 `release.yml` 打 tag 后会重跑完整验证门作为兜底）。PR 模板里的「是否为发版 PR」勾选项仅适用于该版本蹦带了代码改动的例外情况。
+2. **验证（可选但推荐）**：本地先跑 `./gradlew build`；即便跳过，下一步的发布流程也会强制重跑。
 3. **打 tag（唯一的手工动作）**：`git tag vX.Y.Z && git push origin vX.Y.Z`（或 `gh release create` 前先打 tag）。
 4. **CI 自动发布**：tag 推送触发 [release.yml](../.github/workflows/release.yml)，依次执行
    - 校验 **tag 与 `VERSION` 一致**（不一致即失败，绝不发布错版本）；`CHANGELOG` 缺该段只告警不阻断（见下）；
@@ -105,9 +107,11 @@
    - 再单独发布 **`harness-core`**（它不在根工程，用 `-p harness-core` 发；版本号与插件 tag 独立演进，远端已有该版本则跳过——Maven 构件不可覆盖）。消费方的桩插件与 `template/harness` 按版本号依赖它，漏发会造成「模板已引用新版本、远端没有」的错位；
    - 建 **GitHub Release**，正文由 **GitHub 从 PR 自动生成**（`gh release create --generate-notes`：汇总该 tag 区间内合并的 PR 与贡献者，并自动识别上一个 tag 作比较基准）。
 
-> **Release 正文为什么自动生成**：Release 面向的是「这个版本相对上个版本变了什么」，而每个改动都已经 PR 说明与评审——由 PR 自动汇总既不用另写一遍，也不会与 PR 描述漂移。`CHANGELOG.md` 仍是仓库内的**手写活文档**（写明「为什么改」，随发版 PR 定稿），两者分工不同、不互相复制（doc-sync 的单一真源）。
+> **Release 正文为什么自动生成**：Release 面向的是「这个版本相对上个版本变了什么」，而每个**代码**改动都已经 PR 说明与评审——由 PR 自动汇总既不用另写一遍，也不会与 PR 描述漂移。`CHANGELOG.md` 仍是仓库内的**手写活文档**（写明「为什么改」，随发版定稿），两者分工不同、不互相复制（doc-sync 的单一真源）。
 
-> **为什么 `CHANGELOG` 缺段只是告警**：正文已不取自 CHANGELOG，缺段不会再产出空正文；而 tag 一旦推送就不能「改完重推」（Maven 构件不可覆盖），不该让文档问题卡住发布。定稿仍属步骤 1 的流程要求，由发版 PR 的模板勾选与评审把关。
+> **发版提交 / 纯文档提交直推后不会出现在 Release 正文里**（`--generate-notes` 只汇总 PR）。这是 ADR-0028 接受的代价：发版提交是元数据不是变更内容（出现在列表里反而是噪声），文档改动的真源在 `CHANGELOG` 与文档本身。真正的代码变更照旧走 PR、照旧被汇总。
+
+> **为什么 `CHANGELOG` 缺段只是告警**：正文已不取自 CHANGELOG，缺段不会再产出空正文；而 tag 一旦推送就不能「改完重推」（Maven 构件不可覆盖），不该让文档问题卡住发布。定稿仍属步骤 1 的流程要求。
 
 > **为什么是「打 tag 触发」而不是「合并即自动发版」**：GitHub Actions 有一个硬约束——用 `GITHUB_TOKEN` 创建的 tag **不会**触发其它 workflow（防递归）。因此「CI 自己打 tag 再自动发布」必须引入一个长期 PAT（额外凭据与轮换负担）。这里选择零额外凭据的形态：**tag 由人打（一条命令），发布由 CI 全自动**——需要人工判断的只有「什么时候发、发哪个版本号」。
 

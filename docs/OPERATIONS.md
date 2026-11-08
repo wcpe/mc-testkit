@@ -15,8 +15,8 @@
 
 ### 1.2 发布（打 tag 触发 CI）
 
-1. **发版 PR**：把 `CHANGELOG.md` 的 `## [未发布]` 段定稿为 `## [X.Y.Z] - YYYY-MM-DD`，根 `VERSION` 改成 `X.Y.Z`；PR 经 CI 全绿后合入 `master`（master 禁直接推送）。
-2. **打 tag**：`git tag vX.Y.Z && git push origin vX.Y.Z`
+1. **发版提交（可直推，免 PR）**：把 `CHANGELOG.md` 的 `## [未发布]` 段定稿为 `## [X.Y.Z] - YYYY-MM-DD`，根 `VERSION` 改成 `X.Y.Z`，单条提交 `chore(release): 发布 X.Y.Z` 后直接推 `master`（[ADR-0028](adr/0028-pr-gating-by-change-nature.md)；发布流程本身会再跑一遍完整验证门）。
+2. **打 tag（唯一的手工动作）**：`git tag vX.Y.Z && git push origin vX.Y.Z`
 3. **CI 自动完成**（[.github/workflows/release.yml](../.github/workflows/release.yml)）：校验 tag 与 `VERSION` 一致（`CHANGELOG` 缺段仅告警）→ 重跑验证门 → 发布**根插件**与 **`harness-core`** 构件到 maven.wcpe.top → 建 GitHub Release（**正文由 GitHub 从 PR 自动生成**）。
 
 > **`harness-core` 是独立版本的共享构件**，不在根工程（root `settings.gradle.kts` 刻意不 include 它），故 `./gradlew publish` 覆盖不到，发布步骤单独用 `-p harness-core` 执行。它的版本号（`harness-core/build.gradle.kts` 的 `version`）与插件 tag **独立演进**，工作流不做 tag 比对，只做「远端已存在该版本则跳过」的幂等判断——Maven 构件不可覆盖，重复发布会红掉整条链。消费方的桩插件 / `template/harness` 按版本号依赖它，所以**发版时必须一起发**，否则会出现「模板与文档已引用新版本、远端却没有」的错位，消费方解析失败且看不出原因。
@@ -66,8 +66,8 @@
 ### 5.1 本项目构建 / 发布
 - 配置期报缺依赖/路径：按中文报错补齐对应环境变量或 jar 路径。
 - **release 工作流报「缺少发布凭据」**：在仓库 Settings → Environments → `release` 配置 secrets `WCPE_MAVEN_USERNAME` / `WCPE_MAVEN_PASSWORD`（见 §1.2）。
-- **release 工作流报 tag 与 VERSION 不一致**：先把 `VERSION` 改成该版本号并经 PR 合入 `master`，再重新打 tag（不要移动已推送的 tag，改发新版本号）。
-- **release 工作流告警 CHANGELOG 缺该版本段**：不阻断发布（Release 正文由 PR 自动生成），但请补上——把 `## [未发布]` 段定稿为 `## [X.Y.Z] - YYYY-MM-DD` 后经 PR 合入，避免未发布段累积、CHANGELOG 与发布史脱节。
+- **release 工作流报 tag 与 VERSION 不一致**：先把 `VERSION` 改成该版本号并推向 `master`（发版提交，免 PR），再重新打 tag（不要移动已推送的 tag，改发新版本号）。
+- **release 工作流告警 CHANGELOG 缺该版本段**：不阻断发布（Release 正文由 PR 自动生成），但请补上——把 `## [未发布]` 段定稿为 `## [X.Y.Z] - YYYY-MM-DD` 后推向 `master`（纯文档提交，免 PR），避免未发布段累积、CHANGELOG 与发布史脱节。
 - **Release 正文不理想**（如需人工润色或补充说明）：Release 正文由 PR 自动汇总，改正文即改 PR 描述；也可事后 `gh release edit vX.Y.Z --notes-file <文件>` 手工覆盖（仅影响该 Release 的正文，不影响已发布构件）。
 - **PR 合并按钮不可用**：看分支保护的必需检查是否全绿（`构建与测试（插件）` / `静态检查（模板 bot）`）；检查名若被改名需同步更新分支保护规则。
 - 发布失败（网络 / 仓库拒绝）：检查 maven.wcpe.top 可达性与凭据权限（`maven-releases` 仓库的写权限）。

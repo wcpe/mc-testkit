@@ -1,7 +1,9 @@
 <!--
-master 受分支保护、禁止直接推送：一切改动（含发版）都经本 PR 合入（见 docs/CONTRIBUTING.md §8）。
-CI（`.github/workflows/ci.yml`）必须全绿方可合并；**合并只用 squash**（仓库已禁用 merge 与 rebase
-合并，并开启 required linear history）；发版另经打 `vX.Y.Z` tag 触发 release.yml。
+master 受分支保护、改动按性质分级（ADR-0028）：
+  - 代码改动（feat/fix/refactor 等，或触碰 src/、构建脚本、CI、bot-core/、harness-core/、template/）
+    必须走本 PR；CI（`.github/workflows/ci.yml`）两个必需检查全绿方可合并；合并只用 squash。
+  - 发版提交（只 bump VERSION + 定稿 CHANGELOG）与纯文档更新可直接推 master，无需 PR。
+发版另经打 `vX.Y.Z` tag 触发 release.yml。
 
 本 PR 的标题（即 squash 后的提交标题）与描述会经 GitHub 自动汇总进下次发布的 Release 正文
 （ADR-0019），故标题请写清改了什么（照仓库的中文 Conventional Commits 约定即可）。
@@ -27,7 +29,7 @@ CI（`.github/workflows/ci.yml`）必须全绿方可合并；**合并只用 squa
 - [ ] 提交规范：中文 Conventional Commits、无 AI 署名
 
 ## 本 PR 是否为发版 PR
-<!-- 发版 PR = 把 CHANGELOG 未发布段定稿为 '## [X.Y.Z] - YYYY-MM-DD' 并把根 VERSION 改成 X.Y.Z。 -->
+<!-- 普通情况：发版不需要 PR（发版提交可直接推 master）。仅当本 PR 同时包含代码改动又要同时发版时才勾“是”。 -->
 - [ ] 不是
 - [ ] 是 → 合入 master 后由维护者打 `vX.Y.Z` tag，CI 自动发布到 maven.wcpe.top 并建 GitHub Release（正文由 PR 自动生成；本 PR 无需手工发布）
 

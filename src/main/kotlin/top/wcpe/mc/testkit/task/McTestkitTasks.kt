@@ -336,7 +336,11 @@ object McTestkitTasks {
             logger = project.logger,
             layout = layout,
             projectDir = project.projectDir,
-            botDir = layout.botDir(project.findProperty(BOT_DIR_PROPERTY)?.toString()),
+            // Isolated Projects：不用 `project.findProperty(...)`——它会沿项目层级上溯到父项目，
+            // IP 下报 `cannot dynamically look up a property in the parent project`。
+            // `providers.gradleProperty` 只读本构建的 Gradle 属性（含 -P 与 gradle.properties），
+            // 对 BOT_DIR_PROPERTY 这类命令行开关语义等价且对配置缓存友好。
+            botDir = layout.botDir(project.providers.gradleProperty(BOT_DIR_PROPERTY).orNull),
             dependencies = DependencyDeclarations(
                 pluginUnderTest = extension.declaredDependencies.pluginUnderTest,
                 plugins = extension.declaredDependencies.plugins.toList(),
@@ -352,14 +356,14 @@ object McTestkitTasks {
 
     /** 注册三个固定名任务（[McTestkitTaskNames] 常量）。 */
     private fun registerFixedTasks(project: Project, ctx: TaskExecutionContext) {
-        val layout = ctx.layout
-
         registerExec(project, McTestkitTaskNames.NPM_INSTALL_BOT) { task ->
             task.group = TASK_GROUP
             task.description = "安装机器人 mineflayer 依赖（npm install）"
-            // 工作目录 / 命令在配置期定形（不执行 npm）；真正安装在任务执行期
-            val botDir = layout.botDir(project.findProperty(BOT_DIR_PROPERTY)?.toString())
-            task.workingDir = botDir
+            // 工作目录 / 命令在配置期定形（不执行 npm）；真正安装在任务执行期。
+            // 复用上面已按 `providers.gradleProperty` 解析好的 ctx.botDir：这里再调一次
+            // `project.findProperty(...)` 不仅重复，而且同样会在 Isolated Projects 下崩
+            // （沿项目层级上溯父项目），让上一处的修复形同虚设。
+            task.workingDir = ctx.botDir
             // `--prefer-offline`：依赖已在本地缓存时**不访问网络**。
             //
             // ## 为何必须加这个参数

@@ -110,4 +110,48 @@ class McTestkitPluginFunctionalTest {
             "晚挂载应以 Gradle 的 afterEvaluate 时机错误显式失败，实际输出：\n${result.output}",
         )
     }
+
+    /**
+     * `-PmcTestkit.botDir` 必须在配置期被读入，且不报父项目属性查不到。
+     *
+     * 回归背景：`executionContextOf` 与 `registerFixedTasks` 两处都曾用
+     * `project.findProperty("mcTestkit.botDir")`。它会**沿项目层级上溯到父项目**去查，
+     * 在 Isolated Projects 下直接报 `cannot dynamically look up a property in the parent project`；
+     * 两处同在 `apply` 的配置期执行，只改一处等于没修。
+     *
+     * 验证方式：以消费者身份用 `-P` 传入自定义 bot 目录并跑 `help`（配置期充分求值），
+     * 断言构建成功、且不出现 Isolated Projects 的属性上溯报错。
+     */
+    @Test
+    @DisplayName("用 -PmcTestkit.botDir 指定机器人目录时配置期应成功且不触发父项目属性上溯")
+    fun botDirPropertyReadsWithoutParentProjectLookup() {
+        write("settings.gradle.kts", """rootProject.name = "bot-dir-consumer"""")
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("top.wcpe.mc-testkit")
+            }
+
+            mcTestkit {
+                backend("s1") { port = 25565 }
+                scenario("smoke")
+            }
+            """.trimIndent(),
+        )
+
+        val result = GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withPluginClasspath()
+            .withArguments("help", "-PmcTestkit.botDir=custom-bot", "--stacktrace")
+            .build()
+
+        assertEquals(TaskOutcome.SUCCESS, result.task(":help")?.outcome)
+        // 断言“没有发生父项目属性上溯”：该报错文本是 Isolated Projects 对 findProperty 的典型诊断，
+        // 一旦回归到 project.findProperty 就会再次出现。
+        assertTrue(
+            !result.output.contains("cannot dynamically look up a property in the parent project"),
+            "配置期不应出现 Isolated Projects 的父项目属性上溯报错，实际输出：\n${result.output}",
+        )
+    }
 }

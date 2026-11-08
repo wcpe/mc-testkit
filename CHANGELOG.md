@@ -6,6 +6,12 @@
 
 ## [未发布]
 
+### 修复
+
+- **开启 Isolated Projects 的消费工程在配置期就崩：`mcTestkit.botDir` 用 `project.findProperty(…)` 取属性，会沿项目层级上溯到父项目，报 `cannot dynamically look up a property in the parent project`**：`findProperty` 会在当前 Project 找不到时继续向父项目查，而 Isolated Projects 禁止这种跨项目访问。改为 `project.providers.gradleProperty(…)`：它只读本构建的 Gradle 属性（含 `-P` 与 `gradle.properties`），对 `mcTestkit.botDir` 这种命令行开关**语义等价**，且对配置缓存友好（与 `ci.yml` 已在跑的配置缓存校验不冲突）。
+  **同类缺陷有两处、都在 `apply` 的配置期执行**：`executionContextOf` 与 `registerFixedTasks` 里的 npm-install 任务注册。两处只要剩一处用 `findProperty`，IP 下照样报错——只改一处等于没修。现两处统一：后者直接复用前者已解析好的 `ctx.botDir`，顺带消除了重复解析（原先同一属性在配置期被解析两次）。
+  回归锚点：新增 TestKit 用例以消费者身份用 `-PmcTestkit.botDir=<目录>` 驱动 `help`，断言配置期成功且不出现父项目属性上溯报错——两处中任一回落成 `findProperty`，该断言与构建都会失败。
+
 ### 变更
 
 - **PR 门禁按变更性质分级，发版与纯文档更新不再强制走 PR（[ADR-0028](docs/adr/0028-pr-gating-by-change-nature.md)，取代 ADR-0018 决策 1）**：此前「一切改动（功能、修复、重构、文档、发版）都必须经 PR」属实过严——发版提交只改根 `VERSION` 与 `CHANGELOG` 的段落定稿（零代码），却要先开分支、开 PR、等一轮 `构建与测试（插件）`（约 5.5 分钟）+ `Windows PTY 构建与测试`（约 6 分钟），而**打 tag 后的 `release.yml` 本来就会再跑一遍 `./gradlew build`**，那一轮 CI 对发版而言几乎完全重复；纯文档改动（错别字、措辞、链接失效）天然不可能让构建变红，同样在收 6 分钟的流程税。现改为分级：**发版提交**（`chore(release): 发布 X.Y.Z`）与**纯文档更新**（只改 Markdown、不碰代码 / 构建脚本 / CI / 配置）可直接推 `master`；**其余一切代码改动**——`feat` / `fix` / `refactor` / `perf` / `test` / `build` / `ci`，以及任何触碰 `src/**`、`*.gradle.kts`、`.github/workflows/**`、`bot-core/**`、`harness-core/**`、`template/**` 的提交——**仍必须走 PR** 且必需检查全绿。**一个提交里只要含代码文件就不算纯文档**（「顺手带一点代码」不豁免）。squash、`required_linear_history`、禁止本地 `publish` / 手建 Release 等约束全部不变；`ci.yml` 仍监听 `push: master`，直推后照跑但降为**事后告警**。

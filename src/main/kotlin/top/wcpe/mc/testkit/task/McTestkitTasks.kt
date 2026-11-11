@@ -11,7 +11,9 @@ import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.TaskProvider
 import top.wcpe.mc.testkit.bot.BotConnection
 import top.wcpe.mc.testkit.bot.BotLauncher
+import top.wcpe.mc.testkit.bot.BotProcessHandle
 import top.wcpe.mc.testkit.bot.BotProcessContext
+import top.wcpe.mc.testkit.bot.OutputBudget
 import top.wcpe.mc.testkit.bot.botPidFile
 import top.wcpe.mc.testkit.bot.stopProcessByPidFile
 import top.wcpe.mc.testkit.config.BackendBungeeCordConfig
@@ -143,6 +145,30 @@ internal class TaskExecutionContext(
     val botDir: File,
     val dependencies: DependencyDeclarations,
 ) : java.io.Serializable {
+    /**
+     * 本 run 的输出字节预算（bot / 钩子的 stdout+stderr 合计上限）。
+     *
+     * **为什么挂在 task 上下文上**：一次 E2E 事故里 9 个 bot 日志合计 130 GB，
+     * 因为落盘用的是 `Redirect.appendTo(File)`——内核直写、JVM 不经过，**结构上无法计量**。
+     * 现在改由 [BoundedProcessOutputPump] 读管道计限额，预算必须有一个**归属明确、
+     * 生命周期跨整个 run** 的持有者；挂在 task 上下文上，同一 task 内所有 bot / 钩子
+     * 共享同一份已用字节，**不会因再次 launch 而重置**。
+     *
+     * 不同 task 执行各自新建（[TaskExecutionContext] 每次执行现建），因此不同 run 天然隔离。
+     * `@Transient`：不参与配置缓存序列化；任务执行时惰性重建。
+     */
+    @Transient
+    private var outputBudgetHolder: OutputBudget? = null
+
+    /** 取得（或惰性创建）本 run 的输出预算。同一 task 内多次调用返回**同一实例**。 */
+    fun outputBudget(): OutputBudget {
+        val existing = outputBudgetHolder
+        if (existing != null) return existing
+        val created = OutputBudget.fromConfig()
+        outputBudgetHolder = created
+        return created
+    }
+
     /** 任务执行期按名读环境变量（不捕获任何 Gradle 对象，兼容配置缓存序列化）。 */
     fun readEnv(name: String): String? = System.getenv(name)
 
@@ -835,7 +861,7 @@ object McTestkitTasks {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val backendProcesses = LinkedHashMap<String, Process>()
                 var proxyProcess: Process? = null
-                val botProcesses = mutableListOf<Process>()
+                val botProcesses = mutableListOf<BotProcessHandle>()
                 try {
                     val runtime = preflightRuntimeForTask(ctx, clusterBackends, listOf(proxy), mavenSources)
                     layout.resultsDir.mkdirs()
@@ -915,7 +941,7 @@ object McTestkitTasks {
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
                     // 双保险收尾：全部 bot（自停兜底）+ 后端 + 代理（即便 finalizedBy 未触发）
-                    botProcesses.forEach { destroyProcessQuietly(ctx, it) }
+                    botProcesses.forEach { destroyBotQuietly(ctx, it) }
                     backendProcesses.forEach { (name, proc) ->
                         stopProcessQuietly(ctx, proc, layout.clusterBackendPidFile(name))
                     }
@@ -1193,7 +1219,7 @@ object McTestkitTasks {
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val backendProcesses = LinkedHashMap<String, Process>()
-                val botProcesses = mutableListOf<Process>()
+                val botProcesses = mutableListOf<BotProcessHandle>()
                 var proxyProcess: Process? = null
                 try {
                     val runtime = preflightRuntimeForTask(
@@ -1293,7 +1319,7 @@ object McTestkitTasks {
                     verifyStressResults(ctx, layout, scenario.name, stressBackends)
                 } finally {
                     // 双保险收尾：全部 bot（自停兜底）+ 全部后端 + 代理
-                    botProcesses.forEach { destroyProcessQuietly(ctx, it) }
+                    botProcesses.forEach { destroyBotQuietly(ctx, it) }
                     backendProcesses.forEach { (name, proc) -> stopProcessQuietly(ctx, proc, layout.clusterBackendPidFile(name)) }
                     proxy?.let { p -> proxyProcess?.let { stopProcessQuietly(ctx, it, layout.proxyPidFile(p.name)) } }
                 }
@@ -1351,7 +1377,7 @@ object McTestkitTasks {
         botPort: Int,
         protocolVersion: String?,
         backendVersion: String,
-    ): List<Process> {
+    ): List<BotProcessHandle> {
         if (!MinecraftVersionGroup.isBotSupported(backendVersion)) {
             ctx.warn("$backendVersion 不支持 bot E2E，仅验服务端拉起（跳过压测 bot 启动）")
             return emptyList()
@@ -1367,7 +1393,7 @@ object McTestkitTasks {
         // 用户名基（Minecraft 离线名 ≤16 字符，bot 数多时请用短基名避免超限）；
         // 派生规则统一走 BotProcessPlanner，保证与写进 ops.json 的 OP 名字同源（ADR-0027）
         val baseName = BotProcessPlanner.stressUsernameBase(action, bot)
-        val processes = mutableListOf<Process>()
+        val processes = mutableListOf<BotProcessHandle>()
         for (i in 1..stress.botsPerServer) {
             val key = stressBotKey(action, serverIndex, i)
             val username = BotProcessPlanner.stressUsername(baseName, serverIndex, i)
@@ -1384,6 +1410,8 @@ object McTestkitTasks {
                 context = BotProcessContext(botDir = botDir, botScript = botScript, resultsDir = layout.resultsDir),
                 action = key,
                 environment = environment,
+                // 同一 run 的所有 bot 共享同一份预算：不因再次 launch 而重置
+                budget = ctx.outputBudget(),
                 logger = { ctx.info(it) },
             )
         }
@@ -1500,6 +1528,26 @@ object McTestkitTasks {
             ctx.warn("收尾机器人进程时异常（已忽略）：${ex.message}")
         }
     }
+
+    /**
+     * 收尾一个 bot 句柄：停进程 + **等输出泵结束**。
+     *
+     * 为什么要多等泵一并：泵是子进程 stdout 的**唯一读者**。若进程先死而泵线程还在读，
+     * 那只是白跑；反过来若任务结束、读端先消失而子进程还活着，子进程写满管道缓冲区后会
+     * **永久阻塞**——既不退也不报错，只能靠下一轮台账清理。
+     *
+     * 泵线程是守护线程，所以这里等它有界（[PUMP_JOIN_TIMEOUT_SECONDS]），不因它卡住整个收尾。
+     */
+    private fun destroyBotQuietly(ctx: TaskExecutionContext, handle: BotProcessHandle) {
+        try {
+            handle.stop { ctx.info(it) }
+        } catch (ex: Exception) {
+            ctx.warn("收尾机器人进程时异常（已忽略）：${ex.message}")
+        }
+    }
+
+    /** 等输出泵线程结束的有界上限。 */
+    private val PUMP_JOIN_TIMEOUT_SECONDS = 5L
 
     /**
      * 注册持久手测（serve）任务（持久手测 serve，ADR-0011）：`serve<Key>` 前台起后端（声明 via 则先后台起代理）、
@@ -1644,12 +1692,12 @@ object McTestkitTasks {
         var logTail: Thread? = null
         var consolePump: Thread? = null
         var attach: ServeAttachConsole? = null
-        val botProcesses = mutableListOf<Process>()
+        val botProcesses = mutableListOf<BotProcessHandle>()
         // Ctrl+C / JVM 退出兜底：收尾 bot + 后端 + 代理（幂等、吞异常，与 finally 双保险）。先注册以覆盖整段生命周期。
         // 注：hook 在执行期创建、不进配置缓存序列化图；即便被序列化，ctx 亦可序列化（不含 Project）。
         val shutdownHook = Thread {
             attach?.stop()
-            botProcesses.forEach { destroyProcessQuietly(ctx, it) }
+            botProcesses.forEach { destroyBotQuietly(ctx, it) }
             backendProcess?.let { destroyProcessTreeQuietly(ctx, it) }
             proxyProcess?.let { destroyProcessQuietly(ctx, it) }
         }
@@ -1716,7 +1764,7 @@ object McTestkitTasks {
             logTail?.interrupt()
             consolePump?.interrupt()
             // 三重收尾兜底（即便 shutdown hook 未触发）：bot（自停兜底 + 按 pid）+ 后端 + 代理，删 pid
-            botProcesses.forEach { destroyProcessQuietly(ctx, it) }
+            botProcesses.forEach { destroyBotQuietly(ctx, it) }
             if (botSpecs.isNotEmpty()) stopBots(ctx, serveName, botSpecs)
             backendProcess?.let { stopProcessTreeQuietly(ctx, it, provisionPidFile(backendRunDir, backend.name)) }
             proxy?.let { p -> proxyProcess?.let { stopProcessQuietly(ctx, it, layout.proxyPidFile(p.name)) } }
@@ -2022,11 +2070,11 @@ object McTestkitTasks {
         var logTail: Thread? = null
         var consolePump: Thread? = null
         var attach: ServeAttachConsole? = null
-        val botProcesses = mutableListOf<Process>()
+        val botProcesses = mutableListOf<BotProcessHandle>()
         // Ctrl+C / JVM 退出兜底（执行期创建，不进配置缓存序列化图；ctx 可序列化）
         val shutdownHook = Thread {
             attach?.stop()
-            botProcesses.forEach { destroyProcessQuietly(ctx, it) }
+            botProcesses.forEach { destroyBotQuietly(ctx, it) }
             backendProcesses.values.forEach { destroyProcessQuietly(ctx, it) }
             proxyProcess?.let { destroyProcessTreeQuietly(ctx, it) }
         }
@@ -2118,7 +2166,7 @@ object McTestkitTasks {
             logTail?.interrupt()
             consolePump?.interrupt()
             // 三重收尾兜底：bot（自停兜底 + 按 pid）+ 全部后端 + 代理，删 pid
-            botProcesses.forEach { destroyProcessQuietly(ctx, it) }
+            botProcesses.forEach { destroyBotQuietly(ctx, it) }
             if (botSpecs.isNotEmpty()) stopBots(ctx, serveName, botSpecs)
             backendProcesses.forEach { (name, proc) -> stopProcessQuietly(ctx, proc, layout.clusterBackendPidFile(name)) }
             proxyProcess?.let { stopProcessTreeQuietly(ctx, it, layout.proxyPidFile(proxy.name)) }
@@ -2319,7 +2367,7 @@ object McTestkitTasks {
         backendPort: Int,
         protocolVersion: String?,
         sharedExtraEnv: Map<String, String> = emptyMap(),
-    ): List<Process> =
+    ): List<BotProcessHandle> =
         launchBots(ctx, scenario.name, scenario.botSpecs, backendVersion, backendPort, protocolVersion, sharedExtraEnv)
 
     /**
@@ -2339,7 +2387,7 @@ object McTestkitTasks {
         backendPort: Int,
         protocolVersion: String?,
         sharedExtraEnv: Map<String, String> = emptyMap(),
-    ): List<Process> {
+    ): List<BotProcessHandle> {
         if (!MinecraftVersionGroup.isBotSupported(backendVersion)) {
             ctx.warn("$backendVersion 不支持 bot E2E，仅验服务端拉起（跳过 bot 启动）")
             return emptyList()
@@ -2387,7 +2435,7 @@ object McTestkitTasks {
         backendPort: Int,
         protocolVersion: String?,
         extraEnv: Map<String, String> = emptyMap(),
-    ): Process {
+    ): BotProcessHandle {
         val layout = ctx.layout
         val botDir = ctx.botDir
         val botScript = File(botDir, RunLayout.BOT_SCRIPT_RELATIVE)
@@ -2414,6 +2462,8 @@ object McTestkitTasks {
             context = BotProcessContext(botDir = botDir, botScript = botScript, resultsDir = layout.resultsDir),
             action = key,
             environment = environment,
+            // 同一 run 的所有 bot 共享同一份预算：不因再次 launch 而重置
+            budget = ctx.outputBudget(),
             logger = { ctx.info(it) },
         )
     }

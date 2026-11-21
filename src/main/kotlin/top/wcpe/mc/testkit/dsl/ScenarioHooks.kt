@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.dsl
 
+import top.wcpe.mc.testkit.bot.OutputBudget
 import java.io.File
 
 /**
@@ -21,6 +22,28 @@ class HookContext(
     val proxyRunDir: File?,
     private val log: (String) -> Unit,
 ) : java.io.Serializable {
+
+    /**
+     * 本 run 的输出字节预算（运行期注入）。
+     *
+     * **为什么是 @Transient 可变槽而不是构造参数**：`HookContext` 在**注册期**构造、被任务动作
+     * 闭包捕获，而配置缓存要求整个捕获图可序列化；`OutputBudget` 是运行期对象（含原子计数与
+     * 已用状态），既不该也不能被序列化带过去。
+     *
+     * 因此这里的约定是：**任务在 `doLast` 里注入**（`attachOutputBudget`），钩子用它。
+     * 未注入时明确拒绝执行外部命令，不退回无预算路径。
+     */
+    @Transient
+    @Volatile
+    private var outputBudgetSlot: OutputBudget? = null
+
+    /** 由任务层在运行期注入本 run 的预算（同一 run 的所有钩子共享同一个）。 */
+    fun attachOutputBudget(budget: OutputBudget) {
+        outputBudgetSlot = budget
+    }
+
+    /** 取已注入的运行期预算；未注入时 fail closed。 */
+    fun outputBudget(): OutputBudget = requireNotNull(outputBudgetSlot) { "Hook requires a run output owner" }
 
     /** 记一条 lifecycle 日志。 */
     fun info(message: String) = log(message)
@@ -86,8 +109,18 @@ class ExecHook(
         val pidFile = File(context.resultsDir, pidFileName ?: "hook-${context.scenarioName}.pid")
 
         context.info("执行钩子命令：${command.first()}（日志 ${logFile.name}）")
-        val process = ScenarioHookRuntime.startBackground(command, env, workDir, logFile)
-        pidFile.writeText(process.pid().toString())
+        val process = ScenarioHookRuntime.startBackground(
+            command, env, workDir, logFile,
+            // 与 bot 共享同一个 run 预算：钩子的 stdout 也是无界落盘面。
+            budget = context.outputBudget(),
+        )
+        context.outputBudget().supervisor.bindPidFile(process, pidFile)
+        try {
+            pidFile.writeText(process.pid().toString())
+        } catch (ex: Exception) {
+            context.outputBudget().fail("IOFAIL hook-pid ${ex.javaClass.simpleName}")
+            throw ex
+        }
 
         if (readyPort > 0) {
             ScenarioHookRuntime.awaitPort(context, readyPort, readyTimeoutMs, "钩子端口 $readyPort")

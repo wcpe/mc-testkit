@@ -37,6 +37,36 @@ class BotProcessHandle(
 ) {
     internal val overrunFlag = AtomicBoolean(false)
 
+    /**
+     * 泵线程。由 [BotLauncher.launch] 在启动后填入；收尾方用它 [awaitPump]。
+     *
+     * **为什么必须能拿到并等它**：泵是子进程 stdout 的唯一读者。任务结束或
+     * Gradle daemon 退出时若读端先消失，而子进程还活着，子进程写满管道缓冲区后
+     * 会**永久阻塞**——既不退也不报错，只能靠下一轮台账清理。
+     */
+    @Volatile
+    internal var pumpThread: Thread? = null
+
+    /**
+     * 有界等待泵线程结束。
+     *
+     * 泵是 daemon 线程，正常情况下随进程退出很快结束；但若子进程有大量残留输出，
+     * 泵还要 drain。这里只等有界时间，**不因它卡住整个收尾**。
+     *
+     * @return true 表示已确认泵已结束；false 表示等待超时（泵可能仍在 drain）
+     */
+    fun awaitPump(timeoutSeconds: Long): Boolean {
+        require(timeoutSeconds in 1..5) { "Pump join deadline must be 1..5 seconds" }
+        val thread = pumpThread ?: return true
+        return try {
+            thread.join(timeoutSeconds * 1000)
+            !thread.isAlive
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+    }
+
     /** 本 sink 是否已因超限 / 输出 IO 问题停止写正文。 */
     fun isOverrun(): Boolean = overrunFlag.get() || pump.isOverrun()
 
@@ -47,18 +77,9 @@ class BotProcessHandle(
      * 收尾本进程：先温和，超时强杀；**只收尾本句柄自己的进程**，不按可复用 pid 误杀。
      */
     fun stop(logger: (String) -> Unit = {}) {
-        val pid = process.pid()
-        process.destroy()
-        runCatching { process.waitFor(STOP_GRACEFUL_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS) }
-        if (process.isAlive) {
-            process.destroyForcibly()
-            runCatching { process.waitFor(STOP_GRACEFUL_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS) }
-        }
-        logger("已结束机器人进程 pid=$pid log=${logFile.name}")
-    }
-
-    private companion object {
-        const val STOP_GRACEFUL_TIMEOUT_SECONDS = 15L
+        pump.budget.supervisor.stop(process)
+        if (!awaitPump(3)) pump.budget.fail("RUN_FAIL pump-stop-deadline")
+        logger("已结束机器人进程 pid=${process.pid()} log=${logFile.name}")
     }
 }
 
@@ -109,6 +130,8 @@ object BotLauncher {
         budget: OutputBudget,
         logger: (String) -> Unit = {},
     ): BotProcessHandle {
+        budget.checkHealthy()
+        require(action.matches(Regex("[A-Za-z0-9_.-]{1,100}"))) { "Invalid bot log key" }
         val logFile = botLogFile(context.resultsDir, action)
         val pidFile = botPidFile(context.resultsDir, action)
         logFile.parentFile?.mkdirs()
@@ -123,27 +146,42 @@ object BotLauncher {
         processBuilder.environment().putAll(environment)
 
         val process = processBuilder.start()
-        pidFile.writeText(process.pid().toString())
+        try {
+            pidFile.writeText(process.pid().toString())
 
-        val pump = BoundedProcessOutputPump(
-            label = action,
-            input = process.inputStream,
-            logFile = logFile,
-            budget = budget,
-            onOverrun = { reason -> logger("[OUTPUT_LIMIT] action=$action $reason") },
-        )
-        val handle = BotProcessHandle(process = process, pump = pump, logFile = logFile)
+            val pump = BoundedProcessOutputPump(
+                label = action,
+                input = process.inputStream,
+                logFile = logFile,
+                budget = budget,
+                onOverrun = { reason -> logger("[OUTPUT_LIMIT] action=$action $reason") },
+            )
+            val handle = BotProcessHandle(process = process, pump = pump, logFile = logFile)
 
-        // 泵跑在守护线程：任务 / daemon 退出时不会阻止 JVM 关机，但收尾方应主动等它结束。
-        val pumpThread = Thread({ handle.pump.run() }, "mc-testkit-bot-pump-$action")
-        pumpThread.isDaemon = true
-        pumpThread.start()
+            // 泵跑在守护线程：任务 / daemon 退出时不会阻止 JVM 关机，但收尾方应主动等它结束。
+            val pumpThread = Thread({ handle.pump.run() }, "mc-testkit-bot-pump-$action")
+            pumpThread.isDaemon = true
+            handle.pumpThread = pumpThread
+            try {
+                budget.supervisor.register(handle)
+                budget.supervisor.bindPidFile(process, pidFile)
+                pumpThread.start()
+            } catch (ex: Exception) {
+                budget.fail("RUN_FAIL bot-start ${ex.javaClass.simpleName}")
+                process.destroyForcibly()
+                throw ex
+            }
 
-        logger(
-            "已启动 mineflayer 机器人：action=$action pid=${process.pid()} " +
-                "log=${logFile.absolutePath} 单输出上限=${budget.perSinkLimit} " +
-                "run 已用=${budget.usedBytes()}/${budget.runLimit}",
-        )
-        return handle
+            logger(
+                "已启动 mineflayer 机器人：action=$action pid=${process.pid()} " +
+                    "log=${logFile.absolutePath} 单输出上限=${budget.perSinkLimit} " +
+                    "run 已用=${budget.usedBytes()}/${budget.runLimit}",
+            )
+            return handle
+        } catch (ex: Exception) {
+            budget.fail("IOFAIL bot-launch ${ex.javaClass.simpleName}")
+            process.destroyForcibly()
+            throw ex
+        }
     }
 }

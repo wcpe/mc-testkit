@@ -1,5 +1,7 @@
 package top.wcpe.mc.testkit.dsl
 
+import top.wcpe.mc.testkit.bot.BoundedProcessOutputPump
+import top.wcpe.mc.testkit.bot.OutputBudget
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -24,16 +26,34 @@ internal object ScenarioHookRuntime {
      * 命令经 shell 包装：Windows 上直接 `ProcessBuilder` 起 `.bat` / `.exe` 会失败（需 `cmd /c`），
      * 与既有 [top.wcpe.mc.testkit.provision.ServerLauncher] 处理服务端启动的方式保持一致。
      */
-    fun startBackground(command: List<String>, env: Map<String, String>, workDir: File, logFile: File): Process {
+    fun startBackground(
+        command: List<String>,
+        env: Map<String, String>,
+        workDir: File,
+        logFile: File,
+        budget: OutputBudget? = null,
+    ): Process {
+        // The legacy overload fails closed; null never means unlimited.
+        val owner = requireNotNull(budget) { "ExecHook requires a run output owner" }
+        owner.checkHealthy()
         logFile.parentFile?.mkdirs()
         workDir.mkdirs()
-        val pb = ProcessBuilder(shellWrap(command))
-        pb.directory(workDir)
-        // 先并 stderr 再落 stdout：子进程崩溃栈不丢（顺序不可颠倒，redirectErrorStream 会使 redirectError 失效）
-        pb.redirectErrorStream(true)
-        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile))
+        val pb = ProcessBuilder(shellWrap(command)).directory(workDir).redirectErrorStream(true)
         pb.environment().putAll(env)
-        return pb.start()
+        val process = pb.start()
+        try {
+            val pump = BoundedProcessOutputPump("hook:${logFile.name.take(100)}", process.inputStream, logFile, owner)
+            val handle = top.wcpe.mc.testkit.bot.BotProcessHandle(process, pump, logFile)
+            val thread = Thread({ pump.run() }, "mc-testkit-hook-pump").apply { isDaemon = true }
+            handle.pumpThread = thread
+            owner.supervisor.register(handle)
+            thread.start()
+            return process
+        } catch (ex: Exception) {
+            owner.fail("RUN_FAIL hook-start ${ex.javaClass.simpleName}")
+            process.destroyForcibly()
+            throw ex
+        }
     }
 
     /** 按当前平台包装命令：Windows 走 `cmd /c`，其余直接执行。 */
@@ -92,27 +112,11 @@ internal object ScenarioHookRuntime {
             context.info("pid 文件不存在（${pidFile.name}），跳过收尾")
             return
         }
-        val pid = pidFile.readText().trim().toLongOrNull()
-        if (pid == null) {
-            context.info("pid 文件内容非法（${pidFile.name}），跳过收尾")
-            return
-        }
-        val handle = ProcessHandle.of(pid).orElse(null)
-        if (handle == null || !handle.isAlive) {
-            context.info("进程已退出（pid=$pid），无需收尾")
-            return
-        }
-        // 先收子进程再收本体：控制面可能派生了进程，仅杀本体可能留孤儿占端口
-        handle.descendants().forEach { it.destroy() }
-        handle.destroy()
-        val deadline = System.currentTimeMillis() + 10_000
-        while (handle.isAlive && System.currentTimeMillis() < deadline) Thread.sleep(200)
-        if (handle.isAlive) {
-            handle.descendants().forEach { it.destroyForcibly() }
-            handle.destroyForcibly()
-            context.info("进程强杀（pid=$pid，未在 10s 内响应正常结束）")
-        } else {
-            context.info("进程已收尾（pid=$pid）")
+        val pid =
+            pidFile.inputStream().use { String(it.readNBytes(32), Charsets.UTF_8) }.trim().toLongOrNull() ?: return
+        if (ProcessHandle.of(pid).isEmpty) return
+        check(context.outputBudget().supervisor.stopPidFile(pidFile)) {
+            "Refusing unowned hook pid file: ${pidFile.name}"
         }
     }
 

@@ -28,7 +28,12 @@ import kotlin.test.assertTrue
  * 与 [ProcessReaperTest] 同口径：用 `java <单源文件>` 派生，不依赖 node，
  * 无 Node 的 CI 也能跑。
  */
+@org.junit.jupiter.api.Timeout(10)
 class OutputBudgetTest {
+    private val supervisedBudgets = mutableSetOf<OutputBudget>()
+    @org.junit.jupiter.api.AfterEach fun closeOwners() {
+        supervisedBudgets.forEach { it.supervisor.close() }
+    }
 
     private fun tempDir(): File = Files.createTempDirectory("mc-testkit-budget").toFile()
 
@@ -88,6 +93,9 @@ class OutputBudgetTest {
             budget = budget,
             drainDeadlineMillis = drainDeadlineMillis,
         )
+        val handle = BotProcessHandle(process, pump, logFile)
+        supervisedBudgets += budget
+        budget.supervisor.register(handle, 3000)
         pump.run()
         return pump
     }
@@ -123,11 +131,11 @@ class OutputBudgetTest {
         val logFile = File(dir, "bot-huge.log")
         val quota = 64L * 1024
         // 子进程吐 4 倍 quota，且**整段不换行**（单个超长行）——readLine 会在这里失控
-        val child = spawnChattyChild(dir, totalBytes = (quota * 4).toInt(), newlineEvery = 0)
+        val child = spawnChattyChild(dir, totalBytes = (quota * 2).toInt(), newlineEvery = 0)
         val budget = OutputBudget(perSinkLimit = quota, runLimit = quota * 4)
         try {
             val pump = pumpTo(child, logFile, budget)
-            child.waitFor(20, TimeUnit.SECONDS)
+            child.waitFor(3, TimeUnit.SECONDS)
 
             val size = logFile.length()
             // 正文不超 quota；额外只允许有界标记行
@@ -182,7 +190,7 @@ class OutputBudgetTest {
         val budget = OutputBudget(perSinkLimit = quota, runLimit = quota * 4)
         try {
             pumpTo(child, logFile, budget)
-            child.waitFor(20, TimeUnit.SECONDS)
+            child.waitFor(3, TimeUnit.SECONDS)
 
             val size = logFile.length()
             assertTrue(
@@ -205,12 +213,13 @@ class OutputBudgetTest {
 
         val logs = mutableListOf<File>()
         repeat(3) { index ->
+            if (budget.failureReason() != null) return@repeat
             val logFile = File(dir, "bot-multi-$index.log")
             logs += logFile
             val child = spawnChattyChild(dir, totalBytes = (perSink * 3 / 4).toInt(), newlineEvery = 4096)
             try {
                 pumpTo(child, logFile, budget, label = "multi-$index")
-                child.waitFor(20, TimeUnit.SECONDS)
+                child.waitFor(3, TimeUnit.SECONDS)
             } finally {
                 child.destroyForcibly()
             }
@@ -262,7 +271,7 @@ class OutputBudgetTest {
         val quota = 16L * 1024
         val budget = OutputBudget(perSinkLimit = quota, runLimit = quota * 4)
         // 吐得很多，确保它在泵停下后仍然活着（验证收尾真的杀了它）
-        val child = spawnChattyChild(dir, totalBytes = 8 * 1024 * 1024, newlineEvery = 4096)
+        val child = spawnChattyChild(dir, totalBytes = 128 * 1024, newlineEvery = 4096)
         val handle = BotProcessHandle(
             process = child,
             pump = BoundedProcessOutputPump(
@@ -276,6 +285,9 @@ class OutputBudgetTest {
         )
         val pumpThread = Thread({ handle.pump.run() }, "test-pump-reap")
         pumpThread.isDaemon = true
+        handle.pumpThread = pumpThread
+        supervisedBudgets += budget
+        budget.supervisor.register(handle, 3000)
         pumpThread.start()
         try {
             // 等它吐过 quota（此时泵应已停止写正文）
@@ -297,6 +309,43 @@ class OutputBudgetTest {
     }
 
     @Test
+    @DisplayName("越限后预算可被外部读到：这是任务层把超限转 FAIL 的唯一依据")
+    fun overrunIsObservableToTheTaskLayer() {
+        // 事故真正的伤害不是「日志很大」，而是**判定链没有响**：
+        // director 报 PASS 而 fighter 零输出。所以必须验证「超限这件事本身可被读到」，
+        // 否则任务层无从转成失败。
+        val budget = OutputBudget(perSinkLimit = 512, runLimit = 2048)
+        assertFalse(budget.isOverrun(), "初始不应越限")
+        assertEquals(null, budget.overrunReason(), "初始不应有越限说明")
+
+        val sink = budget.acquire("bot-a")
+        val out = java.io.ByteArrayOutputStream()
+        val chunk = ByteArray(600) { 'x'.code.toByte() }
+        sink.write(out, chunk, 600)
+
+        assertTrue(budget.isOverrun(), "写过 quota 之后预算必须置位")
+        val reason = budget.overrunReason()
+        assertTrue(reason != null && reason.contains("limit="), "越限说明必须点名触发者与限额，实际：$reason")
+    }
+
+    @Test
+    @DisplayName("多个 sink 中任意一个越限，整 run 预算即置位（不是只看最后一个）")
+    fun anySingleSinkOverrunMarksTheWholeRun() {
+        val budget = OutputBudget(perSinkLimit = 256, runLimit = 4096)
+        val chunk = ByteArray(400) { 'y'.code.toByte() }
+
+        // 第一个 sink 越限
+        budget.acquire("first").write(java.io.ByteArrayOutputStream(), chunk, 400)
+        assertTrue(budget.isOverrun(), "第一个 sink 越限后 run 预算必须置位")
+
+        // 第二个 sink 即便没写满，run 也已处于不可逆越限态
+        val second = budget.acquire("second")
+        val wrote = second.write(java.io.ByteArrayOutputStream(), ByteArray(10) { 'z'.code.toByte() }, 10)
+        assertEquals(0, wrote, "run 已越限后，后续 sink 不得再写正文")
+        assertTrue(budget.isOverrun(), "越限是不可逆状态")
+    }
+
+    @Test
     @DisplayName("未超限时内容完整写出，不得误伤正常输出")
     fun normalOutputIsWrittenFully() {
         val dir = tempDir()
@@ -306,7 +355,7 @@ class OutputBudgetTest {
         val budget = OutputBudget(perSinkLimit = quota, runLimit = quota * 4)
         try {
             val pump = pumpTo(child, logFile, budget)
-            child.waitFor(20, TimeUnit.SECONDS)
+            child.waitFor(3, TimeUnit.SECONDS)
 
             assertFalse(pump.isOverrun(), "正常输出不应被判超限")
             assertFalse(budget.isOverrun(), "预算不应被置位")

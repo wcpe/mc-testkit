@@ -1,7 +1,7 @@
 # ADR-0009：单场景多 bot 以「扩展 scenario 的 bot 声明（role + count）」表达，复用既有 env / 任务名
 
 ## 状态
-已接受（补充 [ADR-0008](0008-cluster-and-stress-dsl.md) 的「扩 scenario 块」方向与 [ADR-0006](0006-public-contract-conventions.md) 的 DSL/命名契约，不取代）
+已接受（补充 [ADR-0008](0008-cluster-and-stress-dsl.md) 的「扩 scenario 块」方向与 [ADR-0006](0006-public-contract-conventions.md) 的 DSL/命名契约，不取代）。决策 4 中「bot 按 pid 文件收尾」的收尾方式已被 [ADR-0029](0029-bot-output-budget-and-run-ownership.md) 取代（改由进程监管与进程台账收尾），唯一 `BOT_USERNAME` 与唯一日志 key 不变。
 
 ## 背景
 v0.2.1 每个 `scenario { }` 最多一个 `bot { }`：单后端 1 直连、集群 1 经代理 `/server` 切、压测每服 `botsPerServer` 个**钉服同质** bot。下游消费方的跨服 E2E 工程最后两个受阻 E2E 都卡在「一个场景里要多个、可各自不同的 bot」：① **N 个会切服的玩家**（同质批量、各自经代理切服，校验数据不回档）；② **同后端两个异质角色 bot**（`admin` 经 GUI 编辑 `target`）。压测 bot 钉服不可切、集群单 bot 只有一个，三种现状形态都表达不了。

@@ -74,6 +74,9 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
     /** Folia 全局区域调度器（仅 Folia 运行时非 null；反射取，避免编译期依赖 Folia 专有类）。 */
     private volatile Object foliaGlobalScheduler;
 
+    /** Folia 异步调度器（{@code AsyncScheduler}）；非 Folia 时缓存 {@link #NOT_FOLIA} 哨兵。 */
+    private volatile Object foliaAsyncScheduler;
+
     /**
      * 命令通道的入站监听器（FR-30，ADR-0027）。
      *
@@ -186,6 +189,19 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
      * @param body 断言体
      */
     protected final void registerServerAssertion(String name, McTestkitServerAssertions.Body body) {
+        // 反向跨表查重（与 registerProbe 里的检查对称）。
+        //
+        // 断言与取证共用同一个触发前缀，而 handleAssertionChat 先查 probes 再走断言：
+        // 若先 registerProbe("state") 再 registerServerAssertion("state")（顺序由消费方 onEnable
+        // 的书写顺序决定），后者会成功登记却永远不被执行——机器人发 E2E_ASSERT:state 只收到
+        // 取证回显，表象是「断言永远超时」，而真正的失败原因可能就此被掩盖。
+        //
+        // 只在 registerProbe 里查重是不够的：那只挡住了「先断言后取证」这一种顺序。
+        if (probes.containsKey(name)) {
+            throw new IllegalArgumentException(
+                "断言名「" + name + "」与已登记的取证重名——二者共用触发前缀，"
+                    + "同名会让该断言永远不被执行（取证优先分流），因此直接拒绝");
+        }
         assertions.register(name, body);
     }
 
@@ -286,13 +302,24 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
         if (body.isAsync()) {
             // 异步断言：它自己会等 I/O（读文件、读磁盘），在主线程上等会卡住整个 tick。
             // 结论回来后再**切回主线程**落定——写结果文件与关服都是主线程动作。
-            getServer().getScheduler().runTaskAsynchronously(this, () -> {
+            //
+            // 走 runAsync 而不是直接 getServer().getScheduler()：Folia 根本没有 BukkitScheduler
+            // （那个类只在 Paper/Spigot 存在），直接调用会抛 UnsupportedOperationException，
+            // 而抛点在调度器 lambda 内、被区域线程吞进日志——表现为「断言永远超时」，一次 fail() 都不会走。
+            runAsync(() -> {
                 McTestkitServerAssertions.Outcome asyncOutcome;
                 try {
                     asyncOutcome = body.run();
                 } catch (RuntimeException e) {
                     String reason = "服务端断言「" + name + "」执行时抛出 "
                         + e.getClass().getSimpleName() + "：" + e.getMessage();
+                    runOnMainThread(() -> fail(reason));
+                    return;
+                } catch (Throwable t) {
+                    // 断言体里可能抛 Error（如 NoClassDefFoundError / AssertionError）。
+                    // 让它们逃出去只会静默变成超时，所以一并转成明确失败。
+                    String reason = "服务端断言「" + name + "」执行时抛出 "
+                        + t.getClass().getSimpleName() + "：" + t.getMessage();
                     runOnMainThread(() -> fail(reason));
                     return;
                 }
@@ -613,6 +640,40 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
         }
     }
 
+    /**
+     * 异步执行一段任务（不占主线程 / 区域线程）。
+     *
+     * <p><b>为什么不直接 {@code getServer().getScheduler().runTaskAsynchronously(...)}</b>：
+     * Folia 没有 {@code BukkitScheduler}。该类在 Paper/Spigot 存在，但在 Folia 上取调度器会抛
+     * {@code UnsupportedOperationException}——而本插件在 {@code plugin.yml} 里声明了
+     * {@code folia-supported: true}，Folia 会真的加载它。
+     *
+     * <p>抛点在调度器回调的 lambda 内，异常被区域线程吞进日志：调用方（异步断言）因此
+     * 一次 {@code fail()} 都走不到，外部只表现为「断言永远超时」，与真正的失败原因毫无关系。
+     *
+     * <p>故这里按运行时选路：Folia 走 {@code AsyncScheduler.runNow}，否则回退 Bukkit。
+     * 解析不到任何调度器时（极端异常）退回一个独立线程，保证任务仍会执行——
+     * 静默不执行会让结论永远不出现，那是这里最不能接受的失败形态。
+     */
+    protected final void runAsync(Runnable task) {
+        Object folia = resolveFoliaAsyncScheduler();
+        if (folia != null) {
+            // AsyncScheduler.runNow(Plugin, Consumer<ScheduledTask>)
+            invokeScheduler(folia, "runNow", this, (Consumer<Object>) ignored -> task.run());
+            return;
+        }
+        try {
+            getServer().getScheduler().runTaskAsynchronously(this, task);
+        } catch (RuntimeException e) {
+            // 连 Bukkit 调度器都取不到：退回独立线程，绝不让任务静默不执行
+            getLogger().warning("[E2E] 无法通过服务端调度器异步执行，改用独立线程："
+                + e.getClass().getSimpleName() + "：" + e.getMessage());
+            Thread fallback = new Thread(task, "mc-testkit-async-fallback");
+            fallback.setDaemon(true);
+            fallback.start();
+        }
+    }
+
     /** 立即在主线程 / 全局区域执行（Folia 走 GlobalRegionScheduler.run，否则 Bukkit runTask）。 */
     protected final void runOnMainThread(Runnable task) {
         Object folia = resolveFoliaScheduler();
@@ -686,6 +747,24 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
         }
     }
 
+    /**
+     * 判定后到关服之间等待多久（ticks）。
+     *
+     * <p><b>为什么需要这个空隙</b>：结果文件写出与关服是两件事，而机器人 / 消费方可能还要读最后的
+     * 聊天回执（例如 {@code E2E_ASSERT_DONE}）。立刻关服会让「已写入的结论」发不出去，表现为对端超时。
+     *
+     * <p>默认 20 ticks（1 秒）。桩若有 {@code shutdown-delay-ticks} 之类的配置项，覆盖本方法返回它即可——
+     * 基类不读配置文件（它属于通用胶水层，不认识各桩的配置结构）。
+     *
+     * @return 延迟 ticks；返回 0 或缺省时按默认值处理，不会真的「零延迟但仍走一次调度」
+     */
+    protected long shutdownDelayTicks() {
+        return DEFAULT_SHUTDOWN_DELAY_TICKS;
+    }
+
+    /** 默认的判定后关服延迟（ticks），1 秒。 */
+    protected static final long DEFAULT_SHUTDOWN_DELAY_TICKS = 20L;
+
     private void finish(String status, String message, Map<String, String> details) {
         if (!finished.compareAndSet(false, true)) {
             return;
@@ -701,7 +780,14 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
             // 结果文件是测试结论唯一真源，写失败必须出声（但不再抛给 onEnable 链路，避免掩盖场景本身）
             getLogger().severe("写入 E2E 结果文件失败：" + e.getMessage());
         }
-        runOnMainThread(() -> getServer().shutdown());
+        // 结论写入之后再留一段空隙才关服：立刻关会让末尾回执发不出去，对端只能等到超时。
+        // 延迟 <= 0 视为「不留空隙」，直接关服（由配置方显式选择）。
+        long delay = shutdownDelayTicks();
+        if (delay <= 0) {
+            runOnMainThread(() -> getServer().shutdown());
+        } else {
+            runLater(delay, () -> getServer().shutdown());
+        }
     }
 
     /** 反射解析 Folia 全局区域调度器；非 Folia（Paper）返回 null。 */
@@ -720,6 +806,35 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
             return null;
         }
     }
+
+    /**
+     * 反射解析 Folia 的 {@code AsyncScheduler}；非 Folia（Paper）返回 null。
+     *
+     * <p>与 {@link #resolveFoliaScheduler()} 分开解析：两者是不同的调度器对象
+     * （{@code GlobalRegionScheduler} 跑主线程 / 全局区域，{@code AsyncScheduler} 跑异步），
+     * 不能共用一个缓存字段，否则异步任务会被塞进主线程调度器而卡住 tick。
+     *
+     * <p>缓存一个哨兵值区分「已确认非 Folia」与「还没查过」，避免每次调用都走一遍反射。
+     */
+    private Object resolveFoliaAsyncScheduler() {
+        Object cached = foliaAsyncScheduler;
+        if (cached != null) {
+            return cached == NOT_FOLIA ? null : cached;
+        }
+        try {
+            // RegionizedServer 是 Folia 专有类：存在即判定为 Folia 运行时（Paper 无此类）
+            Class.forName("io.papermc.paper.threadedregions.RegionizedServer");
+            Object resolved = Bukkit.getServer().getClass().getMethod("getAsyncScheduler").invoke(Bukkit.getServer());
+            foliaAsyncScheduler = resolved;
+            return resolved;
+        } catch (Throwable ignored) {
+            foliaAsyncScheduler = NOT_FOLIA;
+            return null;
+        }
+    }
+
+    /** {@link #resolveFoliaAsyncScheduler()} 的「确认非 Folia」哨兵（与「还没查过」区分开）。 */
+    private static final Object NOT_FOLIA = new Object();
 
     /** 反射调用 Folia 调度器方法（避免编译期依赖 Folia 专有类型）。 */
     private static void invokeScheduler(Object scheduler, String method, Object... args) {

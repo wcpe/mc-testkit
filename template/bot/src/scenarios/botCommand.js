@@ -71,29 +71,9 @@ module.exports = async function runBotCommand(context) {
   // 框架写的 ops.json 生效了。
   //
   // 判通过必须有正面证据：`gamemode creative` 成功时服务端静默，仅凭「没等到拒绝」分不清
-  // 「生效了」与「命令根本没发出去」（断线 / 聊天被拦 / 被限流）。故用 console 身份读回
-  // 该玩家的真实游戏模式作为证据——console 有权限，读到的值反映的是玩家身份那条命令的结果。
-  const opProbe = await runPlayerCommand(
-    bot,
-    'gamemode creative',
-    config,
-    async () => {
-      const probe = await execCommand(bot, 'data get entity ' + bot.username + ' playerGameType')
-      if (!probe.ok) {
-        return { ok: false, output: probe.output }
-      }
-      // 期望读到 1（creative）。读不到数字就说明取证本身没成立，不能当通过。
-      const matched = /(-?\d+)/.exec(probe.output)
-      if (!matched) {
-        return { ok: false, output: `取证输出里没有游戏模式数值：${probe.output}` }
-      }
-      const mode = Number(matched[1])
-      if (mode !== 1) {
-        return { ok: false, output: `玩家游戏模式仍为 ${mode}（期望 1=creative），命令未生效` }
-      }
-      return { ok: true, output: `console 取证确认玩家游戏模式为 creative（${probe.output}）` }
-    }
-  )
+  // 「生效了」与「命令根本没发出去」（断线 / 聊天被拦 / 被限流）。取证方式按版本选（见
+  // buildGameModeProbe）——`/data` 是 1.13 才有的命令，而本框架的 bot 支持下限是 1.8。
+  const opProbe = await runPlayerCommand(bot, 'gamemode creative', config, buildGameModeProbe(bot, config))
   if (!opProbe.ok) {
     failures.push(`玩家 OP 验证失败（bot 未能以 OP 身份执行命令）：${opProbe.output}`)
   } else {
@@ -180,3 +160,160 @@ async function runPlayerCommand(bot, command, config, consoleProbe) {
     return { ok: true, output: `${command} 未收到拒绝，正面取证确认已生效：${probe.output}` }
   }
 }
+
+/**
+ * 构造「玩家游戏模式」的正面取证函数，按服务端版本选路。
+ *
+ * ## 为什么要分版本
+ *
+ * `/data` 是 **1.13** 才加入的命令，而本框架的 bot 支持下限是 **1.8**。若只用
+ * `data get entity <玩家> playerGameType`，1.8–1.12.2 上的取证必然失败，于是一个本来
+ * 能通过的场景会被判 FAIL——那只是把「假通过」换成了「假失败」，并不算修好。
+ *
+ * ## 两条路都要求正面证据
+ *
+ * - **1.13+**：`data get entity` 直接读回数值，`1` 即 creative。
+ * - **1.8–1.12**：读 `/gamemode` 的**成功回显**。这些版本成功时会回一句
+ *   `Set own game mode to Creative Mode`（1.13+ 反而静默）。这句话本身就是「命令确实
+ *   被执行了」的正面证据，比「没等到拒绝」强得多。
+ *
+ * 旧版本路径依赖 `waitForMessage` 的历史回扫（见 bot-core `messages.js`）：回显在
+ * `runPlayerCommand` 等待拒绝的窗口里就已到达并存进历史，此处回扫即可命中。
+ *
+ * @param {Object} bot mineflayer bot
+ * @param {Object} config 机器人配置（用其 readyTimeoutMs 作等待上限）
+ * @param {{ waitForMessage?: Function, execCommand?: Function }} [deps] 测试注入点，生产不传
+ * @returns {Function} 无参异步函数，返回 `{ ok: boolean, output: string }`
+ */
+function buildGameModeProbe(bot, config, deps) {
+  const { execCommand } = resolveProbeDeps(deps)
+  const version = resolveServerVersion(bot, config)
+  if (!supportsDataCommand(version)) {
+    return () => probeLegacyGameMode(bot, config, version, deps)
+  }
+  return async () => {
+    const probe = await execCommand(bot, 'data get entity ' + bot.username + ' playerGameType')
+    if (probe.ok) {
+      // 期望读到 1（creative）。读不到数字说明取证本身没成立，不能当通过。
+      const matched = /(-?\d+)/.exec(probe.output)
+      if (!matched) {
+        return { ok: false, output: `取证输出里没有游戏模式数值：${probe.output}` }
+      }
+      const mode = Number(matched[1])
+      if (mode !== 1) {
+        return { ok: false, output: `玩家游戏模式仍为 ${mode}（期望 1=creative），命令未生效` }
+      }
+      return { ok: true, output: `console 取证确认玩家游戏模式为 creative（${probe.output}）` }
+    }
+    // 版本判定为 1.13+ 但 `/data` 没成——最可能是版本串判断失误（如代理下拿到的
+    // 是对外版本而实际后端更老）。此时不算通过、也不直接判死：回退到回显取证，
+    // 若连回显也没有，两条路的失败原因一并写进结论，免得只报一条误导排查。
+    const fallback = await probeLegacyGameMode(bot, config, version, deps)
+    if (fallback.ok) {
+      return fallback
+    }
+    return { ok: false, output: `data 取证失败（${probe.output}）；${fallback.output}` }
+  }
+}
+
+/**
+ * 取取证所用的依赖实现，允许测试注入替身。
+ *
+ * 生产路径永远走默认的模块级 `waitForMessage` / `execCommand`；注入点只为单测存在，
+ * 让「1.8 上不发 `/data`」这类约束能在不起真实连接的前提下被断言。
+ *
+ * @param {{ waitForMessage?: Function, execCommand?: Function }|undefined} deps 可选取代项
+ * @returns {{ waitForMessage: Function, execCommand: Function }}
+ */
+function resolveProbeDeps(deps) {
+  return {
+    waitForMessage: deps?.waitForMessage || waitForMessage,
+    execCommand: deps?.execCommand || execCommand
+  }
+}
+
+/**
+ * 1.8–1.12 的取证：等 `/gamemode` 的成功回显。
+ *
+ * 只认「设置成功」这一类文案，不把「没被拒绝」当证据——后者分不清「生效了」与
+ * 「命令根本没发出去」（断线 / 聊天被拦截 / 被限流），正是本场景要防的假通过。
+ *
+ * 匹配中英文两种服务端文案：Mojang 官方服务端回英文，第三方中文本地化回中文。
+ *
+ * @param {Object} bot mineflayer bot
+ * @param {Object} config 机器人配置
+ * @param {string|null} version 已解析出的服务端版本，仅用于失败说明
+ * @param {{ waitForMessage?: Function }} [deps] 测试注入点，生产不传
+ * @returns {Promise<{ ok: boolean, output: string }>}
+ */
+async function probeLegacyGameMode(bot, config, version, deps) {
+  const { waitForMessage } = resolveProbeDeps(deps)
+  try {
+    const echoed = await waitForMessage(
+      bot,
+      (text) => /Set own game mode to |游戏模式.*已(被)?设为|已将.*游戏模式/i.test(text),
+      Math.min(3000, config.readyTimeoutMs)
+    )
+    return { ok: true, output: `成功回显确认 gamemode 已执行（${echoed}）` }
+  } catch (error) {
+    return {
+      ok: false,
+      output: `${version || '该版本'} 上未等到 /gamemode 的成功回显，无法确认命令生效：${error.message}`
+    }
+  }
+}
+
+/**
+ * 取本机所连服务端的真实 MC 版本，供取证选路。
+ *
+ * 两个来源，按可靠性排序：
+ *
+ * 1. `bot.version`——mineflayer 在**实际连接协商完成后**按服务端 ping 结果回填
+ *    （见 mineflayer `lib/loader.js`：`bot.version = versionData.minecraftVersion`）。
+ *    这是「真正连上的那个版本」，直连与经代理都准。
+ * 2. `config.version`——编排下发的期望版本，**只在经代理时**才有值（直连传 null，
+ *    让 mineflayer 自动协商）。作为兜底，也让单测能不起连接就指定版本。
+ *
+ * 返回 null 表示两个来源都没给出可用版本。
+ *
+ * @param {Object} bot mineflayer bot
+ * @param {Object} config 机器人配置
+ * @returns {string|null} 形如 `1.20.1`
+ */
+function resolveServerVersion(bot, config) {
+  const fromBot = typeof bot?.version === 'string' && bot.version.length > 0 ? bot.version : null
+  if (fromBot != null) {
+    return fromBot
+  }
+  const fromConfig = typeof config?.version === 'string' && config.version.length > 0 ? config.version : null
+  return fromConfig
+}
+
+/**
+ * 服务端版本是否支持 `/data` 命令（1.13 起）。
+ *
+ * 版本串取自编排下发的 `MC_TESTKIT_E2E_BOT_VERSION`（经代理时被固定为后端版本）。
+ * 解析不出主次版本号时**按支持处理**：现代版本占绝对多数，且这条路失败时会如实报错、
+ * 不会误判通过——宁可让新版本走正常路径，也不因版本串缺失把它误降到旧路径。
+ *
+ * @param {string|null|undefined} version 形如 `1.20.1` / `1.12.2`
+ * @returns {boolean}
+ */
+function supportsDataCommand(version) {
+  const matched = /^(\d+)\.(\d+)/.exec(String(version || ''))
+  if (!matched) {
+    return true
+  }
+  const major = Number(matched[1])
+  const minor = Number(matched[2])
+  if (major !== 1) {
+    return major > 1
+  }
+  return minor >= 13
+}
+
+// 供单元测试使用：这些是内部纯函数 / 选路逻辑，导出不会改变运行期行为。
+module.exports.buildGameModeProbe = buildGameModeProbe
+module.exports.probeLegacyGameMode = probeLegacyGameMode
+module.exports.resolveServerVersion = resolveServerVersion
+module.exports.supportsDataCommand = supportsDataCommand

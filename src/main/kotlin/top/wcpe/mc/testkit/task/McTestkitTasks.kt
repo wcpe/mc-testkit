@@ -732,7 +732,7 @@ object McTestkitTasks {
         if (stopProxyName !in project.tasks.names) {
             registerTask(project, stopProxyName, ownsRunOutput = false) { task ->
                 task.group = TASK_GROUP
-                task.description = "停止代理 ${proxy.name}（按 pid 收尾）"
+                task.description = "停止代理 ${proxy.name}（按 pid 文件与进程台账收尾）"
                 task.doLast {
                     // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                     val summary =
@@ -801,7 +801,7 @@ object McTestkitTasks {
                     // ⑤ 只认结果文件判定
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
-                    // 双保险：先按 pid 收尾全部 bot（多 bot 防残留），再收尾代理（即便 finalizedBy 未触发）
+                    // 双保险：先停掉本次构建起的全部 bot（多 bot 防残留），再收尾代理（即便 finalizedBy 未触发）
                     if (scenario.botSpecs.isNotEmpty()) stopScenarioBots(ctx, scenario)
                     proxyProcess?.let { stopProcessQuietly(ctx, it, proxyPidFile) }
                 }
@@ -831,7 +831,7 @@ object McTestkitTasks {
         // 停集群任务：收尾全部后端 + 代理 + 全部 bot（单独可调；集群任务 finalizedBy 它）
         registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = TASK_GROUP
-            task.description = "停止集群场景 ${scenario.name} 的全部后端、代理与机器人（按 pid 收尾）"
+            task.description = "停止集群场景 ${scenario.name} 的全部后端、代理与机器人（按进程监管、pid 文件与进程台账收尾）"
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容配置缓存
                 stopOwnedBots(ctx, botKeys)
@@ -1213,7 +1213,7 @@ object McTestkitTasks {
         // 停压测任务：收尾全部后端 + 代理 + 全部 bot（单独可调；压测任务 finalizedBy 它）
         registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = TASK_GROUP
-            task.description = "停止压测场景 ${scenario.name} 的全部后端、代理与机器人（按 pid 收尾）"
+            task.description = "停止压测场景 ${scenario.name} 的全部后端、代理与机器人（按进程监管、pid 文件与进程台账收尾）"
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 stopOwnedBots(ctx, botKeys)
@@ -1637,7 +1637,7 @@ object McTestkitTasks {
         }
     }
 
-    /** 单后端 serve（持久手测 serve）：起单后端（+ 可选经代理）挂住，`stop<Key>Serve` 按 pid 收尾后端（+ 代理）。 */
+    /** 单后端 serve（持久手测 serve）：起单后端（+ 可选经代理）挂住，`stop<Key>Serve` 收尾后端（+ 代理与 bot）。 */
     private fun registerSingleServeTasks(
         project: Project,
         ctx: TaskExecutionContext,
@@ -1656,7 +1656,7 @@ object McTestkitTasks {
         registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = SERVE_TASK_GROUP
             task.description =
-                "停止 serve「${serve.name}」的后端${proxy?.let { " 与代理 ${it.name}" } ?: ""}${if (botKeys.isNotEmpty()) " 与机器人" else ""}（按 pid 收尾）"
+                "停止 serve「${serve.name}」的后端${proxy?.let { " 与代理 ${it.name}" } ?: ""}${if (botKeys.isNotEmpty()) " 与机器人" else ""}（按进程监管、pid 文件与进程台账收尾）"
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val layout = ctx.layout
@@ -2080,7 +2080,7 @@ object McTestkitTasks {
         registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = SERVE_TASK_GROUP
             task.description =
-                "停止集群 serve「${serve.name}」的全部后端、代理 ${proxy.name}${if (botKeys.isNotEmpty()) " 与机器人" else ""}（按 pid 收尾）"
+                "停止集群 serve「${serve.name}」的全部后端、代理 ${proxy.name}${if (botKeys.isNotEmpty()) " 与机器人" else ""}（按进程监管、pid 文件与进程台账收尾）"
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val layout = ctx.layout

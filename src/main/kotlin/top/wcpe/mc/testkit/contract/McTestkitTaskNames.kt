@@ -49,19 +49,19 @@ object McTestkitTaskNames {
     /** 集群验证任务（多后端 + 代理 + 切换机器人）：`e2e<Key>Cluster`（集群编排，ADR-0008）。 */
     fun cluster(scenario: String): String = verify(scenario) + "Cluster"
 
-    /** 集群收尾任务（按 pid 停全部集群后端 + 代理）：`stop<Key>Cluster`。 */
+    /** 集群收尾任务（停全部集群后端、代理与 bot，按进程监管、pid 文件与进程台账收尾）：`stop<Key>Cluster`。 */
     fun stopCluster(scenario: String): String = "stop" + scenario.toTaskKey() + "Cluster"
 
     /** 压测验证任务（N 服 × M bot 钉服持续施压 + 聚合判定）：`e2e<Key>Stress`（压测编排，ADR-0008）。 */
     fun stress(scenario: String): String = verify(scenario) + "Stress"
 
-    /** 压测收尾任务（按 pid 停全部压测后端 + 代理）：`stop<Key>Stress`。 */
+    /** 压测收尾任务（停全部压测后端、代理与 bot，收尾方式同 `stop<Key>Cluster`）：`stop<Key>Stress`。 */
     fun stopStress(scenario: String): String = "stop" + scenario.toTaskKey() + "Stress"
 
     /** 持久手测起服任务（前台起后端 + 可选代理并挂住，持久手测 serve，ADR-0011）：`serve<Key>`。 */
     fun serve(serveName: String): String = "serve" + serveName.toTaskKey()
 
-    /** 持久手测收尾任务（按 pid 停 serve 后端 + 代理）：`stop<Key>Serve`。 */
+    /** 持久手测收尾任务（停 serve 后端、代理与 bot，收尾方式同 `stop<Key>Cluster`）：`stop<Key>Serve`。 */
     fun stopServe(serveName: String): String = "stop" + serveName.toTaskKey() + "Serve"
 
     /**

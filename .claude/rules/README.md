@@ -12,6 +12,7 @@
 | [static-analysis.md](static-analysis.md) | **风格漂移**：格式化与静态检查工具链 + CI 门禁 |
 | [comments.md](comments.md) | 注释中文 |
 | [config-files.md](config-files.md) | YAML 配置规范 |
+| [no-internal-info-disclosure.md](no-internal-info-disclosure.md) | **信息泄露**：主机 / 路径 / 凭据 / 消费方身份 / 真实数据不得进入公开面 |
 | [git-commit.md](git-commit.md) | 提交规范与文档入库边界 |
 
 > 完整演进与维护流程见 [../../docs/CONTRIBUTING.md](../../docs/CONTRIBUTING.md)。

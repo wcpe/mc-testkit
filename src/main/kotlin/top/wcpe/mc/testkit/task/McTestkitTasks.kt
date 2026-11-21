@@ -2318,6 +2318,9 @@ object McTestkitTasks {
      * 起服前做端口预检（见 [requirePortsAvailable]）：本函数是「前台起后端」的唯一入口，在此设闸可让
      * 所有调用方（直连 e2e / 经代理）自动获得保护，不必各自复制。
      *
+     * 后端起来后登记进程台账：构建被强杀时它会比构建活得久，之后的停任务据此按身份收掉它。
+     * 任务被取消（等待线程被中断）或等待途中出错时，`finally` 连同子进程一起收掉后端，不留到下一次构建。
+     *
      * @param resultTimeoutSeconds 等桩写出结果文件的上限（场景的 `resultTimeoutSeconds`）。
      * @param stopTaskName 报错文案里建议执行的收尾任务名；直连 e2e 无配套停任务故为 null。
      */
@@ -2352,31 +2355,37 @@ object McTestkitTasks {
             javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
         )
-        // 等被测后端跑完：以「桩写出结果文件」为权威完成信号（结果文件是真源，见 verify/），
-        // 而非死等 JVM 退出——真实后端的依赖（数据源 / Redis 连接池等非守护线程）常使 JVM 在
-        // Bukkit.shutdown 后仍不退出。结果出现后给一小段优雅自停窗口，仍不退则强杀，避免空等到超时。
-        val resultFile = File(layout.resultsDir, McTestkitResultFile.fileName(scenario))
-        val deadlineMs = System.currentTimeMillis() + resultTimeoutSeconds * 1000L
-        while (process.isAlive && !resultFile.exists() && System.currentTimeMillis() < deadlineMs) {
-            Thread.sleep(2000)
-        }
-        if (resultFile.exists() && process.isAlive) {
-            // 结果已写出：给优雅自停窗口；到时仍活则强杀（非守护线程卡住 JVM 时不空等到超时）
-            if (!process.waitFor(BACKEND_SELF_STOP_GRACE_SECONDS, TimeUnit.SECONDS) && process.isAlive) {
-                ctx.info(
-                    "后端 ${backend.name} 结果已写出，但 JVM 未在 ${BACKEND_SELF_STOP_GRACE_SECONDS}s 内自停" +
-                        "（常因依赖连接池非守护线程），强制结束，不影响结果判定。",
-                )
-                process.destroyForcibly()
-                process.waitFor(15, TimeUnit.SECONDS)
+        val pidFile = provisionPidFile(runDir, backend.name)
+        recordProcessedPid(ctx, pidFile, "$LEDGER_KEY_BACKEND/${backend.name}", process, backend.port)
+        try {
+            // 等被测后端跑完：以「桩写出结果文件」为权威完成信号（结果文件是真源，见 verify/），
+            // 而非死等 JVM 退出——真实后端的依赖（数据源 / Redis 连接池等非守护线程）常使 JVM 在
+            // Bukkit.shutdown 后仍不退出。结果出现后给一小段优雅自停窗口，仍不退则强杀，避免空等到超时。
+            val resultFile = File(layout.resultsDir, McTestkitResultFile.fileName(scenario))
+            val deadlineMs = System.currentTimeMillis() + resultTimeoutSeconds * 1000L
+            while (process.isAlive && !resultFile.exists() && System.currentTimeMillis() < deadlineMs) {
+                Thread.sleep(2000)
             }
-        }
-        if (!resultFile.exists()) {
-            if (process.isAlive) process.destroyForcibly()
-            throw GradleException(
-                "后端 ${backend.name} 在 ${resultTimeoutSeconds}s 内未写出结果文件" +
-                    "（桩可能未正常收尾 / 启动失败；场景本身要跑更久时调大 resultTimeoutSeconds）；已强制结束。",
-            )
+            if (resultFile.exists() && process.isAlive) {
+                // 结果已写出：给优雅自停窗口；到时仍活则强杀（非守护线程卡住 JVM 时不空等到超时）
+                if (!process.waitFor(BACKEND_SELF_STOP_GRACE_SECONDS, TimeUnit.SECONDS) && process.isAlive) {
+                    ctx.info(
+                        "后端 ${backend.name} 结果已写出，但 JVM 未在 ${BACKEND_SELF_STOP_GRACE_SECONDS}s 内自停" +
+                            "（常因依赖连接池非守护线程），强制结束，不影响结果判定。",
+                    )
+                    process.destroyForcibly()
+                    process.waitFor(15, TimeUnit.SECONDS)
+                }
+            }
+            if (!resultFile.exists()) {
+                if (process.isAlive) process.destroyForcibly()
+                throw GradleException(
+                    "后端 ${backend.name} 在 ${resultTimeoutSeconds}s 内未写出结果文件" +
+                        "（桩可能未正常收尾 / 启动失败；场景本身要跑更久时调大 resultTimeoutSeconds）；已强制结束。",
+                )
+            }
+        } finally {
+            stopProcessTreeQuietly(ctx, process, pidFile)
         }
     }
 

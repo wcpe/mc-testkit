@@ -1,6 +1,6 @@
 # 功能规格：后端持久运行目录（`runDirectory`）
 
-> 状态：开发中　·　关联 PRD：FR-33　·　分支：feature/output-budget-timeout-run-dir　·　依赖：FR-20（节点运行时注入）、FR-29（bot `ops.json`）
+> 状态：已交付@v0.18.0　·　关联 PRD：FR-33　·　分支：feature/output-budget-timeout-run-dir　·　依赖：FR-20（节点运行时注入）、FR-29（bot `ops.json`）
 
 ## 1. 背景与目标
 
@@ -39,7 +39,7 @@
 - **[自动]** 路径解析：相对路径按工程目录解析、绝对路径原样采用、未声明的后端不受影响；工程目录本身或上级、与框架工作目录重叠、两后端共用或嵌套、空白声明都以中文错误拒绝（`PersistentBackendRunDirTest`）。
 - **[自动]** 二次 staging：世界、插件数据、消费方自放的 jar 都保留，只替换框架注入的 jar 并整理框架产物；注入清单被改坏时也只删 `plugins/` 下的 jar；非持久目录仍按原口径清空且不写清单（`PersistentBackendRunDirTest`）。
 - **[自动]** `backendRunDirectory()` 访问器在声明了 `runDirectory` 时返回持久目录（`McTestkitExtensionTest`）。
-- **[真机，需用户确认]** 真实 Paper 后端声明 `runDirectory` 后连跑两轮：第二轮进入的是第一轮的世界，插件数据还在，升级待测插件后 `plugins/` 里只有新版 jar；先跑经代理、再跑直连，bot 能直连进服。
+- **[x] 真机验收通过（v0.18.0）**  真实 Paper 后端声明 `runDirectory` 后连跑两轮：第二轮进入的是第一轮的世界，插件数据还在，升级待测插件后 `plugins/` 里只有新版 jar；先跑经代理、再跑直连，bot 能直连进服。
 
 ## 6. 风险 / 待定
 

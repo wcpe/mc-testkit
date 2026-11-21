@@ -1,6 +1,6 @@
 # 功能规格：bot 与钩子进程的输出预算，及结果目录的输出所有权
 
-> 状态：开发中　·　关联 PRD：FR-34　·　关联决策：[ADR-0029](../adr/0029-bot-output-budget-and-run-ownership.md)　·　分支：feature/output-budget-timeout-run-dir　·　相关：FR-32（监管期限）
+> 状态：已交付@v0.18.0　·　关联 PRD：FR-34　·　关联决策：[ADR-0029](../adr/0029-bot-output-budget-and-run-ownership.md)　·　分支：feature/output-budget-timeout-run-dir　·　相关：FR-32（监管期限）
 
 ## 1. 背景与目标
 
@@ -61,7 +61,7 @@ bot 与场景钩子后台进程的输出原先用 `Redirect.appendTo(File)` 交�
 - [x] `RUNNING` 记下持有者：持有者存活时等待；已结束且台账里没有存活的 bot 与钩子进程时告警后接手，有则拒绝并指向 stop 任务；拒绝提示按恢复办法区分
 - [x] 固定名 `stopE2eProcesses`，同一条命令里的场景与 serve 排在它之后；直连场景的前台服务端登记台账、取消或出错时收掉
 - [x] 文档同步：PRD（FR-34 行）、API §3.2 任务表与 §3.7、ARCHITECTURE §5、OPERATIONS、CHANGELOG
-- [ ] 真机验收（见 §5）
+- [x] 真机验收（见 §5）
 
 ## 5. 验收标准
 
@@ -72,8 +72,8 @@ bot 与场景钩子后台进程的输出原先用 `Redirect.appendTo(File)` 交�
 - **[自动]** 已判失败后普通钩子进程拒绝启动，收尾钩子进程照样启动并落盘（`RunOutputGuardTest`）。
 - **[自动]** 接手规则各分支（旧格式、`live=unknown`、所列进程仍存活、`RUNNING` 的持有者存活 / 已结束 / 就是当前 JVM、台账里有无存活写者、持有者缺失或读不懂、超长、CRLF）与各自的恢复办法（`RunOutputStateTest`）；真实 TestKit 构建：两次钩子输出合计越过构建上限时导演判 PASS 也失败、下一次构建照常接手；旧版本写下的、没有持有者的 `RUNNING` 持续拒绝且不被改写，删掉后恢复；同样的记录下 stop 任务照常执行、不改写记录；持有者仍存活时拒绝并提示等它结束，持有者退出后下一次构建自己接手；持有者已退出而台账里还有它的 bot 时拒绝、报错指向 `stopE2eProcesses` 并列出该 bot，跑完后下一次构建自己接手（`RunOutputServiceFunctionalTest`）。
 - **[自动]** 跨构建收尾：台账里之前的构建留下的 bot 与状态文件记录的存活进程被 stop 任务收掉、下一次构建自己接手；只有直连场景的工程里，拒绝接手时报错指向 `stopE2eProcesses`，它收掉之前的构建留下的后端、bot 与没停下的进程后下一次构建自己接手（`RunOutputServiceFunctionalTest`）；`stopE2eProcesses` 始终注册，与场景写在同一条命令里时不论顺序都排在场景之前（`TaskOrchestrationFunctionalTest`）；直连场景跑完后后端登记在台账里、pid 文件已删（`DirectBackendProcessFunctionalTest`）；钩子进程连同子孙进程一起收、本构建仍在监管的进程不按台账另杀、启动时刻对不上的同 pid 进程不杀（`ProcessStopperTest`）；`StopPidHook` 按台账收掉之前的构建留下的进程、不碰未登记的进程（`ScenarioHooksTest`）；并发登记不丢记录（`ProcessLedgerTest`）。
-- **[真机，需用户确认]** 集成验收工程连跑长矩阵：默认上限下正常负载不出现 `OUTPUT_LIMIT limit=run` 失败，一格失败不连坐后续各格，结束后没有残留的 bot 与钩子进程。
-- **[真机，需用户确认]** 跑场景时强杀 Gradle 守护进程：台账里还有存活的 bot 或钩子进程时，下一次构建被拒并指向 `stopE2eProcesses`；跑完后服务端、bot 与钩子进程都被收掉，下一次构建自己接手，不需要手工删状态文件。
+- **[x] 真机验收通过（v0.18.0）**  集成验收工程连跑长矩阵：默认上限下正常负载不出现 `OUTPUT_LIMIT limit=run` 失败，一格失败不连坐后续各格，结束后没有残留的 bot 与钩子进程。
+- **[x] 真机验收通过（v0.18.0）**  跑场景时强杀 Gradle 守护进程：台账里还有存活的 bot 或钩子进程时，下一次构建被拒并指向 `stopE2eProcesses`；跑完后服务端、bot 与钩子进程都被收掉，下一次构建自己接手，不需要手工删状态文件。
 
 ## 6. 风险 / 待定
 

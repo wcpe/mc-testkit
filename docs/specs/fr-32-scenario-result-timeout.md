@@ -1,6 +1,6 @@
 # 功能规格：场景级结果等待上限（`resultTimeoutSeconds`）
 
-> 状态：开发中　·　关联 PRD：FR-32　·　分支：feature/output-budget-timeout-run-dir　·　相关：FR-34（场景进程的监管期限由本上限推出）
+> 状态：已交付@v0.18.0　·　关联 PRD：FR-32　·　分支：feature/output-budget-timeout-run-dir　·　相关：FR-34（场景进程的监管期限由本上限推出）
 
 ## 1. 背景与目标
 
@@ -36,7 +36,7 @@
 - **[自动]** 配置期：`resultTimeoutSeconds` 为 0 或负数时单后端 / 集群 / 压测场景都以中文错误拒绝；未声明时取 600（`ScenarioResultTimeoutValidationTest`）。
 - **[自动]** 回归锚点：TestKit 用一个只占端口、不写结果的探针后端跑直连 `e2e<Key>`，场景声明 3 秒上限，任务很快失败并报出「在 3s 内未写出结果文件」；编排若仍按 600 秒等，用例因耗时断言失败（`DirectE2eResultTimeoutFunctionalTest`）。
 - **[自动]** 监管期限：普通场景为「上限 + 600 秒」，压测另加时长，超大值封顶 7 天（`ScenarioProcessLifetimeTest`）。
-- **[真机，需用户确认]** 消费方的长时间场景（场景全程超过 10 分钟）声明足够的上限后跑完并判定，不再在第 600 秒被截断。
+- **[x] 真机验收通过（v0.18.0）**  消费方的长时间场景（场景全程超过 10 分钟）声明足够的上限后跑完并判定，不再在第 600 秒被截断。
 
 ## 6. 风险 / 待定
 

@@ -29,6 +29,9 @@ open class McTestkitExtension {
      */
     internal lateinit var runRoot: Provider<Directory>
 
+    /** 工程目录；由插件在 `apply` 期注入，用来解析后端声明的持久运行目录（`backend { runDirectory }`）。 */
+    internal lateinit var projectDirectory: Directory
+
     /** 已声明的后端节点（只读快照）。 */
     val declaredBackends: List<BackendSpec> get() = mutableBackends.toList()
 
@@ -80,7 +83,7 @@ open class McTestkitExtension {
         dependencies.apply(configure)
 
     /**
-     * 某后端节点的运行目录（`<buildDir>/mc-testkit/run-<后端名>`）。
+     * 某后端节点的运行目录（`<buildDir>/mc-testkit/run-<后端名>`；该后端声明了 `runDirectory` 时为那个持久目录）。
      *
      * **消费方向运行目录注入配置 / 验收桩文件的落点**：`prepareE2e<场景>` 会先铺好该目录
      * （模板、权威配置、依赖插件），消费方的注入任务以 `dependsOn("prepareE2e<场景>")` 保证顺序，
@@ -112,6 +115,14 @@ open class McTestkitExtension {
             "mcTestkit 后端名「$backendName」是保留字，不能用于 backendRunDirectory；" +
                 "该名的运行目录与代理运行目录（${McTestkitRunDirectories.PROXY_RUN_DIR_NAME}）是同一个目录。"
         }
-        return runRoot.map { it.dir(McTestkitRunDirectories.backendRunDirName(backendName)) }
+        // runDirectory 在 Provider 求值时才查：消费方可能先取访问器、后声明 backend { runDirectory }。
+        return runRoot.map { root ->
+            val persistent = mutableBackends.firstOrNull { it.name == backendName }?.runDirectory
+            if (persistent != null) {
+                projectDirectory.dir(persistent)
+            } else {
+                root.dir(McTestkitRunDirectories.backendRunDirName(backendName))
+            }
+        }
     }
 }

@@ -63,6 +63,7 @@ object TopologyResolver {
                 environment = spec.environment,
                 templateDirectory = spec.templateDirectoryDeclaration,
                 mavenServer = spec.mavenServer,
+                runDirectory = spec.runDirectory,
             )
         }
         val resolvedProxies = proxies.mapIndexed { index, spec ->
@@ -87,7 +88,12 @@ object TopologyResolver {
         return Topology(backends = resolvedBackends, proxies = resolvedProxies)
     }
 
-    /** 显式 Java 主版本必须为正数，避免把明显错误的声明拖到启动期。 */
+    /**
+     * 显式 Java 主版本必须为正数，避免把明显错误的声明拖到启动期。
+     *
+     * 后端的 runDirectory 若声明则不得为空白；路径本身（与工作目录重叠、后端间共用等）要按工程目录解析后才能判，
+     * 在注册期校验。
+     */
     private fun validateNodeRuntimeDeclarations(proxies: List<ProxySpec>, backends: List<BackendSpec>) {
         proxies.forEach { proxy ->
             if (proxy.javaVersion != null && proxy.javaVersion!! <= 0) {
@@ -97,6 +103,11 @@ object TopologyResolver {
         backends.forEach { backend ->
             if (backend.javaVersion != null && backend.javaVersion!! <= 0) {
                 throw GradleException("mcTestkit 后端「${backend.name}」的 javaVersion 必须为正整数。")
+            }
+            if (backend.runDirectory?.isBlank() == true) {
+                throw GradleException(
+                    "mcTestkit 后端「${backend.name}」的 runDirectory 不能为空白；不需要持久运行目录时去掉该声明即可。",
+                )
             }
         }
     }

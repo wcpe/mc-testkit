@@ -65,6 +65,7 @@ mc-testkit 提供**统一的「全平台 E2E 编排」Gradle 插件 + 配套脚�
 | FR-30 | 插件消息命令通道（`E2E_CMD` 协议）：新增一条 bot ↔ 桩的结构化命令通道，走 Minecraft 自定义 payload（plugin message），不走聊天。机器人发 `E2E_CMD:<id>:<command>`，桩侧以**服务端 console 身份**执行并回 `E2E_CMD_DONE:<id>:<PASS\|FAIL>:<output>`。解决「mineflayer 拿不到 console 身份」与「靠聊天文本解析命令结果既脆弱又不完整（`/save-all` 这类不写聊天）」两个缺口；不进聊天流、无 256 字长度上限、其他玩家不可见。与 FR-29 互补：OP 验玩家权限路径，本通道验 console 路径（见 [ADR-0027](adr/0027-bot-command-channels.md)）| P1 | 已交付@v0.17.0 |
 | FR-31 | 机器人命令执行 API：`@wcpe/mc-testkit-bot` 新增 `execCommand(bot, command)` / `execCommands(bot, commands)`，封装 FR-30 通道为「发一条命令 → 拿到结构化结果（成功与否 + 输出文本）」的一行调用，场景代码不再需要手写协议前缀、拼 id、解析聊天回显。超时、桩未装载、命令抛异常均返回明确失败原因而非静默挂起（见 [ADR-0027](adr/0027-bot-command-channels.md)）| P1 | 已交付@v0.17.0 |
 | FR-32 | 场景级结果等待上限：`scenario { resultTimeoutSeconds = N }` 按场景声明编排等桩写出结果文件的上限（秒），默认 600（与此前写死的值相同，未声明的场景行为不变），配置期校验须 >0。直连、经代理、集群场景到点仍无结果即强制结束并判失败，压测场景在 `stress.durationSeconds` 之外再等这么久。解决场景自身就要跑 10 分钟以上（长时间负载、长观测窗口）时被写死的 600 秒截断、且无任何配置项可调的问题 | P1 | 计划 |
+| FR-33 | 后端持久运行目录：`backend { runDirectory = "run/s1" }` 声明后端在哪个目录起服（相对工程目录或绝对路径），声明即持久——编排不再每轮清空该目录，世界、插件数据、日志留给后续测试；每轮仍铺模板、重写权威配置与 bot `ops.json`、换上本轮插件（按清单移除上一轮注入的 jar，不动消费方自放的 jar），清掉 `server-libraries/` 与残留 pid，并复位上一轮经代理留下的转发开关。注册期拒绝工程目录本身或其上级、与 `<buildDir>/mc-testkit` 重叠、后端间共用或嵌套的目录；未声明的后端行为不变 | P2 | 计划 |
 
 > 状态取值：计划 / 开发中 / 已交付@vX.Y.Z。优先级：P1(MVP 或阻断真实消费者接入的关键项) / P2 / P3。
 > 标 `已交付` 有门：该 FR 的 §6 / spec 验收标准全部满足、对应测试 / 实机验收通过后，才由 `sdd-release-version` 在发版时统一标 `已交付@vX.Y.Z`，过程中不得自行预标。

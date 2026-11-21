@@ -33,6 +33,7 @@ mcTestkit {
         env("MYPLUGIN_NODE", "s1")
         templateDirectory("MC_TESTKIT_E2E_S1_TEMPLATE_DIR")
         mavenServer("io.papermc.paper:paper:1.12.2") // 可省；服务端 jar 来自 Maven 坐标（优先级：*_JAR > 本坐标 > 内置下载）
+        runDirectory = "run/s1"   // 可省；持久运行目录（相对工程目录），不再每轮清空，世界与插件数据留到下一轮（FR-33）
     }
     // 代理节点与路由
     proxy("wf") {
@@ -172,7 +173,14 @@ scenario("batch-admin") {
 
 **机器人目录定位（Gradle 属性，非 DSL 块）**：消费方照抄 `template/bot` 到其项目；编排经 Gradle 属性 `mcTestkit.botDir` 定位（缺省相对**根工程**的 `e2e-bot`，入口脚本固定 `<botDir>/src/connectAndWait.js`）。目录命名不同的用 `-PmcTestkit.botDir=<目录>` 覆盖（相对路径相对根工程解析，绝对路径直接采用），保证可移植、不写死本机绝对路径。这是 FR-04 唯一新增可配项，刻意走 Gradle 属性而非新增 DSL 顶层块（保持 §3.1 冻结形态不变）。
 
-**运行目录注入点（公开访问器，非 DSL 块）**：`mcTestkit.backendRunDirectory("<后端名>")` 返回该后端节点运行目录的 `Provider<Directory>`（`<buildDir>/mc-testkit/run-<后端名>`）。目录命名由 `McTestkitRunDirectories` 单点定义、与任务侧路径推导同源，消费方**不要自己拼目录路径**：布局属插件内部实现，自行拼写会在布局调整后静默失配（历史事故：消费方按旧布局写配置，配置落在无人使用的目录，服务端以默认配置启动、场景静默失败）。用法：注入任务以 `dependsOn("prepareE2e<场景>")` 保证顺序，动作内 `provider.get().asFile` 取目录；不要把扩展对象本身捕获进任务动作（配置缓存不友好）。
+**运行目录注入点（公开访问器，非 DSL 块）**：`mcTestkit.backendRunDirectory("<后端名>")` 返回该后端节点运行目录的 `Provider<Directory>`（`<buildDir>/mc-testkit/run-<后端名>`；该后端声明了 `runDirectory` 时返回那个持久目录）。目录命名由 `McTestkitRunDirectories` 单点定义、与任务侧路径推导同源，消费方**不要自己拼目录路径**：布局属插件内部实现，自行拼写会在布局调整后静默失配（历史事故：消费方按旧布局写配置，配置落在无人使用的目录，服务端以默认配置启动、场景静默失败）。用法：注入任务以 `dependsOn("prepareE2e<场景>")` 保证顺序，动作内 `provider.get().asFile` 取目录；不要把扩展对象本身捕获进任务动作（配置缓存不友好）。
+
+**持久运行目录（`backend { runDirectory = "run/s1" }`，FR-33，加法扩展）**：默认每个后端在 `<buildDir>/mc-testkit/run-<后端名>` 里起服，每轮只保留 `libraries` / `cache` / `assets` / `versions`，其余清空。声明 `runDirectory`（相对工程目录，或绝对路径）后，该后端改在这个目录起服，且**不再每轮清空**：世界、插件数据、日志都留到下一轮，适合要沿用上一轮状态的手测或长测；要从头来过，删掉这个目录即可。
+
+- 每轮仍会做：铺模板（世界目录与 `logs` 照旧不从模板拷）、重写权威配置（`eula.txt`，`server.properties` 的端口 / 离线模式等）、合并 bot 的 `ops.json`、注入本轮的待测 / 依赖插件 jar。
+- 每轮会清掉的框架产物：上一轮由框架注入、记在目录里 `.mc-testkit-injected-plugins` 清单中的插件 jar（依赖升版后文件名变了也不会新旧并存；自己放进 `plugins/` 的 jar 不受影响）、`server-libraries/`、根目录的 `*.pid`。上一轮经代理留下的转发开关（`spigot.yml` 的 `settings.bungeecord`、`config/paper-global.yml` 的 `proxies.velocity.enabled`）会先复位，经代理的场景随后重新打开，直连场景因此不会被残留开关拒之门外。
+- 注册期校验（中文报错）：不能是工程目录本身或其上级；不能与 `<buildDir>/mc-testkit` 重叠（那里随 `clean` 清空、代理目录每轮整删）；两个后端不能指向同一目录或互相嵌套。声明为空白在拓扑解析时即被拒。
+- `mcTestkit.backendRunDirectory("<后端名>")` 与钩子里的 `HookContext.backendRunDir(...)` 都返回这个目录。持久目录不参与 `server-base` 持久运行库缓存的回写（运行库本来就留在原地）。
 
 **依赖插件按 Maven 坐标解析（`dependencies { mavenPlugin(…) }`，加法扩展）**：`DependenciesSpec` 新增 `mavenPlugin(coordinate)`，声明一个依赖插件注入，坐标为 `group:artifact:version`。它解决的是「制品不随公开仓库分发」的场景——此前只能本机放文件 + 设环境变量，CI 里没有那个文件就跑不了；现在直接写坐标即可。
 

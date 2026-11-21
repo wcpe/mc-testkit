@@ -133,4 +133,18 @@ class McTestkitExtensionTest {
             "普通后端名应照常返回 run-<名>",
         )
     }
+
+    @Test
+    @DisplayName("backendRunDirectory 对声明了 runDirectory 的后端应返回该持久目录，且先取访问器后声明也生效")
+    fun backendRunDirectoryHonoursRunDirectory() {
+        val project = ProjectBuilder.builder().build()
+        project.plugins.apply(McTestkitPlugin::class.java)
+        val ext = project.extensions.getByType(McTestkitExtension::class.java)
+        val persistent = ext.backendRunDirectory("s1")
+        ext.backend("s1") { runDirectory = "run/s1" }
+        ext.backend("s2")
+
+        assertEquals(project.file("run/s1").canonicalFile, persistent.get().asFile.canonicalFile)
+        assertTrue(ext.backendRunDirectory("s2").get().asFile.path.endsWith("run-s2"))
+    }
 }

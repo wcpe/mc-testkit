@@ -1,6 +1,8 @@
 package top.wcpe.mc.testkit.task
 
+import org.gradle.api.GradleException
 import top.wcpe.mc.testkit.contract.McTestkitRunDirectories
+import top.wcpe.mc.testkit.topology.ResolvedBackend
 import java.io.File
 
 /**
@@ -16,17 +18,30 @@ import java.io.File
  * @property buildDir 当前工程 build 目录（如 `<project>/build`）。
  * @property gradleUserHome Gradle 用户主目录（jar 下载缓存挂这下面，多工程共享、跨 clean 存活）。
  * @property rootDir 根工程目录（持久运行库缓存与默认 bot 目录相对它解析）。
+ * @property backendRunDirOverrides 声明了持久运行目录（`backend { runDirectory }`）的后端 → 已解析的绝对目录
+ *   （见 [resolvePersistentBackendRunDirs]）；未声明的后端走默认的 `run-<后端名>`。
  */
 class RunLayout(
     private val buildDir: File,
     private val gradleUserHome: File,
     private val rootDir: File,
+    private val backendRunDirOverrides: Map<String, File> = emptyMap(),
 ) : java.io.Serializable {
+    /** 同一布局换上持久运行目录覆盖（其余根目录不变）。 */
+    fun withBackendRunDirOverrides(overrides: Map<String, File>): RunLayout =
+        RunLayout(buildDir, gradleUserHome, rootDir, overrides.toMap())
+
+    /**
+     * 该后端是否声明了持久运行目录：是则编排不清空它的运行目录，只整理框架自己产出的内容
+     * （见 `stageBackendRuntime` 的 `persistent`）。
+     */
+    fun isPersistentBackendRunDir(backendName: String): Boolean = backendName in backendRunDirOverrides
+
     /** E2E 工作根：`build/mc-testkit`（clean 即清，含运行目录 / 结果 / 代理运行目录）。 */
     val workRoot: File get() = File(buildDir, McTestkitRunDirectories.WORK_DIR_NAME)
 
     /**
-     * 单个后端节点的独立运行目录：`run-<backendName>`。
+     * 单个后端节点的独立运行目录：`run-<backendName>`（声明了持久运行目录时为该目录）。
      *
      * 多版本矩阵必须隔离 `libraries`/`cache`：新 Paper 的 Java 16+ 依赖会被旧版（Java 8）
      * 误用导致 `UnsupportedClassVersionError`。与集群 [clusterBackendRunDir] 同形。
@@ -69,9 +84,11 @@ class RunLayout(
     /**
      * 某集群后端的运行目录（cwd；与其它后端 / 单后端运行目录隔离，集群编排）。
      *
-     * 目录名取自 [McTestkitRunDirectories.backendRunDirName]——对外契约同一真源。
+     * 目录名取自 [McTestkitRunDirectories.backendRunDirName]——对外契约同一真源。声明了持久运行目录的后端
+     * 返回该目录（[backendRunDirOverrides]），所有编排路径经此一处生效。
      */
-    fun clusterBackendRunDir(backendName: String): File = File(workRoot, McTestkitRunDirectories.backendRunDirName(backendName))
+    fun clusterBackendRunDir(backendName: String): File =
+        backendRunDirOverrides[backendName] ?: File(workRoot, McTestkitRunDirectories.backendRunDirName(backendName))
 
     /** 某集群后端的 pid 文件（落结果目录，供收尾按 pid 杀）。 */
     fun clusterBackendPidFile(backendName: String): File = File(resultsDir, "backend-$backendName.pid")
@@ -103,6 +120,57 @@ class RunLayout(
         val PRESERVED_RUNTIME_CACHE_ENTRIES = setOf("libraries", "cache", "assets", "versions")
     }
 }
+
+/**
+ * 把后端的持久运行目录声明（`backend { runDirectory }`）解析为绝对目录，并做注册期校验。
+ *
+ * 相对路径按工程目录解析。拒绝三类声明（中文 [GradleException]）：
+ * - 是工程目录本身或其上级：服务端会把世界 / 配置 / 插件铺满整个工程；
+ * - 与工作根 [workRoot] 重叠（在其内或是其上级）：那里随 `clean` 清空，代理目录每轮整删，存不住东西；
+ * - 两个后端解析到同一目录或互相嵌套：会抢同一份世界与配置。
+ *
+ * 路径比较走 [java.nio.file.Path.startsWith]（按路径段，大小写规则随平台），不走字符串前缀。
+ *
+ * @return 后端名 → 规范化后的绝对目录；未声明的后端不出现在结果里。
+ */
+internal fun resolvePersistentBackendRunDirs(
+    projectDir: File,
+    workRoot: File,
+    backends: List<ResolvedBackend>,
+): Map<String, File> {
+    val project = projectDir.canonicalFile
+    val work = workRoot.canonicalFile
+    val resolved = LinkedHashMap<String, File>()
+    backends.forEach { backend ->
+        val declaration = backend.runDirectory ?: return@forEach
+        val declared = File(declaration)
+        val dir = (if (declared.isAbsolute) declared else File(project, declaration)).canonicalFile
+        val prefix = "mcTestkit 后端「${backend.name}」的 runDirectory「$declaration」解析为 ${dir.absolutePath}"
+        if (project.isSameOrInside(dir)) {
+            throw GradleException(
+                "$prefix，是工程目录本身或其上级；服务端会把世界、配置、插件铺满整个目录。" +
+                    "请改用专门的子目录（如 run/${backend.name}）。",
+            )
+        }
+        if (dir.isSameOrInside(work) || work.isSameOrInside(dir)) {
+            throw GradleException(
+                "$prefix，与框架工作目录 ${work.absolutePath} 重叠；那里随 clean 清空、代理目录每轮整删，存不住东西。" +
+                    "请改到工程下的其它目录（如 run/${backend.name}）。",
+            )
+        }
+        resolved.entries.firstOrNull { (_, other) -> dir.isSameOrInside(other) || other.isSameOrInside(dir) }
+            ?.let { (otherName, other) ->
+                throw GradleException(
+                    "$prefix，与后端「$otherName」的 runDirectory（${other.absolutePath}）是同一目录或互相嵌套；" +
+                        "每个后端需要独立的运行目录。",
+                )
+            }
+        resolved[backend.name] = dir
+    }
+    return resolved
+}
+
+private fun File.isSameOrInside(ancestor: File): Boolean = toPath().startsWith(ancestor.toPath())
 
 /**
  * 清空运行目录但保留运行库 / 缓存子目录（[RunLayout.PRESERVED_RUNTIME_CACHE_ENTRIES]）。

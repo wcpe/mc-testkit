@@ -207,7 +207,7 @@ object McTestkitTasks {
 
         // ② 配置期一次性提取动作执行上下文快照（全部可序列化）：动作闭包捕获 ctx 而非 Project，
         //    兼容 Gradle 9.x 配置缓存（捕获 Project 会在存储阶段报 cannot serialize DefaultProject）
-        val ctx = executionContextOf(project, extension)
+        val ctx = executionContextOf(project, extension, topology)
 
         // ②' Maven 坐标来源（依赖插件 + 服务端/代理 jar）：只传给需要它们的任务注册点，
         //     避免无关任务触发仓库访问；服务端坐标在注册期先查镜像，命中即不创建解析配置
@@ -340,9 +340,16 @@ object McTestkitTasks {
                 extension.declaredProxies.mapNotNull { it.mavenServer }
             ).distinct()
 
-    /** 配置期一次性提取动作执行上下文快照（全部可序列化，供动作闭包安全捕获，兼容配置缓存）。 */
-    private fun executionContextOf(project: Project, extension: McTestkitExtension): TaskExecutionContext {
-        val layout = layoutOf(project)
+    /**
+     * 配置期一次性提取动作执行上下文快照（全部可序列化，供动作闭包安全捕获，兼容配置缓存）。
+     *
+     * 后端的持久运行目录（`backend { runDirectory }`）在这里按工程目录解析并校验，写进布局后各编排路径经
+     * [RunLayout.backendRunDir] / [RunLayout.clusterBackendRunDir] 统一生效。
+     */
+    private fun executionContextOf(project: Project, extension: McTestkitExtension, topology: Topology): TaskExecutionContext {
+        val layout = layoutOf(project).let { base ->
+            base.withBackendRunDirOverrides(resolvePersistentBackendRunDirs(project.projectDir, base.workRoot, topology.backends))
+        }
         return TaskExecutionContext(
             logger = project.logger,
             layout = layout,
@@ -2248,12 +2255,17 @@ object McTestkitTasks {
         opNames: List<String> = emptyList(),
     ) {
         ctx.layout.resultsDir.mkdirs()
+        val persistent = ctx.layout.isPersistentBackendRunDir(backend.name)
+        if (persistent) {
+            ctx.info("后端 ${backend.name} 使用持久运行目录（不清空，世界与插件数据保留）：${runDir.absolutePath}")
+        }
         stageBackendRuntime(
             runDir,
             backend,
             // 只把「本后端要提权的用户名」并入资源，不改动预检结果里的模板 / 依赖插件
             resources.copy(opNames = opNames),
             cacheDirectory = ctx.layout.persistentBackendCacheDir(backend.name),
+            persistent = persistent,
         ) { ctx.info(it) }
     }
 

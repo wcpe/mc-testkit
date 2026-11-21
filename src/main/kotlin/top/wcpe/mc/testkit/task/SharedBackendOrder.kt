@@ -51,20 +51,25 @@ fun sharedBackendOrderEdges(
     }
 
     addChain(scenariosByBackend(topology, scenarios).values)
-    // 代理目录与端口全局唯一：同一代理上的场景同样不能并发（见上方反例）
-    addChain(scenariosByProxy(scenarios).values)
+    // 代理运行目录全局唯一：任意两个经代理的场景同样不能并发（见上方反例）
+    addChain(listOf(scenariosViaProxy(scenarios)))
 
     return edges
 }
 
 /**
- * 代理名 → 该代理上的场景（保持声明顺序）。
+ * 声明了 `via` 的场景（保持声明顺序）。
  *
- * 只取声明了 `via` 的场景：不设 via 的场景不碰代理运行目录，与代理无关。
+ * **不按代理名分组**：代理运行目录恒为 `run-proxy`（见 `McTestkitRunDirectories.PROXY_RUN_DIR_NAME`），
+ * 与代理名无关——`proxy("wf1")` 与 `proxy("wf2")` 写的是**同一个**目录，`stageProxyRuntime` 每轮
+ * 都会把它整删重建。按名字分组只能覆盖「共用同一个代理」那一种，而「代理名不同、后端名也不同」的
+ * 两个场景仍会落进不同组、无边、并行，然后互相删掉对方刚铺好的配置。
+ *
+ * 因此这里直接把全部经代理场景归入同一组：既然目录只有一份，就得整体串行。
+ * 不设 `via` 的场景不碰该目录，故不列入。
  */
-private fun scenariosByProxy(scenarios: List<ScenarioSpec>): Map<String, List<ScenarioSpec>> = scenarios
-    .mapNotNull { scenario -> scenario.via?.let { it to scenario } }
-    .groupBy({ it.first }, { it.second })
+private fun scenariosViaProxy(scenarios: List<ScenarioSpec>): List<ScenarioSpec> =
+    scenarios.filter { it.via != null }
 
 /** 后端名 → 该后端上的场景（保持声明顺序）。 */
 private fun scenariosByBackend(

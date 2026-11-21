@@ -144,6 +144,57 @@ class SharedBackendOrderTest {
     }
 
     @Test
+    @DisplayName("不同代理名 + 不同后端名的两个经代理场景仍应串行（代理运行目录全局唯一）")
+    fun serializeScenariosAcrossDifferentProxies() {
+        // 代理运行目录恒为 run-proxy，与代理名无关：wf1 与 wf2 写的是同一个目录，
+        // stageProxyRuntime 每轮都整删重建。若按代理名分组，两个场景会落进不同组、无边、并行，
+        // 然后互相删掉对方刚铺好的配置（表现为随机 bind failed 或请求转发到错误后端）。
+        val ext = extension()
+        ext.backend("s1") { version = "1.20.1" }
+        ext.backend("s2") { version = "1.20.1" }
+        ext.proxy("wf1") { routesTo("s1") }
+        ext.proxy("wf2") { routesTo("s2") }
+        ext.scenario("a") {
+            backend = "s1"
+            via = "wf1"
+        }
+        ext.scenario("b") {
+            backend = "s2"
+            via = "wf2"
+        }
+
+        val edges = sharedBackendOrderEdges(TopologyResolver.resolve(ext), ext.declaredScenarios)
+
+        assertTrue(
+            edges["e2eB"].orEmpty().contains("e2eA"),
+            "两个经代理场景共用同一个 run-proxy 目录，必须串行（不能按代理名分组），实际：${edges["e2eB"]}",
+        )
+    }
+
+    @Test
+    @DisplayName("经代理场景与不经代理场景之间不强制串行（后者不碰 run-proxy）")
+    fun doNotSerializeProxyWithDirectScenarios() {
+        val ext = extension()
+        ext.backend("s1") { version = "1.20.1" }
+        ext.backend("s2") { version = "1.20.1" }
+        ext.proxy("wf") { routesTo("s1") }
+        ext.scenario("proxied") {
+            backend = "s1"
+            via = "wf"
+        }
+        ext.scenario("plain") { backend = "s2" }
+
+        val edges = sharedBackendOrderEdges(TopologyResolver.resolve(ext), ext.declaredScenarios)
+
+        // 后端的边由 scenariosByBackend 决定（两者后端不同，无边）；
+        // 代理的边只应纳入经代理那一个场景，不该把 plain 也拖进代理链
+        assertTrue(
+            edges["e2ePlain"].orEmpty().isEmpty(),
+            "不经代理的场景不碰 run-proxy，不该因为另一个场景经代理就被串到其后，实际：${edges["e2ePlain"]}",
+        )
+    }
+
+    @Test
     @DisplayName("单场景不应产生任何顺序约束")
     fun leaveSingleScenarioUnconstrained() {
         val ext = extension()

@@ -32,10 +32,20 @@ object McTestkitPidFile {
     private const val START_LINE_INDEX = 1
 
     /**
+     * 第 2 行写这个标记表示「本框架想记启动时刻，但当场取不到」。
+     *
+     * 与「旧版本写的单行文件」必须可区分：前者是**本次新写法下的采集失败**（说明这台机器上
+     * 身份校验其实没生效，值得告警），后者只是历史遗留。若两者都退化成单行，收尾方无从分辨，
+     * 用户也就永远不知道自己其实一直在裸奔。
+     */
+    const val START_UNKNOWN_MARKER = "unknown"
+
+    /**
      * 写一个带身份的 pid 文件（pid + 启动时刻）。
      *
-     * 拿不到启动时刻时**仍写 pid**，不放弃收尾能力：此时读回无法校验身份，收尾方会按
-     * 「无法确认」保守处理，而不是拒绝整条路径。宁可这次少校验一次，也不能让进程彻底失去收尾凭证。
+     * 拿不到启动时刻时仍写 pid（不放弃收尾能力），但第 2 行写 [START_UNKNOWN_MARKER] 而不是
+     * 干脆省略——省略会让它看起来和旧版本写的单行文件一模一样，收尾方无法区分「历史遗留」与
+     * 「这台机器上身份校验从没生效过」。宁可多一行标记，也不能让采集失败静默混进兼容路径。
      *
      * 父目录自动创建。
      *
@@ -45,7 +55,7 @@ object McTestkitPidFile {
     fun write(pidFile: File, pid: Long) {
         pidFile.parentFile?.mkdirs()
         val startedAt = startedAtMillis(pid)
-        pidFile.writeText(if (startedAt == null) pid.toString() else "$pid\n$startedAt")
+        pidFile.writeText(if (startedAt == null) "$pid\n$START_UNKNOWN_MARKER" else "$pid\n$startedAt")
     }
 
     /**
@@ -63,11 +73,22 @@ object McTestkitPidFile {
     /**
      * 读 pid 文件记录的启动时刻（次行）。
      *
-     * @return 毫秒时间戳；没有次行（旧文件）、解析不了或文件读不出来时返回 null，表示「无从校验」
+     * @return 毫秒时间戳；没有次行（旧文件）、次行是 [START_UNKNOWN_MARKER]、解析不了或
+     *   文件读不出来时返回 null，表示「无从校验」
      */
     fun readStartedAtMillis(pidFile: File): Long? = runCatching {
         pidFile.readLines(Charsets.UTF_8).getOrNull(START_LINE_INDEX)?.trim()?.toLongOrNull()
     }.getOrNull()
+
+    /**
+     * pid 文件的次行是否明确写着「本框架想记启动时刻但取不到」（[START_UNKNOWN_MARKER]）。
+     *
+     * 用来把「新写法下的采集失败」与「旧版本遗留的单行文件」区分开：两者都无法校验身份，
+     * 但前者意味着这台机器上身份保护一直没生效，值得让收尾方说清楚。
+     */
+    fun hasUnknownStartMarker(pidFile: File): Boolean = runCatching {
+        pidFile.readLines(Charsets.UTF_8).getOrNull(START_LINE_INDEX)?.trim() == START_UNKNOWN_MARKER
+    }.getOrDefault(false)
 
     /**
      * 某个活进程的启动时刻（毫秒）。
@@ -82,19 +103,27 @@ object McTestkitPidFile {
      * pid 文件记录的进程是否**仍然是当初那个进程**。
      *
      * 判据是「pid 仍存活 **且** 启动时刻与记录一致」。记录里没有启动时刻时返回 [Verdict.Unverifiable]
-     * ——调用方必须自己决定保守方向，本函数不替它决定。收尾路径（`stopProcessByPidFile`）对
-     * [Verdict.Unverifiable] 选择**放行并告警**，理由见那里的注释（旧文件兼容 + 误杀概率远低于
-     * 残留进程占着端口的代价）。
+     * ——调用方必须自己决定保守方向，本函数不替它决定。
+     *
+     * 判定结果里带上**已经解析过、已经确认存活的那个句柄**：调用方直接对它收尾，不要再
+     * `ProcessHandle.of(pid)` 解析第二遍。二次解析会重新按 pid 查进程，而在两次解析之间
+     * 原进程可能恰好退出、pid 被无关进程占用——那正是本校验要防的情形，重复解析等于把
+     * 刚排除的风险又放回来一次。
+     *
+     * 需要说明的**残余风险**：JDK 的 [ProcessHandle] 在多数平台底层仍按 pid 发信号，
+     * 因此「校验通过」与「真正发出信号」之间理论上仍有极窄窗口。本框架已把窗口压到
+     * 「一次解析 + 一次 kill」，并在进程台账路径上用命令行特征做第二重核对；若需要
+     * 进程级绝对隔离，得依赖 pidfd 之类的平台能力（JDK 无公开 API）。
      */
     fun verify(pidFile: File, pid: Long): Verdict {
         val expected = readStartedAtMillis(pidFile)
         val handle = ProcessHandle.of(pid).orElse(null)
             ?: return Verdict.Gone
         if (!handle.isAlive) return Verdict.Gone
-        if (expected == null) return Verdict.Unverifiable
+        if (expected == null) return Verdict.Unverifiable(handle, collectionFailed = hasUnknownStartMarker(pidFile))
         val actual = handle.info().startInstant().map { it.toEpochMilli() }.orElse(null)
-            ?: return Verdict.Unverifiable
-        return if (actual == expected) Verdict.Same(expected) else Verdict.Reused(expected, actual)
+            ?: return Verdict.Unverifiable(handle, collectionFailed = hasUnknownStartMarker(pidFile))
+        return if (actual == expected) Verdict.Same(handle, expected) else Verdict.Reused(expected, actual)
     }
 
     /** [verify] 的判定结果。 */
@@ -102,11 +131,25 @@ object McTestkitPidFile {
         /** 进程已不存在。 */
         data object Gone : Verdict
 
-        /** 记录里没有启动时刻（旧文件），无法确认是不是同一个进程。 */
-        data object Unverifiable : Verdict
+        /**
+         * 无法核对身份（记录里没有启动时刻，或平台当场取不到活进程的启动时刻）。
+         *
+         * 携带已解析的 [handle]，供放行收尾时复用，避免二次解析放大竞态窗口。
+         *
+         * @property handle 已解析并确认存活的句柄
+         * @property collectionFailed true 表示 pid 文件里明确写了「想记但取不到」
+         *   （[START_UNKNOWN_MARKER]）——这不是旧文件遗留，而是这台机器上身份校验真的没生效，
+         *   值得让调用方说清楚；false 表示旧版本遗留的单行文件
+         */
+        data class Unverifiable(val handle: ProcessHandle, val collectionFailed: Boolean = false) : Verdict
 
-        /** 仍是当初那个进程：[startedAtMillis] 是双方一致的启动时刻。 */
-        data class Same(val startedAtMillis: Long) : Verdict
+        /**
+         * 仍是当初那个进程。
+         *
+         * @property handle 已解析并确认存活的句柄，调用方直接对它收尾
+         * @property startedAtMillis 双方一致的启动时刻
+         */
+        data class Same(val handle: ProcessHandle, val startedAtMillis: Long) : Verdict
 
         /** pid 已被别的进程复用：[expected] 是记录的时刻，[actual] 是现占用者的时刻。 */
         data class Reused(val expected: Long, val actual: Long) : Verdict

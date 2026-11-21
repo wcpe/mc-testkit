@@ -5,7 +5,9 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -97,11 +99,13 @@ class McTestkitPidFileTest {
         val same = pidFile("same.pid").apply { writeText("$self\n$actual") }
         val reused = pidFile("reused.pid").apply { writeText("$self\n${actual - 1000}") }
 
-        assertEquals(
-            McTestkitPidFile.Verdict.Same(actual),
-            McTestkitPidFile.verify(same, self),
-            "启动时刻一致应判定为同一个进程",
+        val sameVerdict = McTestkitPidFile.verify(same, self)
+        assertTrue(
+            sameVerdict is McTestkitPidFile.Verdict.Same,
+            "启动时刻一致应判定为同一个进程，实际：$sameVerdict",
         )
+        assertEquals(actual, sameVerdict.startedAtMillis, "Same 应带出双方一致的启动时刻")
+
         val verdict = McTestkitPidFile.verify(reused, self)
         assertTrue(verdict is McTestkitPidFile.Verdict.Reused, "启动时刻不符应判定为 pid 复用，实际：$verdict")
         assertNotEquals(
@@ -112,14 +116,88 @@ class McTestkitPidFileTest {
     }
 
     @Test
+    @DisplayName("verify：Same 带出已解析的句柄，收尾方据此复用而非二次解析 pid")
+    fun verifyCarriesResolvedHandle() {
+        // 二次 ProcessHandle.of(pid) 会在两次解析之间留下窗口：原进程退出、pid 被无关进程占用，
+        // 于是刚排除的误杀风险又回来了。判定结果必须带上已解析并确认存活的句柄。
+        val self = ProcessHandle.current().pid()
+        val actual = requireNotNull(McTestkitPidFile.startedAtMillis(self)) {
+            "测试前提：当前平台的 ProcessHandle 必须能取到启动时刻"
+        }
+        val file = pidFile("handle.pid").apply { writeText("$self\n$actual") }
+
+        val verdict = McTestkitPidFile.verify(file, self)
+
+        assertTrue(verdict is McTestkitPidFile.Verdict.Same, "实际：$verdict")
+        assertEquals(self, verdict.handle.pid(), "带回的句柄应指向同一个进程")
+        assertTrue(verdict.handle.isAlive, "带回的句柄应仍然存活")
+    }
+
+    @Test
     @DisplayName("verify：记录里没有启动时刻时为 Unverifiable，由调用方决定方向")
     fun verifyReportsUnverifiableForLegacyFile() {
         val file = pidFile().apply { writeText(ProcessHandle.current().pid().toString()) }
+        val pid = ProcessHandle.current().pid()
 
-        assertEquals(
-            McTestkitPidFile.Verdict.Unverifiable,
-            McTestkitPidFile.verify(file, ProcessHandle.current().pid()),
-            "旧格式无法核对身份，应明确返回 Unverifiable 而不是猜一个结论",
+        val verdict = McTestkitPidFile.verify(file, pid)
+
+        assertTrue(
+            verdict is McTestkitPidFile.Verdict.Unverifiable,
+            "旧格式无法核对身份，应明确返回 Unverifiable 而不是猜一个结论，实际：$verdict",
         )
+        assertEquals(pid, verdict.handle.pid(), "Unverifiable 也应带出已解析的句柄，供放行收尾时复用")
+        assertFalse(
+            verdict.collectionFailed,
+            "旧版本遗留的单行文件不是采集失败，不该被误标为「这台机器校验没生效」",
+        )
+    }
+
+    @Test
+    @DisplayName("verify：次行是取不到标记时標为 collectionFailed（区别于旧文件遗留）")
+    fun verifyDistinguishesCollectionFailureFromLegacyFile() {
+        val pid = ProcessHandle.current().pid()
+        // 新写法在取不到启动时刻时写这个标记：与旧版单行文件必须可区分
+        val file = pidFile().apply { writeText("$pid\n${McTestkitPidFile.START_UNKNOWN_MARKER}") }
+
+        val verdict = McTestkitPidFile.verify(file, pid)
+
+        assertTrue(verdict is McTestkitPidFile.Verdict.Unverifiable, "实际：$verdict")
+        assertTrue(
+            verdict.collectionFailed,
+            "明确写了取不到标记，应告警「这台机器上身份校验没生效」，而不是当成旧文件静默混过去",
+        )
+    }
+
+    @Test
+    @DisplayName("write：取不到启动时刻时写标记而不是省略，避免静默退化成旧格式")
+    fun writeMarksUnknownWhenStartInstantUnavailable() {
+        // 用一个几乎不可能存在的 pid 触发「取不到启动时刻」：startedAtMillis 返回 null
+        val impossiblePid = Long.MAX_VALUE
+        val file = pidFile("unknown.pid")
+
+        McTestkitPidFile.write(file, impossiblePid)
+
+        val lines = file.readLines(Charsets.UTF_8)
+        assertEquals(impossiblePid.toString(), lines[0], "首行永远是 pid，收尾能力不能丢")
+        assertEquals(
+            McTestkitPidFile.START_UNKNOWN_MARKER,
+            lines.getOrNull(1),
+            "取不到启动时刻时必须写标记：省略会让它和旧版本单行文件无法区分",
+        )
+        assertTrue(McTestkitPidFile.hasUnknownStartMarker(file), "标记应能被读出")
+    }
+
+    @Test
+    @DisplayName("write：能取到启动时刻时写真实时间戳，且不写标记")
+    fun writeRecordsRealStartInstantWhenAvailable() {
+        val self = ProcessHandle.current().pid()
+        val file = pidFile("real.pid")
+
+        McTestkitPidFile.write(file, self)
+
+        val lines = file.readLines(Charsets.UTF_8)
+        assertEquals(self.toString(), lines[0])
+        assertNotNull(lines.getOrNull(1)?.toLongOrNull(), "次行应是毫秒时间戳")
+        assertFalse(McTestkitPidFile.hasUnknownStartMarker(file), "正常采集不该带取不到标记")
     }
 }

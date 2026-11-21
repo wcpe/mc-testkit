@@ -84,9 +84,13 @@
   - **`run-proxy` 不参与回写**：代理运行目录虽同样以 `run-` 开头，但被显式排除（它没有对应的后端缓存下标），故代理不会被误当成后端。配套地，**后端名 `proxy` 是保留字**：若声明了它，其运行目录 `run-<proxy>` 恰好就是代理目录 `run-proxy`，既会被代理铺目录时整删、又会被上述排除吃掉缓存；故配置期即中文报错，改用别的后端名即可（**代理**名叫 `proxy` 不受影响）。
 - **服务端起不来且报 `ClassNotFoundException`**：先看运行目录的 `<key>.log`，再看启动日志里的选路行（`按自包含 jar 启动` / `按运行库 classpath 启动`）。运行目录带注入运行库目录 `server-libraries/` 的构件走后者，依赖由 `.mc-testkit-<key>-classpath.jar` 的清单给出；该清单是**启动时刻**的快照，运行库有变动需重跑任务重建。paperclip 自有的 `libraries/` 不参与 classpath（它是服务端自己的运行库目录，跨轮保留只为省重复下载）。
 - **端口占用 / 残留进程**：框架在**起服前会做端口预检**——端口被占即在起服前中文失败，报错里直接给出该端口与按端口排查的命令（Windows `netstat -ano | findstr :<端口>`；Linux `ss -ltnp | grep :<端口>`），不会再出现「日志先报端口已就绪、随后服务端 `bind(..) failed: 地址已在使用`」那种误导形态。清理分三种情形：
-  1. **有配套停任务时优先跑它**（`stop<Key>Serve` / `stop<Key>Cluster` / `stop<Key>Stress` / `stopProxy<Proxy>`）：它先按 pid 文件收尾，再**按进程台账兜底**——上一轮构建被强杀留下的逃逸进程（其 pid 文件已随运行目录清理丢失）也能被找回来。台账落 `<工程>/build/mc-testkit/results/process-ledger.properties`，可安全手工删除（删掉只失去「收尾上一轮逃逸进程」的能力，不影响后续起服）。
+  1. **有配套停任务时优先跑它**（`stop<Key>Serve` / `stop<Key>Cluster` / `stop<Key>Stress` / `stopProxy<Proxy>`）：它先让进程监管停掉本次构建起的 bot 与钩子进程，再按 pid 文件收服务端与代理，再**按进程台账兜底**——上一轮构建被强杀留下的逃逸进程（服务端、代理、bot、场景钩子进程都登记，pid 文件已随运行目录清理丢失也能找回）核对身份后连同子孙进程一起收掉；最后收掉 `output-run.state` 里记着的、上一次失败构建收尾时没停下的进程。停任务不接手结果目录，结果目录被拒绝接手时也照常能跑。台账落 `<工程>/build/mc-testkit/results/process-ledger.properties`，可安全手工删除（删掉只失去「收尾上一轮逃逸进程」的能力，不影响后续起服）。
   2. **台账记录被跳过**：若日志出现「命令行与登记特征不符，已跳过」，说明该 pid 已被操作系统复用于无关进程——框架**刻意不杀**（避免误伤你自己起的服务端），此时按上面的端口命令手工确认后再处理。
   3. **收尾后端口仍被占**：停任务会明确告警并列出端口。这一般是两种情况：用户自己手工起的服务端，或台账也丢了的历史残留（早于本能力版本）。按端口命令查明的 pid 手工结束即可。
+- **bot / 钩子日志末尾有 `[OUTPUT_LIMIT]` 行**（FR-34，契约见 [`API.md`](API.md) §3.7）：
+  1. `limit=per-sink`：只是这个日志超过单个日志上限（默认 64 MiB）被截断，后面的输出没落盘；不影响判定，构建结束时会告警截断了几个。要看完整日志就调大 `-Dmc.testkit.bot.log.limit.bytes=…`（或 `MC_TESTKIT_E2E_BOT_LOG_LIMIT_BYTES`）。
+  2. `limit=run`：整个构建的 bot / 钩子输出合计超过上限（默认 1 GiB），任务以 `RUN_FAIL: OUTPUT_LIMIT limit=run sink=<日志>` 失败，全部 bot 与钩子进程已被停掉。`sink=` 是跨过上限的那一个，不一定是写得最多的；先看哪些日志最大，降低它们的日志级别，确实需要再调大 `-Dmc.testkit.bot.log.runLimit.bytes=…`（或 `MC_TESTKIT_E2E_BOT_LOG_RUN_LIMIT_BYTES`）。
+- **任务报 `RUN_FAIL prior-output-owner-not-successful`**：结果目录的上一次构建可能还有进程在写，本次不接手。先跑对应的停任务（见上条，它们不受这道检查拦截），再重跑即可：记录里的进程都结束后，下一次构建会自己接手。报错里是 `state=RUNNING`（构建被强杀或断电）或 `live=unknown` 时无法自动确认：跑完停任务、按上条的端口 / 进程命令确认没有残留后，删掉报错里给出的 `output-run.state` 再重跑。
 - **机器人连不上**：看机器人日志（端口未就绪/被踢）；经代理时确认机器人协议版本已固定为后端版本（编排默认处理），以及后端 BungeeCord 模式配置已生效。
 - **serve 终端里 Tab 没候选 / ↑↓ 没历史**：Tab 补全的候选取自「服务端命令表 + 本控制台历史」。若就绪日志出现「未取到服务端命令表」，说明该平台控制台没有 `help` 命令（实测 BungeeCord / Velocity 没有，Paper / Spigot 有），此时候选只用历史命令——敲过几次后即可补全。历史文件在 `build/mc-testkit/results/serve-console-history-<serve>.txt`，删掉只会清空历史、不影响起服。命令表抓取失败不影响 serve 本身；要看抓取到了什么，翻运行目录的 `<后端名>.log`（`help` 输出只写日志、不回放控制台，避免刷屏）。
 - **serve 终端里左右键 / Home / End 没用**：Gradle 的控制台按行转发、不做行内编辑，这些键拿不到编辑语义（服务端在管道 stdin 下也没有终端）。框架会明确提示并**不下发**该行；改已敲的内容请用退格，或 `Ctrl+U` 清行后重输（`↑` 可调出历史并重跑）。

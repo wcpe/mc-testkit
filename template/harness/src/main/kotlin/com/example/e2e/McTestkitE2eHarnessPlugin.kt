@@ -113,7 +113,11 @@ class McTestkitE2eHarnessPlugin : McTestkitHarnessPlugin(), Listener {
      * 消费方仍然得去翻两处源码对照。
      */
     private fun resolveScenarioOrFail(): ScenarioName? {
-        val id = McTestkitEnv.scenarioIdOrNull() ?: config.getString("scenario", ScenarioName.SMOKE.id)
+        // `config.getString` 的返回值是 String?：配置里显式写了 null / 空值、或键被删掉时，
+        // 默认值不一定生效。这里显式兜底到 SMOKE，避免把一个可空值直接喂给要求非空的 from()。
+        val id = McTestkitEnv.scenarioIdOrNull()
+            ?: config.getString("scenario")?.takeIf { it.isNotBlank() }
+            ?: ScenarioName.SMOKE.id
         return try {
             ScenarioName.from(id)
         } catch (ex: IllegalStateException) {

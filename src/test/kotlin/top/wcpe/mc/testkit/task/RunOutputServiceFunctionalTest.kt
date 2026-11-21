@@ -129,7 +129,7 @@ class RunOutputServiceFunctionalTest {
         assertTrue(state.startsWith("RUN_FAIL"))
         assertEquals("live=", state.lines()[4], "被收尾杀掉的进程必须确认已结束")
         val pids = File(dir, "build/mc-testkit/results").listFiles()!!.filter { it.extension == "pid" }
-            .map { it.readText().trim().toLong() }
+            .map { it.readLines(Charsets.UTF_8).first().trim().toLong() }
         assertTrue(pids.all { ProcessHandle.of(it).map { p -> !p.isAlive }.orElse(true) })
         save("service-close-fail", state + "\nchildrenAlive=0\n" + result.output.takeLast(2000))
     }

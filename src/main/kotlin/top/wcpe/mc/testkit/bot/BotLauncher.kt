@@ -156,7 +156,8 @@ object BotLauncher {
 
         val process = processBuilder.start()
         try {
-            pidFile.writeText(process.pid().toString())
+            // 带身份写入 pid（pid + 启动时刻），供排查与任何按 pid 的收尾路径核对
+            writePidFile(pidFile, process.pid())
             ProcessLedger.record(context.resultsDir, "$LEDGER_KEY_BOT/$action", process.pid(), 0)
 
             val pump = BoundedProcessOutputPump(

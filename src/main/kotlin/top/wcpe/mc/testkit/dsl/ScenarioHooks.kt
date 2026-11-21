@@ -136,7 +136,8 @@ class ExecHook(
         )
         context.outputBudget().supervisor.bindPidFile(process, pidFile)
         try {
-            pidFile.writeText(process.pid().toString())
+            // 带身份写入 pid（pid + 启动时刻）：StopPidHook 与停任务据此核对，防 pid 复用误杀
+            top.wcpe.mc.testkit.bot.writePidFile(pidFile, process.pid())
         } catch (ex: Exception) {
             context.outputBudget().fail("IOFAIL hook-pid ${ex.javaClass.simpleName}")
             throw ex

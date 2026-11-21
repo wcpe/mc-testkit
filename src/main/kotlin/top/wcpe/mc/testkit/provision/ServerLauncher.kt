@@ -164,7 +164,8 @@ object ServerLauncher {
         }
         // pid 落盘失败则进程无法被按 pid 收尾——宁可立即强杀刚起的进程，也不留下无法收尾的孤儿（收尾红线）
         try {
-            pidFile.writeText(process.pid().toString())
+            // 带身份写入（pid + 启动时刻）：收尾时据此核对，防陈旧 pid 文件命中被回收复用的 pid 而误杀
+            top.wcpe.mc.testkit.bot.writePidFile(pidFile, process.pid())
         } catch (ex: Exception) {
             process.destroyForcibly()
             throw IllegalStateException("无法写入 pid 文件 ${pidFile.absolutePath}，已强制结束刚启动的进程以免残留。", ex)

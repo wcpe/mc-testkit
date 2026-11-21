@@ -92,10 +92,15 @@ class ServerLauncherTest {
             serverArgs = listOf("ok"),
         )
         try {
-            // pid 文件写入且内容为该进程 pid
+            // pid 文件写入且首行为该进程 pid（第二行是启动时刻，用于收尾前的身份核对）
             val pidFile = provisionPidFile(workDir, "node1")
             assertTrue(pidFile.isFile, "pid 文件应写入：${pidFile.absolutePath}")
-            assertEquals(process.pid().toString(), pidFile.readText().trim())
+            val pidLines = pidFile.readLines(Charsets.UTF_8)
+            assertEquals(process.pid().toString(), pidLines.first().trim(), "首行必须是 pid")
+            assertTrue(
+                pidLines.size >= 2 && pidLines[1].trim().toLongOrNull() != null,
+                "第二行应是启动时刻（ms），供收尾时核对身份防 pid 复用误杀；实际内容：$pidLines",
+            )
 
             // 进程应能在合理时间内自行退出（极小程序立即退出）
             val exited = process.waitFor(30, TimeUnit.SECONDS)

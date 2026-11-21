@@ -125,8 +125,11 @@ internal object ScenarioHookRuntime {
             context.info("pid 文件不存在（${pidFile.name}），跳过收尾")
             return
         }
-        val pid =
-            pidFile.inputStream().use { String(it.readNBytes(32), Charsets.UTF_8) }.trim().toLongOrNull() ?: return
+        // pid 文件首行是 pid，第二行是启动时刻（见 bot.writePidFile）：只取首行解析。
+        // 不读死字节数——pid 位数与启动时刻位数都不固定，按行切分才不会因截断拿到半截数字。
+        val pid = runCatching {
+            pidFile.readLines(Charsets.UTF_8).firstOrNull()?.trim()?.toLongOrNull()
+        }.getOrNull() ?: return
         val handle = ProcessHandle.of(pid).orElse(null) ?: return
         if (context.outputBudget().supervisor.stopPidFile(pidFile)) return
         val key = ledgerKey(context.resultsDir, pidFile)

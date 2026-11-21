@@ -16,6 +16,15 @@ object McTestkitTaskNames {
     /** 清空持久缓存。 */
     const val PURGE_RUNTIME_CACHE = "purgeE2eRuntimeCache"
 
+    /**
+     * 收掉之前的构建留下的全部后端、代理、bot 与钩子进程：只认进程台账与 `output-run.state` 里身份核对得上的，
+     * 不接手结果目录。
+     *
+     * 不论声明了哪些拓扑都注册（只有直连场景的工程没有别的 stop 任务，结果目录被拒绝接手时靠它恢复）；
+     * 同一条命令里的场景与 serve 任务都排在它之后。
+     */
+    const val STOP_PROCESSES = "stopE2eProcesses"
+
     /** 准备任务：`prepareE2e<Key>`。 */
     fun prepare(scenario: String): String = "prepareE2e" + scenario.toTaskKey()
 

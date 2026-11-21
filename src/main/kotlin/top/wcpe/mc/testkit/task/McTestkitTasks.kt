@@ -234,8 +234,9 @@ object McTestkitTasks {
             serverCoordinates = serverCoordinatesOf(extension),
         )
 
-        // ③ 固定名任务（npm 安装 / 缓存回写 / 清缓存）
+        // ③ 固定名任务（npm 安装 / 缓存回写 / 清缓存 / 收掉之前的构建留下的进程）
         registerFixedTasks(project, ctx)
+        registerStopProcessesTask(project, ctx, topology)
 
         // ④ 数据驱动：每个场景注册 prepare / e2e（+ bot 时 launch / withBot；+ via 时经代理任务）
         // 显式声明的产物来源（ADR-0025）向下传递，供 prepare / verify / serve 自动接线
@@ -266,6 +267,9 @@ object McTestkitTasks {
 
         // ⑦ 共享同一后端的场景自动串行（ADR-0026）
         chainScenariosSharingBackend(project, topology, extension)
+
+        // ⑧ 场景与 serve 任务排在 stopE2eProcesses 之后
+        orderRuntimeTasksAfterStopProcesses(project, extension)
     }
 
     /**
@@ -295,6 +299,23 @@ object McTestkitTasks {
             if (existing.isNotEmpty()) {
                 project.tasks.named(taskName).configure { mustRunAfter(existing) }
             }
+        }
+    }
+
+    /**
+     * 同一条命令里先收掉之前的构建留下的进程，再跑本次的场景与 serve：`./gradlew stopE2eProcesses e2e<Key>`
+     * 一步恢复；[McTestkitTaskNames.STOP_PROCESSES] 也就碰不到本次构建起的服务端与代理（它们不归进程监管，
+     * 台账核对身份又对得上，并发跑就会被当成残留停掉）。
+     */
+    private fun orderRuntimeTasksAfterStopProcesses(project: Project, extension: McTestkitExtension) {
+        val runtimeTasks = extension.declaredScenarios.flatMap { scenario ->
+            scenarioRuntimeTaskNames(scenario) +
+                McTestkitTaskNames.beforeScenario(scenario.name) +
+                McTestkitTaskNames.afterScenario(scenario.name)
+        } + extension.declaredServes.map { McTestkitTaskNames.serve(it.name) }
+        val registered = project.tasks.names
+        runtimeTasks.filter { it in registered }.forEach { taskName ->
+            project.tasks.named(taskName).configure { mustRunAfter(McTestkitTaskNames.STOP_PROCESSES) }
         }
     }
 
@@ -443,6 +464,33 @@ object McTestkitTasks {
                 val cacheDir = ctx.layout.persistentServerBaseDir
                 cacheDir.deleteRecursively()
                 ctx.info("已清空持久缓存：${cacheDir.absolutePath}")
+            }
+        }
+    }
+
+    /**
+     * 注册 [McTestkitTaskNames.STOP_PROCESSES]：收掉之前的构建留下的进程，不接手结果目录。
+     *
+     * 只认身份核对得上的进程（[stopTrackedProcesses]）：进程台账里的服务端、代理、bot 与钩子进程核对命令与
+     * 启动时刻后连同子孙进程一起收，`output-run.state` 里收尾时没停下的进程核对 pid 与启动时刻后收。
+     * 不按 pid 文件停：pid 文件不带身份，之前的构建留下的那份可能已指向复用了这个 pid 的无关进程。
+     * 本次构建仍在监管的进程留给监管。
+     */
+    private fun registerStopProcessesTask(project: Project, ctx: TaskExecutionContext, topology: Topology) {
+        val layout = ctx.layout
+        val ports = topology.backends.map { it.port } + topology.proxies.map { it.port }
+        registerTask(project, McTestkitTaskNames.STOP_PROCESSES, ownsRunOutput = false) { task ->
+            task.group = TASK_GROUP
+            task.description = "停掉之前的构建留下的全部后端、代理、机器人与钩子进程（按进程台账核对身份收尾，不接手结果目录）"
+            task.doLast {
+                // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容配置缓存
+                val summary = stopTrackedProcesses(layout.resultsDir, emptyList(), ctx::info, owned = ctx::ownsProcess)
+                reportStopOutcome(
+                    ctx,
+                    summary,
+                    ports,
+                    "占着端口的进程不在进程台账里（手工起的服务端，或早于台账的残留）",
+                )
             }
         }
     }
@@ -2318,11 +2366,12 @@ object McTestkitTasks {
      * 起服前做端口预检（见 [requirePortsAvailable]）：本函数是「前台起后端」的唯一入口，在此设闸可让
      * 所有调用方（直连 e2e / 经代理）自动获得保护，不必各自复制。
      *
-     * 后端起来后登记进程台账：构建被强杀时它会比构建活得久，之后的停任务据此按身份收掉它。
+     * 后端起来后登记进程台账：构建被强杀时它会比构建活得久，[McTestkitTaskNames.STOP_PROCESSES] 据此按身份收掉它。
      * 任务被取消（等待线程被中断）或等待途中出错时，`finally` 连同子进程一起收掉后端，不留到下一次构建。
      *
      * @param resultTimeoutSeconds 等桩写出结果文件的上限（场景的 `resultTimeoutSeconds`）。
-     * @param stopTaskName 报错文案里建议执行的收尾任务名；直连 e2e 无配套停任务故为 null。
+     * @param stopTaskName 端口被占时报错文案里建议执行的收尾任务名；直连场景没有配套的停任务，默认给
+     *   [McTestkitTaskNames.STOP_PROCESSES]。
      */
     private fun runBackendForeground(
         ctx: TaskExecutionContext,
@@ -2330,7 +2379,7 @@ object McTestkitTasks {
         scenario: String,
         resultTimeoutSeconds: Long,
         sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
-        stopTaskName: String? = null,
+        stopTaskName: String? = McTestkitTaskNames.STOP_PROCESSES,
     ) {
         val layout = ctx.layout
         val runDir = layout.backendRunDir(backend.name)

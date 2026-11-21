@@ -201,6 +201,52 @@ class RunOutputServiceFunctionalTest {
         }
     }
 
+    @Test
+    @DisplayName("只有直连场景的工程：拒绝接手时指向 stopE2eProcesses，它收掉之前的构建留下的后端、bot 与没停下的进程，下一次构建自己接手")
+    fun stopProcessesRecoversDirectOnlyProject() {
+        File(dir, "settings.gradle").writeText("rootProject.name='direct-consumer'\n")
+        File(dir, "build.gradle").writeText(
+            """
+            import top.wcpe.mc.testkit.dsl.SleepHook
+            plugins { id 'top.wcpe.mc-testkit' }
+            mcTestkit {
+              backend('s1') { s -> s.port=25581 }
+              scenario('solo') { s -> s.backend='s1'; s.beforeScenario(new SleepHook(100L,'')) }
+            }
+            """.trimIndent(),
+        )
+        val results = File(dir, "build/mc-testkit/results").apply { mkdirs() }
+        val backend = sleeper()
+        val bot = sleeper()
+        val survivor = sleeper()
+        try {
+            ProcessLedger.record(results, "backend/s1", backend.pid(), 25581)
+            ProcessLedger.record(results, "bot/solo", bot.pid(), 0)
+            val identity = assertNotNull(ProcessIdentity.of(survivor.toHandle()), "前提：取得到启动时刻")
+            val state = File(results, RunOutputState.FILE_NAME)
+            val record = RunOutputState.closed("00000000-0000-0000-0000-000000000002", 1024, "TIMEOUT log=bot-solo.log", listOf(identity))
+            state.writeText(record)
+
+            val refused = direct("beforeSoloScenario").buildAndFail()
+            assertTrue(refused.output.contains("./gradlew stopE2eProcesses"), "拒绝接手时应指向 stopE2eProcesses：${refused.output.takeLast(2000)}")
+
+            val stop = direct("stopE2eProcesses").build()
+            listOf(backend, bot, survivor).forEach { process ->
+                assertTrue(process.waitFor(20, TimeUnit.SECONDS), "之前的构建留下的进程应被收掉：${stop.output.takeLast(2000)}")
+            }
+            assertTrue(ProcessLedger.records(results).isEmpty(), "收掉后台账记录应注销")
+            assertEquals(record, state.readText(), "stopE2eProcesses 不接手结果目录，记录必须保持原样")
+
+            direct("beforeSoloScenario").build()
+            assertTrue(state.readText().startsWith("CLOSED_OK"), "下一次构建应接手并成功收尾：${state.readText()}")
+        } finally {
+            listOf(backend, bot, survivor).forEach(Process::destroyForcibly)
+        }
+    }
+
+    private fun direct(task: String) = GradleRunner.create().withProjectDir(dir).withPluginClasspath()
+        .withArguments(task, "--offline", "--configuration-cache", "--console=plain")
+
     private fun sleeper(): Process =
         ProcessBuilder(javaCommand(), "-cp", fixtureClasspath(), GuardChild::class.java.name, "long-sleep")
             .redirectErrorStream(true)

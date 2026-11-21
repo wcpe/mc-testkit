@@ -5,6 +5,7 @@ import org.gradle.api.logging.Logging
 import org.gradle.api.services.BuildService
 import org.gradle.api.services.BuildServiceParameters
 import top.wcpe.mc.testkit.bot.OutputBudget
+import top.wcpe.mc.testkit.contract.McTestkitTaskNames
 import java.io.File
 import java.util.*
 
@@ -27,8 +28,8 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
                 is RunOutputState.Prior.Refused -> {
                     logger.error(
                         "[mc-testkit] 结果目录 ${resultsDir.absolutePath} 的上一次构建可能仍有进程在写输出（${prior.detail}），" +
-                            "本次不接手。先跑对应的 stop 任务（stop<场景>Cluster、stop<场景>Stress、stop<名字>Serve 等，" +
-                            "它们不受这道检查拦截）：它们按进程台账收掉之前的构建留下的进程，也收掉这份记录里收尾时没停下的进程，" +
+                            "本次不接手。先跑 ./gradlew ${McTestkitTaskNames.STOP_PROCESSES}（或对应的 stop<场景>Cluster、stop<场景>Stress、" +
+                            "stop<名字>Serve 等，它们都不受这道检查拦截）：它们按进程台账收掉之前的构建留下的进程，也收掉这份记录里收尾时没停下的进程，" +
                             "记录里的进程都结束后下一次构建自己接手。记录停在 RUNNING（构建被强杀或断电）或 live=unknown 时无法确认，" +
                             "确认没有进程还在写这个目录后，删掉 ${state.absolutePath} 再重跑。",
                     )

@@ -930,7 +930,8 @@ object McTestkitTasks {
                     val runtime = preflightRuntimeForTask(ctx, clusterBackends, listOf(proxy), mavenSources)
                     layout.resultsDir.mkdirs()
                     val resultFile = File(layout.resultsDir, McTestkitResultFile.fileName(scenario.name))
-                    if (resultFile.exists()) resultFile.delete() // 清上轮结果，避免误判
+                    // 清上轮结果，避免误判：删不掉即抛（丢弃返回值会静默放过旧 PASS，见 deleteStaleResult）
+                    clearPreviousScenarioResult(layout.resultsDir, scenario.name)
 
                     // ⓪ 端口预检：任一后端 / 代理端口被占即中文失败，避免「就绪门被上一轮残留进程误判为已就绪
                     //    → 新进程 bind 失败」白等一轮（进程生命周期与收尾 高风险区）
@@ -1311,9 +1312,12 @@ object McTestkitTasks {
                         mavenSources,
                     )
                     layout.resultsDir.mkdirs()
-                    // 清上轮 per-server 结果，避免误判
+                    // 清上轮 per-server 结果，避免误判：删不掉即抛（与集群 / 直连同口径，见 deleteStaleResult）
                     stressBackends.forEach { backend ->
-                        stressResultFile(layout, scenario.name, backend.name).takeIf { it.exists() }?.delete()
+                        deleteStaleResult(
+                            stressResultFile(layout, scenario.name, backend.name),
+                            "压测场景「${scenario.name}」的服「${backend.name}」",
+                        )
                     }
 
                     // ⓪ 端口预检：后端端口 + 代理各 listener 端口（后者按基数 + 序号推导）被占即中文失败
@@ -2384,6 +2388,9 @@ object McTestkitTasks {
         val layout = ctx.layout
         val runDir = layout.backendRunDir(backend.name)
         requirePortsAvailable(listOf(PortTarget(backend.port, "后端 ${backend.name}")), stopTaskName = stopTaskName)
+        // 起服前清掉上轮结果：直连与经代理共用同一个 <场景>.properties，而 prepare 一次构建只跑一次。
+        // 少了这一步，同一条命令里的第二个入口一进轮询就看到上一个入口写下的旧文件，直接读成 PASS。
+        clearPreviousScenarioResult(layout.resultsDir, scenario)
         val jar = resolveBackendJar(ctx, backend, sources)
         // 桩↔编排交接：下发场景与结果文件绝对路径（= verify 读取处），桩据此选场景并写到对齐位置
         val resultFilePath = File(layout.resultsDir, McTestkitResultFile.fileName(scenario)).absolutePath
@@ -2974,11 +2981,37 @@ object McTestkitTasks {
     }
 }
 
-/** 每次单后端场景启动前清理旧结果，结果文件只能代表当前进程。 */
+/**
+ * 每次单后端场景启动前清理旧结果，结果文件只能代表当前进程。
+ *
+ * 直连 `e2e<场景>` 与经代理 `e2e<场景>Via<代理>` **共用**同一个 `<场景>.properties`，而
+ * `prepareE2e<场景>` 一次构建只跑一次、跑在两者之前。因此清理点必须落在**每次起服前**
+ * （见 [runBackendForeground]），只放在 prepare 里会让同一条命令里的第二个入口一进轮询就
+ * 看到上一个入口写下的旧文件，直接读成 PASS。
+ */
 internal fun clearPreviousScenarioResult(resultsDir: File, scenario: String) {
-    val resultFile = File(resultsDir, McTestkitResultFile.fileName(scenario))
+    deleteStaleResult(File(resultsDir, McTestkitResultFile.fileName(scenario)), "场景「$scenario」")
+}
+
+/**
+ * 删除一份上轮结果文件；删不掉即抛中文错。
+ *
+ * **为什么删不掉要抛**：轮询判定只看「结果文件是否存在」。文件删不掉时若继续跑，轮询会立刻
+ * 命中这个旧文件并读它的 PASS——这正是最难发现的假通过。宁可在这里明确失败。
+ *
+ * 集群（`<场景>.properties`）与压测（per-server `<场景>-<后端>.properties`）共用本函数，
+ * 保持同一严格口径。
+ *
+ * @param resultFile 待删的结果文件
+ * @param description 中文描述（写进报错，指出是哪个场景 / 哪个服的结果）
+ */
+internal fun deleteStaleResult(resultFile: File, description: String) {
     if (resultFile.exists() && !resultFile.delete()) {
-        throw GradleException("无法删除上轮场景结果文件：${resultFile.absolutePath}")
+        throw GradleException(
+            "无法删除上轮结果文件：${resultFile.absolutePath}（${description}）。" +
+                "该文件若被占用 / 只读，轮询会把它当成本轮结果而误判通过；" +
+                "请关闭占用它的进程或手工删除后重试。",
+        )
     }
 }
 

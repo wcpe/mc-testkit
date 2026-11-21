@@ -34,9 +34,13 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
     private var closed = false
     private val shutdown = Thread({ closeChildren(false) }, "mc-testkit-output-shutdown")
 
+    /**
+     * [timeoutMs] is a backstop, so it must outlast the orchestrator's own wait for this child; null leaves the child
+     * to its session (serve) and to [close].
+     */
     @Synchronized
-    fun register(handle: BotProcessHandle, timeoutMs: Long = 600_000) {
-        require(timeoutMs in 1..3_600_000)
+    fun register(handle: BotProcessHandle, timeoutMs: Long?) {
+        require(timeoutMs == null || timeoutMs in 1..MAX_LIFETIME_MS)
         budget.checkHealthy()
         check(!closed)
         check(children.size < OutputBudget.MAX_SINKS)
@@ -48,7 +52,8 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
         ) { "Output file already has an active owner" }
         val ph = handle.process.toHandle()
         val start = ph.info().startInstant().orElseThrow { IllegalStateException("Missing process start time") }
-        children += Child(handle, Identity(ph, start), System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs))
+        val deadline = timeoutMs?.let { System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(it) } ?: Long.MAX_VALUE
+        children += Child(handle, Identity(ph, start), deadline)
         if (monitor == null) {
             Runtime.getRuntime().addShutdownHook(shutdown)
             monitor = Thread({ watch() }, "mc-testkit-output-owner").apply {
@@ -218,6 +223,8 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
     }
 
     companion object {
+        /** Upper bound for [register]; also keeps nanoTime() + timeout far from overflow. */
+        const val MAX_LIFETIME_MS = 7L * 24 * 3600 * 1000
         private const val ESCALATE_AFTER_MS = 200L
     }
 }

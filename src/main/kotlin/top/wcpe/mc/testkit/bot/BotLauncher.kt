@@ -122,6 +122,8 @@ object BotLauncher {
      * @param action 控制动作 / 场景 id：作日志 / pid 的 key（场景传递走 env，见上）。
      * @param environment 传给进程的环境变量（由 [BotConnection.toEnvironment] 构建）。
      * @param budget 本 run 的输出字节预算（**必填**，见类注释）。
+     * @param lifetimeMs 进程寿命上限（毫秒），交给本 run 的进程监管兜底。场景调用方须给不短于编排自身结果等待的值，
+     *   否则监管会抢在编排之前把仍在正常运行的 bot 判 TIMEOUT；null 表示不设（serve 人机混场随会话收尾）。
      * @param logger 中文分级日志输出（默认 no-op；任务侧可传 `project.logger.lifecycle`）。
      * @return 已启动的句柄（含进程与泵，供收尾方等待泵结束）。
      */
@@ -130,6 +132,7 @@ object BotLauncher {
         action: String,
         environment: Map<String, String>,
         budget: OutputBudget,
+        lifetimeMs: Long?,
         logger: (String) -> Unit = {},
     ): BotProcessHandle {
         budget.checkHealthy()
@@ -165,7 +168,7 @@ object BotLauncher {
             pumpThread.isDaemon = true
             handle.pumpThread = pumpThread
             try {
-                budget.supervisor.register(handle)
+                budget.supervisor.register(handle, lifetimeMs)
                 budget.supervisor.bindPidFile(process, pidFile)
                 pumpThread.start()
             } catch (ex: Exception) {

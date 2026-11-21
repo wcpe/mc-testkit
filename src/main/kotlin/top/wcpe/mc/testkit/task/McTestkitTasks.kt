@@ -14,6 +14,7 @@ import top.wcpe.mc.testkit.bot.BotLauncher
 import top.wcpe.mc.testkit.bot.BotProcessContext
 import top.wcpe.mc.testkit.bot.BotProcessHandle
 import top.wcpe.mc.testkit.bot.OutputBudget
+import top.wcpe.mc.testkit.bot.RunOutputSupervisor
 import top.wcpe.mc.testkit.bot.stopProcessByPidFile
 import top.wcpe.mc.testkit.config.BackendBungeeCordConfig
 import top.wcpe.mc.testkit.config.BackendVelocityConfig
@@ -462,7 +463,7 @@ object McTestkitTasks {
             listOfNotNull(resolveScenarioBackend(topology, scenario).name)
         }
         val proxyName = scenario.via
-        val hookCtx = hookContext(ctx, scenario.name, backendNames, proxyName)
+        val hookCtx = hookContext(ctx, scenario.name, backendNames, proxyName, scenarioProcessLifetimeMs(scenario))
 
         val before = if (scenario.beforeHooks.isNotEmpty()) {
             registerTask(project, McTestkitTaskNames.beforeScenario(scenario.name)) { task ->
@@ -849,7 +850,13 @@ object McTestkitTasks {
             finalizeWithRuntimeCacheSync(task)
             // 场景前/就绪后钩子由统一注册的 before 任务与体内调用承载；集群路径需在起服前显式等 before
             hookTasks.before?.let { task.dependsOn(it) }
-            val clusterHookCtx = hookContext(ctx, scenario.name, clusterBackends.map { it.name }, proxy.name)
+            val clusterHookCtx = hookContext(
+                ctx,
+                scenario.name,
+                clusterBackends.map { it.name },
+                proxy.name,
+                scenarioProcessLifetimeMs(scenario),
+            )
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val backendProcesses = LinkedHashMap<String, Process>()
@@ -1068,6 +1075,7 @@ object McTestkitTasks {
         scenario: String,
         backendNames: List<String>,
         proxyName: String?,
+        processLifetimeMs: Long?,
     ): HookContext {
         val layout = ctx.layout
         val dirs = backendNames.associateWith { layout.clusterBackendRunDir(it) }
@@ -1077,6 +1085,7 @@ object McTestkitTasks {
             resultsDir = layout.resultsDir,
             backendRunDirs = dirs,
             proxyRunDir = proxyDir,
+            processLifetimeMs = processLifetimeMs,
             log = { ctx.info(it) },
         )
     }
@@ -1313,6 +1322,7 @@ object McTestkitTasks {
                                 botPort,
                                 protocolVersion,
                                 backend.version,
+                                scenarioProcessLifetimeMs(scenario),
                             )
                         }
                     }
@@ -1391,6 +1401,7 @@ object McTestkitTasks {
         botPort: Int,
         protocolVersion: String?,
         backendVersion: String,
+        lifetimeMs: Long,
     ): List<BotProcessHandle> {
         if (!MinecraftVersionGroup.isBotSupported(backendVersion)) {
             ctx.warn("$backendVersion 不支持 bot E2E，仅验服务端拉起（跳过压测 bot 启动）")
@@ -1426,6 +1437,7 @@ object McTestkitTasks {
                 environment = environment,
                 // 同一 run 的所有 bot 共享同一份预算：不因再次 launch 而重置
                 budget = ctx.outputBudget(),
+                lifetimeMs = lifetimeMs,
                 logger = { ctx.info(it) },
             )
         }
@@ -1770,6 +1782,7 @@ object McTestkitTasks {
                     backendVersion = backend.version,
                     backendPort = connectPort,
                     protocolVersion = protocolVersion,
+                    lifetimeMs = null,
                 )
                 ctx.info("serve「$serveName」已起 ${botProcesses.size} 个 bot（人机混场，不判定）")
             }
@@ -2170,6 +2183,7 @@ object McTestkitTasks {
                     backendVersion = clusterBackends.first().version,
                     backendPort = proxy.port,
                     protocolVersion = ProxyProtocolVersion.forBackend(clusterBackends.first().version),
+                    lifetimeMs = null,
                     sharedExtraEnv = mapOf(
                         McTestkitEnv.CLUSTER_BACKENDS to clusterBackends.joinToString(",") { it.name },
                     ),
@@ -2406,7 +2420,34 @@ object McTestkitTasks {
         protocolVersion: String?,
         sharedExtraEnv: Map<String, String> = emptyMap(),
     ): List<BotProcessHandle> =
-        launchBots(ctx, scenario.name, scenario.botSpecs, backendVersion, backendPort, protocolVersion, sharedExtraEnv)
+        launchBots(
+            ctx,
+            scenario.name,
+            scenario.botSpecs,
+            backendVersion,
+            backendPort,
+            protocolVersion,
+            lifetimeMs = scenarioProcessLifetimeMs(scenario),
+            sharedExtraEnv = sharedExtraEnv,
+        )
+
+    /**
+     * 场景内 bot / 钩子后台进程交给 run 进程监管的寿命上限（毫秒）。
+     *
+     * 监管期限只是兜底：编排最多等 `resultTimeoutSeconds`（压测先等 `stress.durationSeconds`）就会收尾这些进程，
+     * 期限必须比它长，再留 [PROCESS_LIFETIME_SLACK_SECONDS] 覆盖起服、钩子与收尾；更短会抢在编排之前把仍在
+     * 正常运行的 bot 判成 TIMEOUT。封顶 [RunOutputSupervisor.MAX_LIFETIME_MS]。
+     */
+    internal fun scenarioProcessLifetimeMs(scenario: ScenarioSpec): Long {
+        val capSeconds = TimeUnit.MILLISECONDS.toSeconds(RunOutputSupervisor.MAX_LIFETIME_MS)
+        val seconds = scenario.resultTimeoutSeconds.coerceAtMost(capSeconds) +
+            (scenario.stressSpec?.durationSeconds ?: 0L).coerceIn(0L, capSeconds) +
+            PROCESS_LIFETIME_SLACK_SECONDS
+        return TimeUnit.SECONDS.toMillis(seconds.coerceAtMost(capSeconds))
+    }
+
+    /** [scenarioProcessLifetimeMs] 在编排自身等待之外留的宽限（秒）。 */
+    internal const val PROCESS_LIFETIME_SLACK_SECONDS = 600L
 
     /**
      * 起一组 bot 进程（单场景多 bot 多 bot 展开 + 每进程 env 装配；**场景与 serve 共用**，serve 人机混场）。
@@ -2416,6 +2457,8 @@ object McTestkitTasks {
      *
      * **版本范围校验（多版本服务端拉起）**：[backendVersion] < 1.8（即 1.7.10）时跳过 bot 启动 + 日志告警，
      * 场景仍继续（不因无 bot 判 FAIL）。
+     *
+     * [lifetimeMs] 是各 bot 交给进程监管的寿命上限：场景取 [scenarioProcessLifetimeMs]，serve 人机混场传 null（随会话收尾）。
      */
     private fun launchBots(
         ctx: TaskExecutionContext,
@@ -2424,6 +2467,7 @@ object McTestkitTasks {
         backendVersion: String,
         backendPort: Int,
         protocolVersion: String?,
+        lifetimeMs: Long?,
         sharedExtraEnv: Map<String, String> = emptyMap(),
     ): List<BotProcessHandle> {
         if (!MinecraftVersionGroup.isBotSupported(backendVersion)) {
@@ -2441,6 +2485,7 @@ object McTestkitTasks {
                 key = plan.key,
                 backendPort = backendPort,
                 protocolVersion = protocolVersion,
+                lifetimeMs = lifetimeMs,
                 extraEnv = extraEnv,
             )
         }
@@ -2482,6 +2527,7 @@ object McTestkitTasks {
         key: String,
         backendPort: Int,
         protocolVersion: String?,
+        lifetimeMs: Long?,
         extraEnv: Map<String, String> = emptyMap(),
     ): BotProcessHandle {
         val layout = ctx.layout
@@ -2512,6 +2558,7 @@ object McTestkitTasks {
             environment = environment,
             // 同一 run 的所有 bot 共享同一份预算：不因再次 launch 而重置
             budget = ctx.outputBudget(),
+            lifetimeMs = lifetimeMs,
             logger = { ctx.info(it) },
         )
     }

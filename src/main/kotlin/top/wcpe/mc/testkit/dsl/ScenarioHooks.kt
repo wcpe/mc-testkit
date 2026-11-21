@@ -13,6 +13,7 @@ import java.io.File
  * @property resultsDir 结果目录（桩写 `<场景名>.properties` 的落点）。
  * @property backendRunDirs 后端名 → 运行目录（钩子可向其中写配置、读日志）。
  * @property proxyRunDir 代理运行目录；场景未经代理时为 null。
+ * @property processLifetimeMs 钩子起的后台进程交给 run 进程监管的寿命上限（毫秒，由场景的结果等待上限推出）；null 表示不设。
  * @property log 中文日志回调（统一 `[mc-testkit]` 前缀）。
  */
 class HookContext(
@@ -20,6 +21,7 @@ class HookContext(
     val resultsDir: File,
     val backendRunDirs: Map<String, File>,
     val proxyRunDir: File?,
+    val processLifetimeMs: Long? = null,
     private val log: (String) -> Unit,
 ) : java.io.Serializable {
 
@@ -116,6 +118,7 @@ class ExecHook(
             logFile,
             // 与 bot 共享同一个 run 预算：钩子的 stdout 也是无界落盘面。
             budget = context.outputBudget(),
+            lifetimeMs = context.processLifetimeMs,
         )
         context.outputBudget().supervisor.bindPidFile(process, pidFile)
         try {

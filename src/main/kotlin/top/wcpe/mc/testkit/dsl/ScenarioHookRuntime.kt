@@ -25,6 +25,9 @@ internal object ScenarioHookRuntime {
      *
      * 命令经 shell 包装：Windows 上直接 `ProcessBuilder` 起 `.bat` / `.exe` 会失败（需 `cmd /c`），
      * 与既有 [top.wcpe.mc.testkit.provision.ServerLauncher] 处理服务端启动的方式保持一致。
+     *
+     * [lifetimeMs] 是交给 run 进程监管的寿命上限（场景钩子取 [HookContext.processLifetimeMs]）；null 表示不设，
+     * 由收尾钩子或构建结束收尾。
      */
     fun startBackground(
         command: List<String>,
@@ -32,6 +35,7 @@ internal object ScenarioHookRuntime {
         workDir: File,
         logFile: File,
         budget: OutputBudget? = null,
+        lifetimeMs: Long? = null,
     ): Process {
         // The legacy overload fails closed; null never means unlimited.
         val owner = requireNotNull(budget) { "ExecHook requires a run output owner" }
@@ -46,7 +50,7 @@ internal object ScenarioHookRuntime {
             val handle = top.wcpe.mc.testkit.bot.BotProcessHandle(process, pump, logFile)
             val thread = Thread({ pump.run() }, "mc-testkit-hook-pump").apply { isDaemon = true }
             handle.pumpThread = thread
-            owner.supervisor.register(handle)
+            owner.supervisor.register(handle, lifetimeMs)
             thread.start()
             return process
         } catch (ex: Exception) {

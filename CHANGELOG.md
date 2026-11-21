@@ -8,7 +8,7 @@
 
 ### 新增
 
-- **场景级结果等待上限 `resultTimeoutSeconds`（FR-32）**：编排等桩写出结果文件的上限此前写死为 600 秒（`McTestkitTasks` 里的私有常量，直连 / 经代理 / 集群共用，压测在 `durationSeconds` 之外再加它），消费方没有任何办法调整。场景本身就要跑 10 分钟以上时（如长时间性能窗口），任务会在场景跑完前被强制结束，报「桩可能未正常收尾 / 启动失败」，报错与真实原因对不上。现可用 `scenario { resultTimeoutSeconds = N }` 按场景声明，默认仍是 600 秒（`McTestkitDefaults.RESULT_TIMEOUT_SECONDS`），未声明的场景行为不变；配置期校验须 >0。超时报错带出实际上限，并提示场景本身要跑更久时调大该值。压测场景的语义不变：先等 `stress.durationSeconds`，再额外等 `resultTimeoutSeconds`。
+- **场景级结果等待上限 `resultTimeoutSeconds`（FR-32）**：编排等桩写出结果文件的上限此前写死为 600 秒（`McTestkitTasks` 里的私有常量，直连 / 经代理 / 集群共用，压测在 `durationSeconds` 之外再加它），消费方没有任何办法调整。场景本身就要跑 10 分钟以上时（如长时间性能窗口），任务会在场景跑完前被强制结束，报「桩可能未正常收尾 / 启动失败」，报错与真实原因对不上。现可用 `scenario { resultTimeoutSeconds = N }` 按场景声明，默认仍是 600 秒（`McTestkitDefaults.RESULT_TIMEOUT_SECONDS`），未声明的场景行为不变；配置期校验须 >0。超时报错带出实际上限，并提示场景本身要跑更久时调大该值。压测场景的语义不变：先等 `stress.durationSeconds`，再额外等 `resultTimeoutSeconds`。场景 bot 与场景钩子后台进程的监管期限由同一上限推出（再加 600 秒宽限，压测另加 `stress.durationSeconds`），长场景不会在中途被判 TIMEOUT；serve 人机混场的 bot 不设期限，随 serve 或构建结束收尾。
   回归锚点：新增 TestKit 用例用一个只占端口、不写结果的探针后端跑直连 `e2e<Key>`，场景声明 3 秒上限，断言任务很快失败且报出「在 3s 内未写出结果文件」——编排若仍按 600 秒等，该用例会因耗时断言与超时而失败；另有配置期校验用例覆盖单后端 / 集群 / 压测三类场景的非正数拒绝。
 - **后端持久运行目录 `runDirectory`（FR-33）**：后端此前只能在 `<buildDir>/mc-testkit/run-<后端名>` 里起服，每轮除运行库缓存外全部清空，上一轮的世界和插件数据没法留给后面的测试。现可用 `backend("s1") { runDirectory = "run/s1" }` 声明持久目录（相对工程目录或绝对路径），该后端就在那里起服且不再每轮清空；未声明的后端行为不变。每轮仍会铺模板、重写端口 / eula / 离线模式等权威配置、合并 bot 的 `ops.json`、注入本轮插件；上一轮由框架注入的 jar（记在目录内 `.mc-testkit-injected-plugins` 清单里）会先移除，依赖升版后不会新旧并存，消费方自己放的 jar 不受影响；`server-libraries/` 与残留 `*.pid` 照常清掉；上一轮经代理留下的 bungeecord / velocity 转发开关会先复位，避免直连场景被拒。注册期拒绝工程目录本身或其上级、与 `<buildDir>/mc-testkit` 重叠、多个后端共用或嵌套的目录。`backendRunDirectory()` 访问器与钩子的 `backendRunDir()` 同步返回该目录。
 

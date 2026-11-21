@@ -390,6 +390,30 @@ class RunOutputGuardTest {
     }
 
     @Test
+    @DisplayName("本次构建已判失败后普通钩子进程拒绝启动，收尾钩子进程照样启动并落盘")
+    fun cleanupProcessStartsAfterRunFailure() {
+        val b = OutputBudget(64 * 1024, 96 * 1024)
+        b.fail("TIMEOUT log=other.log")
+        val cmd = listOf(javaCommand(), "-cp", fixtureClasspath(), GuardChild::class.java.name, "burst", "1024")
+        assertFailsWith<IllegalStateException>("已判失败时普通钩子进程必须拒绝启动") {
+            ScenarioHookRuntime.startBackground(cmd, emptyMap(), dir, File(dir, "refused.log"), b)
+        }
+        val p = ScenarioHookRuntime.startBackground(cmd, emptyMap(), dir, File(dir, "cleanup.log"), b, cleanup = true)
+        owned += p
+        try {
+            assertTrue(p.waitFor(4, TimeUnit.SECONDS), "收尾进程应当自己跑完")
+            assertEquals(0, p.exitValue(), "收尾进程应当正常退出")
+            val log = File(dir, "cleanup.log")
+            val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+            while (log.length() < 1024 && System.nanoTime() < until) Thread.sleep(10)
+            assertEquals(1024, log.length(), "收尾进程的输出应当照常落盘")
+            assertEquals("TIMEOUT log=other.log", b.failureReason(), "第一个失败原因保持不变")
+        } finally {
+            b.supervisor.close()
+        }
+    }
+
+    @Test
     @DisplayName("输出上限配置的非法值一律拒绝，不退回默认值")
     fun invalidConfigIsRejected() {
         val key = "mc.testkit.bot.log.limit.bytes"

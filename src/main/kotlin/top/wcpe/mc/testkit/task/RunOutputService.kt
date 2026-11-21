@@ -21,14 +21,14 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
     fun attach(resultsDir: File): OutputBudget {
         require(budget.runLimit >= 32768) { "构建级输出预算至少要留 32 KiB 给运行元数据" }
         val state = File(resultsDir, RunOutputState.FILE_NAME)
-        check(states.size < 4 || state in states) { "同一次构建最多接手 4 个结果目录" }
         if (states.add(state)) {
             resultsDir.mkdirs()
             when (val prior = RunOutputState.read(state)) {
                 is RunOutputState.Prior.Refused -> {
                     logger.error(
                         "[mc-testkit] 结果目录 ${resultsDir.absolutePath} 的上一次构建可能仍有进程在写输出（${prior.detail}），" +
-                            "本次不接手。确认那次构建起的 bot 与钩子进程都已结束后，删掉 ${state.absolutePath} 再重跑。",
+                            "本次不接手。先跑对应的 stop 任务（stop<场景>Cluster、stop<场景>Stress、stop<名字>Serve 等，" +
+                            "它们不受这道检查拦截）收掉残留进程；确认没有进程还在写这个目录后，删掉 ${state.absolutePath} 再重跑。",
                     )
                     budget.fail("RUN_FAIL prior-output-owner-not-successful ${prior.detail}")
                 }

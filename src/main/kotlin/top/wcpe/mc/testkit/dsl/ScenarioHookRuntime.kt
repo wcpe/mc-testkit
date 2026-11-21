@@ -27,7 +27,7 @@ internal object ScenarioHookRuntime {
      * 与既有 [top.wcpe.mc.testkit.provision.ServerLauncher] 处理服务端启动的方式保持一致。
      *
      * [lifetimeMs] 是交给 run 进程监管的寿命上限（场景钩子取 [HookContext.processLifetimeMs]）；null 表示不设，
-     * 由收尾钩子或构建结束收尾。
+     * 由收尾钩子或构建结束收尾。[cleanup] 为 true 表示收尾进程（场景后钩子），本次构建已判失败时照样启动。
      */
     fun startBackground(
         command: List<String>,
@@ -36,10 +36,11 @@ internal object ScenarioHookRuntime {
         logFile: File,
         budget: OutputBudget? = null,
         lifetimeMs: Long? = null,
+        cleanup: Boolean = false,
     ): Process {
         // 没有预算就拒绝启动；null 绝不表示不限输出。
         val owner = requireNotNull(budget) { "钩子进程必须交给本次构建的输出预算启动" }
-        owner.checkHealthy()
+        if (!cleanup) owner.checkHealthy()
         logFile.parentFile?.mkdirs()
         workDir.mkdirs()
         val pb = ProcessBuilder(shellWrap(command)).directory(workDir).redirectErrorStream(true)
@@ -50,7 +51,7 @@ internal object ScenarioHookRuntime {
             val handle = top.wcpe.mc.testkit.bot.BotProcessHandle(process, pump, logFile)
             val thread = Thread({ pump.run() }, "mc-testkit-hook-pump").apply { isDaemon = true }
             handle.pumpThread = thread
-            owner.supervisor.register(handle, lifetimeMs)
+            owner.supervisor.register(handle, lifetimeMs, cleanup)
             thread.start()
             return process
         } catch (ex: Exception) {

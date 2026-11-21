@@ -39,10 +39,21 @@ class HookContext(
     @Volatile
     private var outputBudgetSlot: OutputBudget? = null
 
-    /** 由任务层在运行期注入本 run 的预算（同一 run 的所有钩子共享同一个）。 */
-    fun attachOutputBudget(budget: OutputBudget) {
+    @Transient
+    @Volatile
+    private var cleanupSlot = false
+
+    /**
+     * 由任务层在运行期注入本 run 的预算（同一 run 的所有钩子共享同一个）。
+     * [cleanup] 为 true 表示场景后钩子这类收尾：本次构建已判失败时钩子进程照样启动。
+     */
+    fun attachOutputBudget(budget: OutputBudget, cleanup: Boolean = false) {
         outputBudgetSlot = budget
+        cleanupSlot = cleanup
     }
+
+    /** 是否在收尾（场景后钩子）。 */
+    fun isCleanup(): Boolean = cleanupSlot
 
     /** 取已注入的运行期预算；未注入时 fail closed。 */
     fun outputBudget(): OutputBudget = requireNotNull(outputBudgetSlot) { "钩子执行前任务层必须先注入本次构建的输出预算" }
@@ -119,6 +130,7 @@ class ExecHook(
             // 与 bot 共享同一个 run 预算：钩子的 stdout 也是无界落盘面。
             budget = context.outputBudget(),
             lifetimeMs = context.processLifetimeMs,
+            cleanup = context.isCleanup(),
         )
         context.outputBudget().supervisor.bindPidFile(process, pidFile)
         try {

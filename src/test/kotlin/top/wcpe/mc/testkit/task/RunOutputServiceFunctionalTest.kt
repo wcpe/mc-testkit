@@ -151,6 +151,24 @@ class RunOutputServiceFunctionalTest {
         assertTrue(state.readText().startsWith("CLOSED_OK"), state.readText())
     }
 
+    @Test
+    @DisplayName("上一次构建停在 RUNNING 时停止任务照常执行，不接手也不改写记录")
+    fun stopTaskRunsWhilePriorRunIsUnconfirmed() {
+        consumer(1024)
+        val state = File(dir, "build/mc-testkit/results/output-run.state")
+        state.parentFile.mkdirs()
+        val interrupted = "RUNNING\n00000000-0000-0000-0000-000000000000\n"
+        state.writeText(interrupted)
+        val result = GradleRunner.create().withProjectDir(dir).withPluginClasspath()
+            .withArguments("stopFullCluster", "--offline", "--configuration-cache", "--console=plain")
+            .build()
+        assertFalse(
+            result.output.contains("prior-output-owner-not-successful"),
+            "停止任务不得被上一次构建的记录拦下：${result.output.takeLast(2000)}",
+        )
+        assertEquals(interrupted, state.readText(), "停止任务不接手结果目录，记录必须保持原样")
+    }
+
     private fun save(name: String, text: String) {
         System.getProperty("guard.evidence")?.let { File(it).apply { mkdirs() }.resolve("$name.txt").writeText(text) }
     }

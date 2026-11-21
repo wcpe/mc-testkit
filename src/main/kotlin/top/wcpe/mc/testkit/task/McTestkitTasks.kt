@@ -7,6 +7,7 @@ import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.file.FileCollection
 import org.gradle.api.logging.Logger
+import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.TaskProvider
 import top.wcpe.mc.testkit.bot.BotConnection
@@ -70,6 +71,9 @@ import java.util.concurrent.TimeUnit
 
 /** Gradle 任务分组名（生成的 e2e 任务都归此组，`./gradlew tasks` 下成组展示）。 */
 private const val TASK_GROUP = "mc-testkit e2e"
+
+/** 本次构建输出预算与进程监管的共享构建服务名（[RunOutputService]）。 */
+private const val RUN_OUTPUT_SERVICE = "mc-testkit-run-output"
 
 /** 持久手测（serve）任务分组名（与 e2e 测试任务分开展示，语义是「起服供人手测」而非「跑测试」）。 */
 private const val SERVE_TASK_GROUP = "mc-testkit serve"
@@ -146,13 +150,21 @@ internal class TaskExecutionContext(
     val dependencies: DependencyDeclarations,
     val outputService: org.gradle.api.provider.Provider<RunOutputService>,
 ) : java.io.Serializable {
-    /** Shared BuildService survives task/context serialization; a fresh build gets a fresh owner. */
+    /**
+     * 本次构建共用的输出预算与进程监管，不接手结果目录：停进程、清理与场景后钩子这类收尾用它。
+     *
+     * 构建服务随每次顶层构建新建，任务与本上下文经配置缓存序列化后拿到的仍是同一个。
+     */
+    fun runBudget(): OutputBudget = outputService.get().budget
+
+    /** 接手结果目录（[RunOutputService.attach]）并返回本次构建的输出预算；会起 bot / 钩子进程的路径用它。 */
     fun outputBudget(): OutputBudget = outputService.get().attach(layout.resultsDir)
 
-    /** The same real failure guard is called by every task and by result consumers. */
-    fun failIfOutputOverrun() {
-        outputBudget()
-        outputService.get().checkHealthy()
+    /** 接手结果目录后做健康检查；读判定结果前后调用，上一次构建遗留的隐患与本次的输出失败都在这里抛出。 */
+    fun checkRunHealthy() {
+        val service = outputService.get()
+        service.attach(layout.resultsDir)
+        service.checkHealthy()
     }
 
     /** 任务执行期按名读环境变量（不捕获任何 Gradle 对象，兼容配置缓存序列化）。 */
@@ -354,7 +366,7 @@ object McTestkitTasks {
         return TaskExecutionContext(
             logger = project.logger,
             layout = layout,
-            outputService = project.gradle.sharedServices.registerIfAbsent("mc-testkit-run-output", RunOutputService::class.java) {},
+            outputService = runOutputService(project),
             projectDir = project.projectDir,
             // Isolated Projects：不用 `project.findProperty(...)`——它会沿项目层级上溯到父项目，
             // IP 下报 `cannot dynamically look up a property in the parent project`。
@@ -403,7 +415,7 @@ object McTestkitTasks {
             task.commandLine(npmExecutable(), "install", "--no-audit", "--no-fund", "--prefer-offline")
         }
 
-        registerTask(project, McTestkitTaskNames.SYNC_RUNTIME_CACHE) { task ->
+        registerTask(project, McTestkitTaskNames.SYNC_RUNTIME_CACHE, ownsRunOutput = false) { task ->
             task.group = TASK_GROUP
             task.description = "将运行库 / 下载缓存回写到持久缓存目录"
             task.doLast {
@@ -420,7 +432,7 @@ object McTestkitTasks {
             }
         }
 
-        registerTask(project, McTestkitTaskNames.PURGE_RUNTIME_CACHE) { task ->
+        registerTask(project, McTestkitTaskNames.PURGE_RUNTIME_CACHE, ownsRunOutput = false) { task ->
             task.group = TASK_GROUP
             task.description = "清空持久缓存目录（下次运行重新填充）"
             task.doLast {
@@ -479,7 +491,7 @@ object McTestkitTasks {
         }
 
         val after = if (scenario.afterHooks.isNotEmpty()) {
-            registerTask(project, McTestkitTaskNames.afterScenario(scenario.name)) { task ->
+            registerTask(project, McTestkitTaskNames.afterScenario(scenario.name), ownsRunOutput = false) { task ->
                 task.group = TASK_GROUP
                 task.description = "执行场景 ${scenario.name} 的场景后钩子（收尾外部依赖）"
                 task.doLast {
@@ -715,7 +727,7 @@ object McTestkitTasks {
         // 多个经代理场景共用同名停代理任务，故先查是否已注册，未注册才注册（按代理名唯一）。
         val stopProxyName = "stopProxy" + proxy.name.replaceFirstChar { it.uppercaseChar() }
         if (stopProxyName !in project.tasks.names) {
-            registerTask(project, stopProxyName) { task ->
+            registerTask(project, stopProxyName, ownsRunOutput = false) { task ->
                 task.group = TASK_GROUP
                 task.description = "停止代理 ${proxy.name}（按 pid 收尾）"
                 task.doLast {
@@ -813,7 +825,7 @@ object McTestkitTasks {
         val botKeys = BotProcessPlanner.expand(scenario.name, scenario.botSpecs).map { it.key }
 
         // 停集群任务：按 pid 收尾全部后端 + 代理 + 全部 bot（单独可调；集群任务 finalizedBy 它）
-        registerTask(project, stopName) { task ->
+        registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = TASK_GROUP
             task.description = "停止集群场景 ${scenario.name} 的全部后端、代理与机器人（按 pid 收尾）"
             task.doLast {
@@ -947,7 +959,7 @@ object McTestkitTasks {
                     }
                     proxyProcess?.let { stopProcessQuietly(ctx, it, layout.proxyPidFile(proxy.name)) }
                     // 收尾之后统一判：输出越限 ⇒ 本次执行不可信，即便结果文件写的是 PASS。
-                    ctx.failIfOutputOverrun()
+                    ctx.checkRunHealthy()
                 }
             }
         }
@@ -1107,18 +1119,21 @@ object McTestkitTasks {
     /**
      * 执行「场景后」钩子链（收尾语义）。
      *
-     * **不在失败时短路**：某条收尾钩子抛异常只记 warn 并继续执行后续钩子——收尾阶段的异常不得
-     * 阻断其余资源的清理，也不得掩盖场景本身的判定失败（与既有「按 pid 收尾静默跳过」一致）。
+     * **不在失败时短路**：某条收尾钩子抛异常记 warn 并继续执行后续钩子，最后让本次构建失败——收尾的异常
+     * 不得阻断其余资源的清理；失败原因只保留第一个，不会盖住场景本身的判定失败。
+     *
+     * 收尾不接手结果目录（[TaskExecutionContext.runBudget]），本次构建已判失败时钩子进程照样能起。
      */
     private fun runAfterHooks(ctx: TaskExecutionContext, hooks: List<ScenarioHook>, hookCtx: HookContext) {
         if (hooks.isEmpty()) return
-        hookCtx.attachOutputBudget(ctx.outputBudget())
+        val budget = ctx.runBudget()
+        hookCtx.attachOutputBudget(budget, cleanup = true)
         ctx.info("执行场景后钩子（${hooks.size} 条）")
         hooks.forEach { hook ->
             try {
                 hook.run(hookCtx)
             } catch (ex: Exception) {
-                ctx.outputBudget().fail("RUN_FAIL after-hook ${ex.javaClass.simpleName}")
+                budget.fail("RUN_FAIL after-hook ${ex.javaClass.simpleName}")
                 ctx.warn("场景后钩子执行失败（继续其余收尾）：${ex.message?.take(300)}")
             }
         }
@@ -1192,7 +1207,7 @@ object McTestkitTasks {
         }
 
         // 停压测任务：按 pid 收尾全部后端 + 代理 + 全部 bot（单独可调；压测任务 finalizedBy 它）
-        registerTask(project, stopName) { task ->
+        registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = TASK_GROUP
             task.description = "停止压测场景 ${scenario.name} 的全部后端、代理与机器人（按 pid 收尾）"
             task.doLast {
@@ -1345,7 +1360,7 @@ object McTestkitTasks {
                     backendProcesses.forEach { (name, proc) -> stopProcessQuietly(ctx, proc, layout.clusterBackendPidFile(name)) }
                     proxy?.let { p -> proxyProcess?.let { stopProcessQuietly(ctx, it, layout.proxyPidFile(p.name)) } }
                     // 收尾之后统一判：输出越限 ⇒ 本次执行不可信，即便结果文件写的是 PASS。
-                    ctx.failIfOutputOverrun()
+                    ctx.checkRunHealthy()
                 }
             }
         }
@@ -1483,9 +1498,9 @@ object McTestkitTasks {
         backends: List<ResolvedBackend>,
     ) {
         backends.forEach { backend ->
-            ctx.failIfOutputOverrun()
+            ctx.checkRunHealthy()
             val result = ResultReader.read(layout.resultsDir, "$scenario-${backend.name}")
-            ctx.failIfOutputOverrun()
+            ctx.checkRunHealthy()
             ctx.info("压测服 ${backend.name} 通过：${result.message}")
         }
         ctx.info("压测场景 $scenario 全部 ${backends.size} 服聚合判定通过。")
@@ -1628,7 +1643,7 @@ object McTestkitTasks {
         val botKeys = BotProcessPlanner.expand(serve.name, serve.botSpecs).map { it.key }
 
         // 停 serve 任务：按 pid 收尾后端（+ 代理 + 全部 bot）的兜底（另一终端停 / Ctrl+C 没清干净时用）
-        registerTask(project, stopName) { task ->
+        registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = SERVE_TASK_GROUP
             task.description =
                 "停止 serve「${serve.name}」的后端${proxy?.let { " 与代理 ${it.name}" } ?: ""}${if (botKeys.isNotEmpty()) " 与机器人" else ""}（按 pid 收尾）"
@@ -2051,7 +2066,7 @@ object McTestkitTasks {
         // 可选 bot（serve 人机混场）的 pid key（停任务据此按 pid 收尾，防 straggler 残留）
         val botKeys = BotProcessPlanner.expand(serve.name, serve.botSpecs).map { it.key }
 
-        registerTask(project, stopName) { task ->
+        registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = SERVE_TASK_GROUP
             task.description =
                 "停止集群 serve「${serve.name}」的全部后端、代理 ${proxy.name}${if (botKeys.isNotEmpty()) " 与机器人" else ""}（按 pid 收尾）"
@@ -2491,10 +2506,10 @@ object McTestkitTasks {
         }
     }
 
-    /** Stop tasks never send bot pid files to the legacy pid-only server reaper. */
+    /** 停掉本次构建登记的这些 bot；bot 的 pid 文件不交给只认 pid 的收尾路径。 */
     private fun stopOwnedBotFiles(ctx: TaskExecutionContext, keys: List<String>): List<File> {
         keys.forEach { key ->
-            ctx.outputBudget().supervisor.stopLog(top.wcpe.mc.testkit.bot.botLogFile(ctx.layout.resultsDir, key))
+            ctx.runBudget().supervisor.stopLog(top.wcpe.mc.testkit.bot.botLogFile(ctx.layout.resultsDir, key))
         }
         return emptyList()
     }
@@ -2507,8 +2522,8 @@ object McTestkitTasks {
     private fun stopBots(ctx: TaskExecutionContext, name: String, botSpecs: List<BotSpec>) {
         val resultsDir = ctx.layout.resultsDir
         BotProcessPlanner.expand(name, botSpecs).forEach { plan ->
-            if (!ctx.outputBudget().supervisor.stopLog(top.wcpe.mc.testkit.bot.botLogFile(resultsDir, plan.key))) {
-                ctx.outputBudget().fail("RUN_FAIL bot-not-owned-in-this-build")
+            if (!ctx.runBudget().supervisor.stopLog(top.wcpe.mc.testkit.bot.botLogFile(resultsDir, plan.key))) {
+                ctx.runBudget().fail("RUN_FAIL bot-not-owned-in-this-build")
             }
         }
     }
@@ -2565,9 +2580,9 @@ object McTestkitTasks {
 
     /** 只认结果文件判定（[ResultReader]）：缺失或失败抛中文错误，通过则打印 message。 */
     private fun verifyScenarioResult(ctx: TaskExecutionContext, scenario: String) {
-        ctx.failIfOutputOverrun()
+        ctx.checkRunHealthy()
         val result = ResultReader.read(ctx.layout.resultsDir, scenario)
-        ctx.failIfOutputOverrun()
+        ctx.checkRunHealthy()
         ctx.info("E2E 场景 $scenario 通过：${result.message}")
     }
 
@@ -2581,31 +2596,45 @@ object McTestkitTasks {
      *
      * 统一声明 [outputsUpToDateWhenNever]：本插件任务全为副作用生命周期任务（起服 / 写运行目录 /
      * 收尾 / 回写缓存），不得因构建缓存或输入未变而跳过。
+     *
+     * [ownsRunOutput] 为 true 的任务开跑前接手结果目录的输出监管（[RunOutputService.attach]），开跑前与结束后
+     * 都过健康检查。停进程、清理缓存、场景后钩子这类收尾任务传 false：不接手、不过健康检查，上一次构建
+     * 没收好尾或本次已判失败时照样能跑，否则连收尾都做不了。
      */
     private fun registerTask(
         project: Project,
         name: String,
+        ownsRunOutput: Boolean = true,
         configure: (Task) -> Unit,
     ): TaskProvider<DefaultTask> {
         val provider = project.tasks.register(name, DefaultTask::class.java)
         provider.configure(object : Action<DefaultTask> {
             override fun execute(task: DefaultTask) {
                 outputsUpToDateWhenNever(task)
-                val service = project.gradle.sharedServices.registerIfAbsent("mc-testkit-run-output", RunOutputService::class.java) {}
-                val results = layoutOf(project).resultsDir
+                val service = runOutputService(project)
                 task.usesService(service)
-                task.doFirst {
-                    service.get().attach(results)
-                    service.get().checkHealthy()
+                if (ownsRunOutput) {
+                    val results = layoutOf(project).resultsDir
+                    task.doFirst {
+                        service.get().attach(results)
+                        service.get().checkHealthy()
+                    }
                 }
                 configure(task)
-                task.doLast { service.get().checkHealthy() }
+                if (ownsRunOutput) task.doLast { service.get().checkHealthy() }
             }
         })
         return provider
     }
 
-    /** 注册一个 [Exec] 任务并配置之，返回 [TaskProvider]（两步式，理由同 [registerTask]）。 */
+    private fun runOutputService(project: Project): Provider<RunOutputService> =
+        project.gradle.sharedServices.registerIfAbsent(RUN_OUTPUT_SERVICE, RunOutputService::class.java) {}
+
+    /**
+     * 注册一个 [Exec] 任务并配置之，返回 [TaskProvider]（两步式，理由同 [registerTask]）。
+     *
+     * Exec 任务（npm install）不起 bot / 钩子进程、不写结果目录，不接手输出监管。
+     */
     private fun registerExec(
         project: Project,
         name: String,
@@ -2615,15 +2644,7 @@ object McTestkitTasks {
         provider.configure(object : Action<Exec> {
             override fun execute(task: Exec) {
                 outputsUpToDateWhenNever(task)
-                val service = project.gradle.sharedServices.registerIfAbsent("mc-testkit-run-output", RunOutputService::class.java) {}
-                val results = layoutOf(project).resultsDir
-                task.usesService(service)
-                task.doFirst {
-                    service.get().attach(results)
-                    service.get().checkHealthy()
-                }
                 configure(task)
-                task.doLast { service.get().checkHealthy() }
             }
         })
         return provider

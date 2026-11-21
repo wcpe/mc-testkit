@@ -40,11 +40,12 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
 
     /**
      * [timeoutMs] 是兜底期限，必须长于编排器自己等这个进程的时间；为 null 时不设期限，由所属会话（serve）和 [close] 收尾。
+     * [cleanup] 为 true 表示收尾用的进程（场景后钩子）：本次构建已判失败时照样登记，收尾不因前面的失败而做不成。
      */
     @Synchronized
-    fun register(handle: BotProcessHandle, timeoutMs: Long?) {
+    fun register(handle: BotProcessHandle, timeoutMs: Long?, cleanup: Boolean = false) {
         require(timeoutMs == null || timeoutMs in 1..MAX_LIFETIME_MS) { "进程寿命上限须在 1 到 $MAX_LIFETIME_MS 毫秒之间，实际为 $timeoutMs" }
-        budget.checkHealthy()
+        if (!cleanup) budget.checkHealthy()
         check(!closed) { "本次构建的进程监管已经收尾，不能再登记新进程" }
         val child = Child(handle, timeoutMs?.let { System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(it) })
         check(children.none { it.log == child.log && (!it.handle.pump.isFinished() || it.process.isAlive) }) {

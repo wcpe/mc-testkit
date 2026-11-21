@@ -85,7 +85,7 @@ class OutputBudget(
         /**
          * 把 [buffer] 的前 [length] 字节写进 [out]，超出上限的部分丢掉；返回写进去的正文字节数。
          * 已截断或写盘失败后返回 0，调用方照常继续读。整次构建判了其他失败（超期、非零退出等）后仍照常写：
-         * 被停掉的进程最后的输出是排障依据，磁盘由两道字节上限兄底。
+         * 被停掉的进程最后的输出是排障依据，磁盘由两道字节上限兜底。
          */
         fun write(out: OutputStream, buffer: ByteArray, length: Int): Int {
             require(length in 0..buffer.size) { "写入长度 $length 超出缓冲区大小 ${buffer.size}" }

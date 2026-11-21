@@ -32,10 +32,19 @@ class McTestkitE2eHarnessPlugin : McTestkitHarnessPlugin(), Listener {
     /** 业务配置（超时窗口；协议部分由基类处理）。 */
     private lateinit var harnessConfig: HarnessConfig
 
-    /** 本次场景：编排 env 下发优先，回退 config.yml 的 scenario（默认 smoke）。 */
-    private val scenario: ScenarioName by lazy {
-        ScenarioName.from(McTestkitEnv.scenarioIdOrNull() ?: config.getString("scenario", ScenarioName.SMOKE.id)!!)
-    }
+    /**
+     * 本次场景：编排 env 下发优先，回退 config.yml 的 scenario（默认 smoke）。
+     *
+     * 由 [onHarnessEnabled] 在启动期解析并填入（失败即判 FAIL，见 [resolveScenarioOrFail]）。
+     * 保留惰性回退只是为了兜住「bootstrap 前就被其他路径读到」的极端情形，正常路径不会走到。
+     */
+    private var resolvedScenario: ScenarioName? = null
+
+    private val scenario: ScenarioName
+        get() = resolvedScenario
+            ?: ScenarioName.from(
+                McTestkitEnv.scenarioIdOrNull() ?: config.getString("scenario", ScenarioName.SMOKE.id)!!,
+            )
 
     /** 场景是否已开始驱动（首个玩家触发，幂等门）。 */
     private val started = AtomicBoolean(false)
@@ -66,11 +75,56 @@ class McTestkitE2eHarnessPlugin : McTestkitHarnessPlugin(), Listener {
     /** 多 bot 是否已聚合收尾（幂等门）。 */
     private val multiBotFinalized = AtomicBoolean(false)
 
-    /** 业务启动钩子（基类已处理协议准备）：读业务配置，延迟少量 tick 再 bootstrap。 */
+    /**
+     * 业务启动钩子（基类已处理协议准备）：先解析场景 id，失败即判 FAIL，再延迟少量 tick bootstrap。
+     *
+     * **为什么要在这里就解析场景并落 FAIL**：`scenario` 是惰性求值，首次访问发生在
+     * `bootstrapScenario()`——那是调度器任务的 lambda 内。DSL 里的 `scenario("...")` 与桩的
+     * `ScenarioName` 对不上时，`ScenarioName.from` 会抛 `IllegalStateException`，而该异常在 lambda 内
+     * 只进服务端日志、玩家看不到，**结果文件永远不会写出**。
+     *
+     * 于是编排干等到 resultTimeoutSeconds（默认 600s）才报「桩未写出结果 / 桩可能未正常收尾」，
+     * 把排查方向彻底带偏——真实原因是场景 id 对不上，与「没写出结果」毫无关系。
+     *
+     * 提前解析后，错误立刻变成一条明确的中文 FAIL：谁跟谁不一致、可选值有哪些。
+     */
     override fun onHarnessEnabled() {
         harnessConfig = HarnessConfig.from(config)
+        // 先解析场景：id 对不上时立刻判 FAIL，而不是让它在调度器 lambda 里静默吞掉
+        val resolved = resolveScenarioOrFail() ?: return
+        resolvedScenario = resolved
         // 延迟少量 tick 再 bootstrap，给被测插件留出 onEnable 完成的时间
         runLater(BOOTSTRAP_DELAY_TICKS) { bootstrapScenario() }
+    }
+
+    /**
+     * 判定后到关服的空隙，取 config.yml 的 `shutdown-delay-ticks`。
+     *
+     * 基类不读配置文件（它是通用胶水层），故由本桩把配置值交给它。这个空隙不是装饰：
+     * 结论写进结果文件之后，机器人 / 消费方可能还在等末尾的聊天回执（如 `E2E_ASSERT_DONE`），
+     * 立刻关服会让已经写好的结论发不出去，对端只能等到超时。
+     */
+    override fun shutdownDelayTicks(): Long = harnessConfig.shutdownDelayTicks
+
+    /**
+     * 解析本次场景 id；失败时写 FAIL 结果文件并返回 null。
+     *
+     * 报错要同时给出「DSL 传了什么」与「桩认识哪些」——只写「未知场景」的话，
+     * 消费方仍然得去翻两处源码对照。
+     */
+    private fun resolveScenarioOrFail(): ScenarioName? {
+        val id = McTestkitEnv.scenarioIdOrNull() ?: config.getString("scenario", ScenarioName.SMOKE.id)
+        return try {
+            ScenarioName.from(id)
+        } catch (ex: IllegalStateException) {
+            val known = ScenarioName.entries.joinToString("、") { it.id }
+            fail(
+                "桩无法识别本次场景「$id」，与 DSL 的 scenario(\"...\") 不一致。" +
+                    "请让两处 id 保持一致；本桩认识的场景：$known。" +
+                    "（原始错误：${ex.message}）",
+            )
+            null
+        }
     }
 
     /** 场景启动：无机器人的 smoke 直接判定；需要玩家的场景挂等待超时。 */

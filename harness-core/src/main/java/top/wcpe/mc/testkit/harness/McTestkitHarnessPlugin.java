@@ -652,25 +652,33 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
      * 一次 {@code fail()} 都走不到，外部只表现为「断言永远超时」，与真正的失败原因毫无关系。
      *
      * <p>故这里按运行时选路：Folia 走 {@code AsyncScheduler.runNow}，否则回退 Bukkit。
-     * 解析不到任何调度器时（极端异常）退回一个独立线程，保证任务仍会执行——
+     * <b>两条路都包在同一个 try 里</b>——只要调度器投递失败（反射签名对不上、Folia 版本差异
+     * 导致链接失败、拿不到 BukkitScheduler 等），一律退回独立线程，保证任务仍会执行。
      * 静默不执行会让结论永远不出现，那是这里最不能接受的失败形态。
      */
     protected final void runAsync(Runnable task) {
         Object folia = resolveFoliaAsyncScheduler();
-        if (folia != null) {
-            // AsyncScheduler.runNow(Plugin, Consumer<ScheduledTask>)
-            invokeScheduler(folia, "runNow", this, (Consumer<Object>) ignored -> task.run());
-            return;
-        }
         try {
-            getServer().getScheduler().runTaskAsynchronously(this, task);
-        } catch (RuntimeException e) {
-            // 连 Bukkit 调度器都取不到：退回独立线程，绝不让任务静默不执行
+            if (folia != null) {
+                // AsyncScheduler.runNow(Plugin, Consumer<ScheduledTask>)
+                invokeScheduler(folia, "runNow", this, (Consumer<Object>) ignored -> task.run());
+            } else {
+                getServer().getScheduler().runTaskAsynchronously(this, task);
+            }
+            return;
+        } catch (RuntimeException | LinkageError e) {
+            // 两条路都要兜底，不能只兜 Bukkit 那条。
+            //
+            // 反射分支的失败形态尤其隐蔽：invokeScheduler 在方法签名对不上时抛
+            // IllegalStateException，而它若在 try 之外就会一路抛给调用方——对异步断言而言，
+            // 抛点落在聊天事件处理器里，区域线程 / 事件总线只会把它记进日志，断言体一次都不执行，
+            // 也就一次 fail() 都不会走，外部看到的仍然只有「断言永远超时」。
+            //
+            // LinkageError 同样要接：Folia 版本差异可能让 AsyncScheduler 的方法在链接期就失败
+            // （NoSuchMethodError / NoClassDefFoundError），它不是 Exception。
             getLogger().warning("[E2E] 无法通过服务端调度器异步执行，改用独立线程："
                 + e.getClass().getSimpleName() + "：" + e.getMessage());
-            Thread fallback = new Thread(task, "mc-testkit-async-fallback");
-            fallback.setDaemon(true);
-            fallback.start();
+            AsyncThreadFallback.run(task);
         }
     }
 

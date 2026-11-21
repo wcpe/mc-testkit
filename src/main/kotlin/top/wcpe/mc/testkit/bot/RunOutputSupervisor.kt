@@ -32,11 +32,13 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
 
     @Volatile
     private var closed = false
+
+    @Volatile
+    private var survivors: List<ProcessIdentity>? = null
     private val shutdown = Thread({ closeChildren(false) }, "mc-testkit-output-shutdown")
 
     /**
-     * [timeoutMs] is a backstop, so it must outlast the orchestrator's own wait for this child; null leaves the child
-     * to its session (serve) and to [close].
+     * [timeoutMs] 是兜底期限，必须长于编排器自己等这个进程的时间；为 null 时不设期限，由所属会话（serve）和 [close] 收尾。
      */
     @Synchronized
     fun register(handle: BotProcessHandle, timeoutMs: Long?) {
@@ -103,9 +105,8 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
     }
 
     /**
-     * Waits until [process] and its observed descendants are gone, forcing them after [ESCALATE_AFTER_MS]. A sent stop
-     * is not a finished one: on Linux destroy() is only SIGTERM, and a killed process stays alive to ProcessHandle
-     * until it is reaped.
+     * 等 [process] 及其已观察到的子孙进程都结束，超过 [ESCALATE_AFTER_MS] 就强杀。发出停止不等于已经停下：Linux 上
+     * destroy() 只是 SIGTERM，被杀的进程在被回收之前对 ProcessHandle 仍显示存活。
      */
     fun awaitStopped(process: Process, timeoutMs: Long): Boolean {
         val (root, tree) = synchronized(this) {
@@ -200,21 +201,32 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
             closed = true
             children.map { it to it.tree.values.toList() }
         }
-        // One deadline for the whole run, not one timeout per child.
+        // 整个构建共用一个期限，不是每个进程各等一轮。
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
         snapshot.forEach { (c, tree) ->
             tree.forEach { it.kill(true) }
             c.root.kill(true)
         }
+        val left = mutableListOf<ProcessIdentity>()
+        var drained = true
         snapshot.forEach { (c, tree) ->
             awaitGone(c.handle.process, c.root, tree, deadline)
             val remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()).coerceAtLeast(1)
             c.handle.pumpThread?.join(remaining)
-            if (c.handle.pumpThread?.isAlive == true || c.root.alive() || tree.any { it.alive() }) {
-                budget.fail("RUN_FAIL cleanup-deadline")
-            }
+            val alive = (tree + c.root).filter { it.alive() }
+            val pumping = c.handle.pumpThread?.isAlive == true
+            if (pumping || alive.isNotEmpty()) budget.fail("RUN_FAIL cleanup-deadline")
+            if (pumping) drained = false
+            alive.mapTo(left) { ProcessIdentity(it.handle.pid(), it.start.toEpochMilli()) }
         }
+        survivors = if (drained) left else null
     }
+
+    /**
+     * 收尾结果：期限到时仍存活的受监管进程，正常为空。还没收尾，或有泵没排空（观察树之外可能还有进程握着
+     * 管道）时返回 null，表示无法确认。
+     */
+    fun survivors(): List<ProcessIdentity>? = survivors
 
     override fun close() {
         closeChildren(true)
@@ -223,7 +235,7 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
     }
 
     companion object {
-        /** Upper bound for [register]; also keeps nanoTime() + timeout far from overflow. */
+        /** [register] 期限的上限，也让 nanoTime() 加期限远离溢出。 */
         const val MAX_LIFETIME_MS = 7L * 24 * 3600 * 1000
         private const val ESCALATE_AFTER_MS = 200L
     }

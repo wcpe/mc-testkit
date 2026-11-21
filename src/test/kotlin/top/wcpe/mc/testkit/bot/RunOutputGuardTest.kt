@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.bot
 
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
@@ -9,6 +10,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -268,6 +270,7 @@ class RunOutputGuardTest {
             assertTrue(descendants.none { it.isAlive })
             assertTrue(h.awaitPump(1))
             assertTrue(b.failureReason()!!.contains("detached-child"))
+            assertEquals(emptyList(), b.supervisor.survivors(), "收尾后必须确认根进程与子孙进程都已结束")
         } finally {
             b.supervisor.close()
             owned.forEach { if (it.isAlive) it.destroyForcibly() }
@@ -296,6 +299,34 @@ class RunOutputGuardTest {
             b.supervisor.close()
             seen.forEach { if (it.isAlive) it.destroyForcibly() }
         }
+    }
+
+    @Test
+    @DisplayName("收尾前存活记录未知，收尾后确认受监管进程都已结束")
+    fun closeConfirmsEveryOwnedProcessGone() {
+        val b = OutputBudget(64 * 1024, 96 * 1024)
+        assertNull(b.supervisor.survivors(), "还没收尾时不能声称已确认")
+        val h = start(child("sleep"), File(dir, "survivor.log"), b)
+        try {
+            b.supervisor.close()
+            assertFalse(h.process.isAlive)
+            assertEquals(emptyList(), b.supervisor.survivors(), "收尾必须等到受监管进程真正退出")
+        } finally {
+            b.supervisor.close()
+        }
+    }
+
+    @Test
+    @DisplayName("进程身份只认同一个进程：启动时刻不符或进程退出后都不再算存活")
+    fun processIdentityMatchesOnlyTheSameLiveProcess() {
+        val p = child("sleep")
+        val id = assertNotNull(ProcessIdentity.of(p.toHandle()), "刚启动的进程必须取得到启动时刻")
+        assertTrue(id.isAlive(), "刚启动的进程必须算存活")
+        assertFalse(id.copy(startMillis = id.startMillis + 1).isAlive(), "pid 相同但启动时刻不同，不是同一个进程")
+        assertEquals(id, ProcessIdentity.parse(id.toString()), "文本形式必须能原样读回")
+        p.destroyForcibly()
+        assertTrue(p.waitFor(4, TimeUnit.SECONDS), "强杀后进程必须退出")
+        assertFalse(id.isAlive(), "已退出的进程不再算存活")
     }
 
     @Test

@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit.task
 
 import org.gradle.testkit.runner.GradleRunner
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
@@ -9,10 +10,11 @@ import top.wcpe.mc.testkit.bot.fixtureClasspath
 import top.wcpe.mc.testkit.bot.javaCommand
 import java.io.File
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
-/** No Minecraft, network, Node or server tasks: only the real generated scenario hook tasks. */
+/** 不起 Minecraft、网络、Node 或服务端任务，只跑真实生成的场景钩子任务。 */
 @Timeout(120)
 class RunOutputServiceFunctionalTest {
     @TempDir
@@ -67,6 +69,7 @@ class RunOutputServiceFunctionalTest {
         )
 
     @Test
+    @DisplayName("两次钩子输出合计越过构建上限：导演判 PASS 也必须失败；下一次构建照常接手、不被连坐")
     fun realGeneratedTaskFailsAfterDirectorPassAndAcrossTwoHookLaunches() {
         consumer(48 * 1024)
         val started = System.nanoTime()
@@ -78,9 +81,16 @@ class RunOutputServiceFunctionalTest {
         val results = File(dir, "build/mc-testkit/results")
         val written = results.walkTopDown().filter { it.isFile }.sumOf { it.length() }
         assertTrue(written <= 98304, "actual run disk bytes=$written")
-        assertTrue(File(results, "output-run.state").readText().startsWith("RUN_FAIL"))
+        val first = File(results, "output-run.state").readText()
+        assertTrue(first.startsWith("RUN_FAIL"), first)
+        assertEquals("live=", first.lines()[4], "收尾必须确认受监管进程都已结束")
+        // 上一次的失败已确认收尾干净：第二次构建自己接手，并因同样的越限再次失败，而不是被上一次连坐。
         val second = runner().buildAndFail()
-        assertTrue(second.output.contains("prior-output-owner-not-successful"))
+        assertFalse(second.output.contains("prior-output-owner-not-successful"), second.output.takeLast(2000))
+        assertTrue(second.output.contains("OUTPUT_LIMIT"), second.output.takeLast(2000))
+        val next = File(results, "output-run.state").readText()
+        assertTrue(next.startsWith("RUN_FAIL"), next)
+        assertNotEquals(first.lines()[1], next.lines()[1], "第二次构建必须以自己的 runId 接手")
         save(
             "task-fail",
             "bytes=$written\nelapsedMs=${(System.nanoTime() - started) / 1000000}\n" + result.output.takeLast(3000),
@@ -88,6 +98,7 @@ class RunOutputServiceFunctionalTest {
     }
 
     @Test
+    @DisplayName("配置缓存复用时每次构建都是新的输出所有者，用量从零计")
     fun configurationCacheReuseCreatesFreshRunOwner() {
         consumer(1024)
         runner().build()
@@ -103,6 +114,7 @@ class RunOutputServiceFunctionalTest {
     }
 
     @Test
+    @DisplayName("构建结束时仍有没停的钩子进程：收尾杀掉并判失败，状态记下无残留")
     fun startOnlyBuildFailsFromServiceCloseAndDoesNotLeaveChild() {
         consumer(0)
         val script = File(dir, "build.gradle")
@@ -111,10 +123,32 @@ class RunOutputServiceFunctionalTest {
         assertTrue(result.output.contains("detached-child-at-build-end"), result.output.takeLast(2000))
         val state = File(dir, "build/mc-testkit/results/output-run.state").readText()
         assertTrue(state.startsWith("RUN_FAIL"))
+        assertEquals("live=", state.lines()[4], "被收尾杀掉的进程必须确认已结束")
         val pids = File(dir, "build/mc-testkit/results").listFiles()!!.filter { it.extension == "pid" }
             .map { it.readText().trim().toLong() }
         assertTrue(pids.all { ProcessHandle.of(it).map { p -> !p.isAlive }.orElse(true) })
         save("service-close-fail", state + "\nchildrenAlive=0\n" + result.output.takeLast(2000))
+    }
+
+    @Test
+    @DisplayName("上一次构建停在 RUNNING：持续拒绝且不覆盖记录，删掉状态文件后恢复")
+    fun interruptedPriorRunKeepsRefusingUntilItsStateIsCleared() {
+        consumer(1024)
+        val state = File(dir, "build/mc-testkit/results/output-run.state")
+        state.parentFile.mkdirs()
+        val interrupted = "RUNNING\n00000000-0000-0000-0000-000000000000\n"
+        state.writeText(interrupted)
+        repeat(2) {
+            val refused = runner().buildAndFail()
+            assertTrue(
+                refused.output.contains("prior-output-owner-not-successful state=RUNNING"),
+                refused.output.takeLast(2000),
+            )
+            assertEquals(interrupted, state.readText(), "被拒的构建不得覆盖它据以拒绝的记录")
+        }
+        assertTrue(state.delete())
+        runner().build()
+        assertTrue(state.readText().startsWith("CLOSED_OK"), state.readText())
     }
 
     private fun save(name: String, text: String) {

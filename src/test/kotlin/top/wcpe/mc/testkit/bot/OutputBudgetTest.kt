@@ -31,6 +31,7 @@ import kotlin.test.assertTrue
 @org.junit.jupiter.api.Timeout(10)
 class OutputBudgetTest {
     private val supervisedBudgets = mutableSetOf<OutputBudget>()
+
     @org.junit.jupiter.api.AfterEach fun closeOwners() {
         supervisedBudgets.forEach { it.supervisor.close() }
     }
@@ -141,7 +142,7 @@ class OutputBudgetTest {
             // 正文不超 quota；额外只允许有界标记行
             assertTrue(
                 size <= quota + OutputBudget.MARKER_MAX_BYTES,
-                "落盘 ${size} 字节超过了 quota=$quota + 标记上限 ${OutputBudget.MARKER_MAX_BYTES}",
+                "落盘 $size 字节超过了 quota=$quota + 标记上限 ${OutputBudget.MARKER_MAX_BYTES}",
             )
             assertTrue(pump.isOverrun(), "应当标记为超限")
             val text = logFile.readText(Charsets.UTF_8)
@@ -195,7 +196,7 @@ class OutputBudgetTest {
             val size = logFile.length()
             assertTrue(
                 size <= quota + OutputBudget.MARKER_MAX_BYTES,
-                "两路合计 ${size} 字节超过了 quota=$quota（stderr 没有绕过限额）",
+                "两路合计 $size 字节超过了 quota=$quota（stderr 没有绕过限额）",
             )
             assertTrue(budget.isOverrun(), "两路合计超限时预算应当置位")
         } finally {

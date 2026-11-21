@@ -26,7 +26,7 @@ class RunOutputServiceFunctionalTest {
             fixtureClasspath(),
             GuardChild::class.java.name,
             "burst",
-            bytes.toString()
+            bytes.toString(),
         ).joinToString(",") { quoted(it) }
         File(dir, "build.gradle").writeText(
             """
@@ -51,14 +51,19 @@ class RunOutputServiceFunctionalTest {
             }
             tasks.configureEach { t -> if (t.name == 'afterFullScenario') t.dependsOn('directorPass') }
             tasks.register('guardFinal') { dependsOn('afterFullScenario') }
-        """.trimIndent()
+            """.trimIndent(),
         )
     }
 
     private fun runner() = GradleRunner.create().withProjectDir(dir).withPluginClasspath()
         .withArguments(
-            "guardFinal", "--offline", "--configuration-cache", "--console=plain", "-q",
-            "-Dmc.testkit.bot.log.limit.bytes=65536", "-Dmc.testkit.bot.log.runLimit.bytes=98304"
+            "guardFinal",
+            "--offline",
+            "--configuration-cache",
+            "--console=plain",
+            "-q",
+            "-Dmc.testkit.bot.log.limit.bytes=65536",
+            "-Dmc.testkit.bot.log.runLimit.bytes=98304",
         )
 
     @Test
@@ -78,7 +83,7 @@ class RunOutputServiceFunctionalTest {
         assertTrue(second.output.contains("prior-output-owner-not-successful"))
         save(
             "task-fail",
-            "bytes=$written\nelapsedMs=${(System.nanoTime() - started) / 1000000}\n" + result.output.takeLast(3000)
+            "bytes=$written\nelapsedMs=${(System.nanoTime() - started) / 1000000}\n" + result.output.takeLast(3000),
         )
     }
 

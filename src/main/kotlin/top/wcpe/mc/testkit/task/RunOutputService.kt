@@ -19,8 +19,8 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
         check(
             states.size < 4 || File(
                 resultsDir,
-                "output-run.state"
-            ) in states
+                "output-run.state",
+            ) in states,
         ) { "Too many result directories in one build" }
         val state = File(resultsDir, "output-run.state")
         if (states.add(state)) {
@@ -50,7 +50,7 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
         states.forEach { state ->
             state.writeText(
                 "${if (budget.failureReason() == null) "CLOSED_OK" else "RUN_FAIL"}\n$runId\n" +
-                    "bytes=${budget.usedBytes()}\n${budget.failureReason().orEmpty().take(384)}\n"
+                    "bytes=${budget.usedBytes()}\n${budget.failureReason().orEmpty().take(384)}\n",
             )
         }
         checkHealthy()

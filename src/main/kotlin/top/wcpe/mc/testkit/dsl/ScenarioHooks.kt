@@ -110,7 +110,10 @@ class ExecHook(
 
         context.info("执行钩子命令：${command.first()}（日志 ${logFile.name}）")
         val process = ScenarioHookRuntime.startBackground(
-            command, env, workDir, logFile,
+            command,
+            env,
+            workDir,
+            logFile,
             // 与 bot 共享同一个 run 预算：钩子的 stdout 也是无界落盘面。
             budget = context.outputBudget(),
         )

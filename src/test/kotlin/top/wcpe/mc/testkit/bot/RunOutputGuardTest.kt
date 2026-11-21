@@ -6,7 +6,11 @@ import org.junit.jupiter.api.io.TempDir
 import top.wcpe.mc.testkit.dsl.ScenarioHookRuntime
 import java.io.File
 import java.util.concurrent.TimeUnit
-import kotlin.test.*
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 @Timeout(10)
 class RunOutputGuardTest {
@@ -14,6 +18,7 @@ class RunOutputGuardTest {
     lateinit var dir: File
     private val owned = mutableListOf<Process>()
     private var began = 0L
+
     @org.junit.jupiter.api.BeforeEach
     fun begin() {
         began = System.nanoTime()
@@ -28,7 +33,8 @@ class RunOutputGuardTest {
             val files = dir.walkTopDown().filter { it.isFile }.toList()
             File(target, info.testMethod.get().name + ".metrics.txt").writeText(
                 "files=${files.size}\nbytes=${files.sumOf { it.length() }}\nelapsedMs=${(System.nanoTime() - began) / 1000000}\nchildrenAlive=$alive\n" +
-                    files.joinToString("\n") { it.name + "=" + it.length() })
+                    files.joinToString("\n") { it.name + "=" + it.length() },
+            )
         }
         owned.forEach { if (it.isAlive) it.destroyForcibly() }
         assertEquals(0, alive, "normal test cleanup must leave no owned child")
@@ -42,7 +48,7 @@ class RunOutputGuardTest {
             fixtureClasspath(),
             GuardChild::class.java.name,
             mode,
-            bytes.toString()
+            bytes.toString(),
         )
             .redirectErrorStream(true).start()
         owned += p
@@ -71,7 +77,7 @@ class RunOutputGuardTest {
         target.mkdirs()
         File(
             target,
-            "$name.txt"
+            "$name.txt",
         ).writeText("bytes=$bytes\nelapsedMs=${(System.nanoTime() - started) / 1000000}\nchildrenAlive=0\npumpsAlive=${handles.count { it.pumpThread?.isAlive == true }}\nfailure=${budget.failureReason()}\n")
     }
 
@@ -147,7 +153,8 @@ class RunOutputGuardTest {
             assertFailsWith<IllegalStateException> { b.checkHealthy() }
             evidence("single", b, listOf(h), start)
         } finally {
-            b.supervisor.close(); owned.forEach { if (it.isAlive) it.destroyForcibly() }
+            b.supervisor.close()
+            owned.forEach { if (it.isAlive) it.destroyForcibly() }
         }
     }
 
@@ -163,13 +170,16 @@ class RunOutputGuardTest {
             val separate = OutputBudget(64 * 1024, 96 * 1024)
             val good = start(child("burst", 1024), File(dir, "other.log"), separate)
             try {
-                waitDone(good); assertNull(separate.failureReason()); assertEquals(1024, good.logFile.length())
+                waitDone(good)
+                assertNull(separate.failureReason())
+                assertEquals(1024, good.logFile.length())
             } finally {
                 separate.supervisor.close()
             }
             evidence("concurrent", b, hs, start)
         } finally {
-            b.supervisor.close(); owned.forEach { if (it.isAlive) it.destroyForcibly() }
+            b.supervisor.close()
+            owned.forEach { if (it.isAlive) it.destroyForcibly() }
         }
     }
 
@@ -186,7 +196,8 @@ class RunOutputGuardTest {
             assertTrue(b.overrunReason()!!.contains("limit=run"))
             evidence("sequential", b, listOf(h1, h2), started)
         } finally {
-            b.supervisor.close(); owned.forEach { if (it.isAlive) it.destroyForcibly() }
+            b.supervisor.close()
+            owned.forEach { if (it.isAlive) it.destroyForcibly() }
         }
     }
 
@@ -196,16 +207,19 @@ class RunOutputGuardTest {
         val bad = File(dir, "directory.log").apply { mkdirs() }
         val h = start(child("sleep"), bad, b)
         try {
-            waitDone(h); assertTrue(b.failureReason()!!.startsWith("IOFAIL"))
+            waitDone(h)
+            assertTrue(b.failureReason()!!.startsWith("IOFAIL"))
         } finally {
             b.supervisor.close()
         }
         val timeout = OutputBudget(64 * 1024, 96 * 1024)
         val t = start(child("sleep"), File(dir, "timeout.log"), timeout, 200)
         try {
-            waitDone(t); assertTrue(timeout.failureReason()!!.startsWith("TIMEOUT"))
+            waitDone(t)
+            assertTrue(timeout.failureReason()!!.startsWith("TIMEOUT"))
         } finally {
-            timeout.supervisor.close(); owned.forEach { if (it.isAlive) it.destroyForcibly() }
+            timeout.supervisor.close()
+            owned.forEach { if (it.isAlive) it.destroyForcibly() }
         }
     }
 
@@ -255,7 +269,9 @@ class RunOutputGuardTest {
             assertTrue(h.awaitPump(1))
             assertTrue(b.failureReason()!!.contains("detached-child"))
         } finally {
-            b.supervisor.close(); owned.forEach { if (it.isAlive) it.destroyForcibly() }; descendants.forEach { if (it.isAlive) it.destroyForcibly() }
+            b.supervisor.close()
+            owned.forEach { if (it.isAlive) it.destroyForcibly() }
+            descendants.forEach { if (it.isAlive) it.destroyForcibly() }
         }
     }
 
@@ -277,7 +293,8 @@ class RunOutputGuardTest {
             assertTrue(seen.none { it.isAlive })
             assertTrue(h.awaitPump(1))
         } finally {
-            b.supervisor.close(); seen.forEach { if (it.isAlive) it.destroyForcibly() }
+            b.supervisor.close()
+            seen.forEach { if (it.isAlive) it.destroyForcibly() }
         }
     }
 
@@ -289,21 +306,24 @@ class RunOutputGuardTest {
                 emptyMap(),
                 dir,
                 File(dir, "null.log"),
-                null
+                null,
             )
         }
         val b = OutputBudget(64 * 1024, 96 * 1024)
         val cmd = listOf(javaCommand(), "-cp", fixtureClasspath(), GuardChild::class.java.name, "burst", "131072")
         val p = ScenarioHookRuntime.startBackground(cmd, emptyMap(), dir, File(dir, "hook.log"), b)
         try {
-            assertTrue(p.waitFor(4, TimeUnit.SECONDS)); assertTrue(b.isOverrun()); assertTrue(
+            assertTrue(p.waitFor(4, TimeUnit.SECONDS))
+            assertTrue(b.isOverrun())
+            assertTrue(
                 File(
                     dir,
-                    "hook.log"
-                ).length() <= 64 * 1024
+                    "hook.log",
+                ).length() <= 64 * 1024,
             )
         } finally {
-            b.supervisor.close(); if (p.isAlive) p.destroyForcibly()
+            b.supervisor.close()
+            if (p.isAlive) p.destroyForcibly()
         }
     }
 
@@ -323,7 +343,7 @@ class RunOutputGuardTest {
                 "null",
                 "",
                 " ",
-                "\"1024\""
+                "\"1024\"",
             ).forEach {
                 System.setProperty(key, it)
                 assertFailsWith<IllegalArgumentException>(it) { OutputBudget.fromConfig() }
@@ -339,29 +359,37 @@ class RunOutputGuardTest {
 
 internal fun javaCommand(): String = File(
     System.getProperty("java.home"),
-    "bin/java" + if (System.getProperty("os.name").startsWith("Windows")) ".exe" else ""
+    "bin/java" + if (System.getProperty("os.name").startsWith("Windows")) ".exe" else "",
 ).absolutePath
 
 internal fun fixtureClasspath(): String =
     GuardChild::class.java.protectionDomain.codeSource.location.toURI().let { File(it).absolutePath } +
         File.pathSeparator + kotlin.Unit::class.java.protectionDomain.codeSource.location.toURI()
-        .let { File(it).absolutePath }
+            .let { File(it).absolutePath }
 
 object GuardChild {
     @JvmStatic
     fun main(args: Array<String>) {
         when (args[0]) {
             "burst" -> {
-                val total = args[1].toInt(); require(total in 0..131072)
+                val total = args[1].toInt()
+                require(total in 0..131072)
                 val chunk = ByteArray(1024) { 120 }
                 repeat(total / 1024) { if (it % 2 == 0) System.out.write(chunk) else System.err.write(chunk) }
-                System.out.flush(); System.err.flush()
+                System.out.flush()
+                System.err.flush()
             }
 
             "short-wait" -> Thread.sleep(1500)
             "short-descendant" -> {
-                ProcessBuilder(javaCommand(), "-cp", fixtureClasspath(), GuardChild::class.java.name,
-                    "short-wait", "0").inheritIO().start()
+                ProcessBuilder(
+                    javaCommand(),
+                    "-cp",
+                    fixtureClasspath(),
+                    GuardChild::class.java.name,
+                    "short-wait",
+                    "0",
+                ).inheritIO().start()
                 Thread.sleep(300)
                 kotlin.system.exitProcess(0)
             }
@@ -374,7 +402,7 @@ object GuardChild {
                     fixtureClasspath(),
                     GuardChild::class.java.name,
                     "sleep",
-                    "0"
+                    "0",
                 ).inheritIO().start()
                 Thread.sleep(1000)
                 // Exit while the descendant still owns the inherited stdout pipe.

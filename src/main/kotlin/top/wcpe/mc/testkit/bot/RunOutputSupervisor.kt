@@ -16,14 +16,20 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
     }
 
     private data class Child(
-        val handle: BotProcessHandle, val root: Identity, val deadline: Long,
-        val tree: MutableMap<Long, Identity> = linkedMapOf(), var stopping: Boolean = false,
-        var stoppedAt: Long = 0, var exitedAt: Long = 0, var pidFile: File? = null,
-        var retired: Boolean = false
+        val handle: BotProcessHandle,
+        val root: Identity,
+        val deadline: Long,
+        val tree: MutableMap<Long, Identity> = linkedMapOf(),
+        var stopping: Boolean = false,
+        var stoppedAt: Long = 0,
+        var exitedAt: Long = 0,
+        var pidFile: File? = null,
+        var retired: Boolean = false,
     )
 
     private val children = mutableListOf<Child>()
     private var monitor: Thread? = null
+
     @Volatile
     private var closed = false
     private val shutdown = Thread({ closeChildren(false) }, "mc-testkit-output-shutdown")
@@ -34,16 +40,21 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
         budget.checkHealthy()
         check(!closed)
         check(children.size < OutputBudget.MAX_SINKS)
-        check(children.none {
-            it.handle.logFile.canonicalFile == handle.logFile.canonicalFile &&
-                (!it.handle.pump.isFinished() || it.root.alive())
-        }) { "Output file already has an active owner" }
+        check(
+            children.none {
+                it.handle.logFile.canonicalFile == handle.logFile.canonicalFile &&
+                    (!it.handle.pump.isFinished() || it.root.alive())
+            },
+        ) { "Output file already has an active owner" }
         val ph = handle.process.toHandle()
         val start = ph.info().startInstant().orElseThrow { IllegalStateException("Missing process start time") }
         children += Child(handle, Identity(ph, start), System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs))
         if (monitor == null) {
             Runtime.getRuntime().addShutdownHook(shutdown)
-            monitor = Thread({ watch() }, "mc-testkit-output-owner").apply { isDaemon = true; start() }
+            monitor = Thread({ watch() }, "mc-testkit-output-owner").apply {
+                isDaemon = true
+                start()
+            }
         }
     }
 
@@ -73,7 +84,8 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
             budget.fail("CHILD_EXIT code=${c.handle.process.exitValue()}")
         }
         if (!c.stopping) {
-            c.stopping = true; c.stoppedAt = System.nanoTime()
+            c.stopping = true
+            c.stoppedAt = System.nanoTime()
         }
         c.tree.values.forEach { it.kill(false) }
         c.root.kill(false)
@@ -159,7 +171,10 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
         }
         // One deadline for the whole run, not one timeout per child.
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
-        snapshot.forEach { c -> c.tree.values.forEach { it.kill(true) }; c.root.kill(true) }
+        snapshot.forEach { c ->
+            c.tree.values.forEach { it.kill(true) }
+            c.root.kill(true)
+        }
         snapshot.forEach { c ->
             val remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()).coerceAtLeast(1)
             c.handle.pumpThread?.join(remaining)

@@ -16,10 +16,12 @@ class OutputBudget(
 
     private var used = 0L
     private var acquired = 0
+
     @Volatile
     private var failure: String? = null
     private val metadataReserve = minOf(8192L, runLimit / 4)
     internal val supervisor by lazy { RunOutputSupervisor(this) }
+
     @Synchronized
     fun usedBytes(): Long = used
     fun isOverrun(): Boolean = failure?.startsWith("OUTPUT_LIMIT") == true
@@ -73,8 +75,10 @@ class OutputBudget(
                             reason.orEmpty().removePrefix("OUTPUT_LIMIT ")
                         }\n".toByteArray(Charsets.UTF_8)
                         val n = minOf(
-                            marker.size.toLong(), reserve, budget.perSinkLimit - used,
-                            budget.runLimit - budget.metadataReserve - budget.used
+                            marker.size.toLong(),
+                            reserve,
+                            budget.perSinkLimit - used,
+                            budget.runLimit - budget.metadataReserve - budget.used,
                         ).coerceAtLeast(0).toInt()
                         used += n
                         budget.used += n

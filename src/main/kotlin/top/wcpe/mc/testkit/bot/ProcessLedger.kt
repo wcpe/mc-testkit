@@ -6,6 +6,7 @@ import java.nio.channels.FileLock
 import java.nio.file.StandardOpenOption
 import java.time.Instant
 import java.util.Properties
+import java.util.concurrent.TimeUnit
 
 /**
  * 台账里一类进程记录的路径 key（同一 key 重复登记视为「同一逻辑进程的新一轮」，覆盖旧记录）：
@@ -118,8 +119,17 @@ internal object ProcessLedger {
      * 锁文件是 `<台账>.lock`：不锁台账本身，因为台账是用 `Properties.store` 整表重写的
      * （先截断再写），锁一个会被截断的文件没有意义。
      *
-     * 拿不到锁时（`tryLock` 返回 null 或抛异常）**降级为无锁写入而不是放弃**：台账是收尾兜底的增强，
-     * 磁盘或平台不支持文件锁时，宁可承担一次极小的并发丢记录概率，也不能让起服因台账写不进去而失败。
+     * ## 拿不到锁时为什么不无锁写入
+     *
+     * 台账的读改写是「读全表 → 改自己那条 → 整表写回」。没有锁时两个进程会各自拿旧快照写回，
+     * 后写者把前者的记录整条冲掉——**被冲掉的那条记录对应的进程从此再也收不回来**，而且丢记录
+     * 本身毫无日志。这正是加锁要防的事，所以「拿不到锁就无锁写」等于没加锁：并发恰好是最需要
+     * 互斥的时刻。
+     *
+     * 因此改为**阻塞式加锁 + 有限重试**：正常的写耗时是毫秒级，短暂等待即可拿到；真的等不到
+     * （持锁进程卡死，或平台不支持文件锁）时**放弃本次写入并告警**，而不是破坏别人的记录。
+     * 放弃写入的代价只是少一条兜底记录，进程本身仍由 pid 文件与本构建的监管负责收尾，
+     * 不会因此逃逸。
      *
      * @param file 台账文件
      * @param mutate 就地修改属性表；返回 true 表示需要写回
@@ -129,12 +139,10 @@ internal object ProcessLedger {
         var channel: FileChannel? = null
         var lock: FileLock? = null
         try {
-            channel = FileChannel.open(
-                lockFile.toPath(),
-                StandardOpenOption.CREATE,
-                StandardOpenOption.WRITE,
-            )
-            lock = runCatching { channel.tryLock() }.getOrNull()
+            channel = runCatching {
+                FileChannel.open(lockFile.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE)
+            }.getOrNull() ?: return warnSkipped(file, "无法打开锁文件")
+            lock = awaitLock(channel) ?: return warnSkipped(file, "等待 ${LOCK_RETRY_BUDGET_MS}ms 仍未拿到锁")
             val properties = load(file)
             if (!mutate(properties)) return
             file.outputStream().use { properties.store(it, LEDGER_HEADER) }
@@ -142,6 +150,33 @@ internal object ProcessLedger {
             runCatching { lock?.release() }
             runCatching { channel?.close() }
         }
+    }
+
+    /**
+     * 在有限预算内反复尝试拿排他锁（`tryLock` 不阻塞，故自旋重试而不是 `lock()` 死等——
+     * 后者在持锁进程卡死时会永久阻塞构建）。
+     *
+     * @return 拿到的锁；预算耗尽或平台抛异常（如不支持文件锁）时返回 null
+     */
+    private fun awaitLock(channel: FileChannel): FileLock? {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(LOCK_RETRY_BUDGET_MS)
+        while (System.nanoTime() < deadline) {
+            val attempt = runCatching { channel.tryLock() }
+            if (attempt.isFailure) return null // 平台不支持文件锁：不值得继续重试
+            val lock = attempt.getOrNull()
+            if (lock != null) return lock
+            Thread.sleep(LOCK_RETRY_INTERVAL_MS)
+        }
+        return null
+    }
+
+    /** 本次写入被放弃时告警（说明后果与不影响范围，避免用户以为进程逃逸了）。 */
+    private fun warnSkipped(file: File, why: String) {
+        warn(
+            "[mc-testkit] 未能写入进程台账 ${file.absolutePath}：$why。" +
+                "本次不记录这条进程信息——它不会因此逃逸（pid 文件与本构建的进程监管照常负责收尾），" +
+                "但跨构建按台账兜底时找不回它。若频繁出现，检查是否有进程长时间占用该台账的锁。",
+        )
     }
 
     /**
@@ -203,6 +238,26 @@ internal object ProcessLedger {
         mc-testkit 进程台账：记录本工具起过的服务端 / 代理 / 机器人 / 钩子进程，供停任务跨轮次兜底收尾。
         可安全手工删除：删除后仅失去「收尾上一轮逃逸进程」的能力，不影响后续起服。
     """.trimIndent()
+
+    /** 等锁的总预算：正常写是毫秒级，2 秒足够跨过任何一次正常竞争的写窗口。 */
+    private const val LOCK_RETRY_BUDGET_MS = 2_000L
+
+    /** 两次尝试之间的间隔。 */
+    private const val LOCK_RETRY_INTERVAL_MS = 10L
+
+    /**
+     * 告警出口。默认落 stderr（`bot/` 不依赖 Gradle API），任务侧可在 `apply` 时接到
+     * `project.logger`，让告警进 Gradle 日志而不是混在 stderr 里。
+     */
+    @Volatile
+    private var warningSink: (String) -> Unit = { System.err.println(it) }
+
+    /** 任务侧注入告警出口（可选；不注入也能工作）。 */
+    fun useWarningSink(sink: (String) -> Unit) {
+        warningSink = sink
+    }
+
+    private fun warn(message: String) = warningSink(message)
 }
 
 internal data class ProcessRecord(

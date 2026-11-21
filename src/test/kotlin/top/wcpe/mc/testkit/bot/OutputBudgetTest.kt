@@ -1,13 +1,18 @@
 package top.wcpe.mc.testkit.bot
 
 import org.junit.jupiter.api.DisplayName
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.OutputStream
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -86,18 +91,11 @@ class OutputBudgetTest {
         logFile: File,
         budget: OutputBudget,
         label: String = "test-bot",
-        drainDeadlineMillis: Long = 2_000L,
     ): BoundedProcessOutputPump {
-        val pump = BoundedProcessOutputPump(
-            label = label,
-            input = process.inputStream,
-            logFile = logFile,
-            budget = budget,
-            drainDeadlineMillis = drainDeadlineMillis,
-        )
+        val pump = BoundedProcessOutputPump(label = label, input = process.inputStream, logFile = logFile, budget = budget)
         val handle = BotProcessHandle(process, pump, logFile)
         supervisedBudgets += budget
-        budget.supervisor.register(handle, 3000)
+        budget.supervisor.register(handle, 8000)
         pump.run()
         return pump
     }
@@ -127,35 +125,29 @@ class OutputBudgetTest {
     }
 
     @Test
-    @DisplayName("超长无换行输出会被截断：真实文件不超 quota，且写出 OUTPUT_LIMIT 标记")
+    @DisplayName("超长无换行输出只截断该日志：文件不超 quota、写出 per-sink 标记，构建不判失败，子进程照常跑完")
     fun hugeSingleLineIsTruncatedAtLimit() {
         val dir = tempDir()
         val logFile = File(dir, "bot-huge.log")
         val quota = 64L * 1024
-        // 子进程吐 4 倍 quota，且**整段不换行**（单个超长行）——readLine 会在这里失控
+        // 整段不换行（单个超长行）——readLine 会在这里失控
         val child = spawnChattyChild(dir, totalBytes = (quota * 2).toInt(), newlineEvery = 0)
         val budget = OutputBudget(perSinkLimit = quota, runLimit = quota * 4)
         try {
             val pump = pumpTo(child, logFile, budget)
-            child.waitFor(3, TimeUnit.SECONDS)
+            assertTrue(child.waitFor(3, TimeUnit.SECONDS), "截断后管道照常被抽干，子进程应当自己跑完")
+            assertEquals(0, child.exitValue(), "子进程不应被杀，退出码应为 0")
 
             val size = logFile.length()
-            // 正文不超 quota；额外只允许有界标记行
-            assertTrue(
-                size <= quota + OutputBudget.MARKER_MAX_BYTES,
-                "落盘 $size 字节超过了 quota=$quota + 标记上限 ${OutputBudget.MARKER_MAX_BYTES}",
-            )
-            assertTrue(pump.isOverrun(), "应当标记为超限")
+            assertTrue(size <= quota, "落盘 $size 字节超过了 quota=$quota（标记行也计入单日志上限）")
+            assertTrue(pump.isTruncated(), "该日志应当标记为已截断")
             val text = logFile.readText(Charsets.UTF_8)
             assertTrue(text.contains("[OUTPUT_LIMIT]"), "日志里应当有一行 [OUTPUT_LIMIT] 标记")
-            // 必须断言「是单 sink 限额拦下的」。只断言"有标记"不够：
-            // 即使把单 sink 限额整段删掉，run 限额仍会写出同样的标记，用例照样绿——
-            // 实测过这个变异，所以这里钉死触发者。
-            assertTrue(
-                text.contains("limit=per-sink"),
-                "应当由单 sink 限额拦下（limit=per-sink），实际日志：${text.takeLast(300)}",
-            )
-            assertTrue(budget.isOverrun(), "预算应当被置为不可逆超限")
+            // 必须断言「是单日志上限拦下的」：只断言有标记时，把单日志上限整段删掉、由整次构建上限写出
+            // 同样的标记，用例照样绿。
+            assertTrue(text.contains("limit=per-sink"), "应当由单日志上限拦下（limit=per-sink），实际日志：${text.takeLast(300)}")
+            assertNull(budget.failureReason(), "单个日志截断不得判整次构建失败")
+            assertEquals(1, budget.truncatedSinks(), "截断次数应当记 1")
         } finally {
             child.destroyForcibly()
         }
@@ -195,18 +187,16 @@ class OutputBudgetTest {
             child.waitFor(3, TimeUnit.SECONDS)
 
             val size = logFile.length()
-            assertTrue(
-                size <= quota + OutputBudget.MARKER_MAX_BYTES,
-                "两路合计 $size 字节超过了 quota=$quota（stderr 没有绕过限额）",
-            )
-            assertTrue(budget.isOverrun(), "两路合计超限时预算应当置位")
+            assertTrue(size <= quota, "两路合计 $size 字节超过了 quota=$quota（stderr 不得绕过限额）")
+            assertEquals(1, budget.truncatedSinks(), "两路合计超过单日志上限时应当截断该日志")
+            assertNull(budget.failureReason(), "单日志截断不得判整次构建失败")
         } finally {
             child.destroyForcibly()
         }
     }
 
     @Test
-    @DisplayName("多 sink 合计受 run 限额：各不超单 sink 但合超 run 时也必须停写")
+    @DisplayName("多个日志合计受整次构建上限：各自不超单日志上限但合计超限时判失败并停写")
     fun multipleSinksShareRunLimit() {
         val dir = tempDir()
         val perSink = 64L * 1024
@@ -228,13 +218,9 @@ class OutputBudgetTest {
         }
 
         val totalWritten = logs.sumOf { it.length() }
-        // 允许每个 sink 各有一行标记（最多 3 个）
-        val allowed = runLimit + OutputBudget.MARKER_MAX_BYTES * logs.size
-        assertTrue(
-            totalWritten <= allowed,
-            "三个 sink 合计 $totalWritten 字节超过了 run 限额 $runLimit + 标记预算 $allowed",
-        )
-        assertTrue(budget.isOverrun(), "合计超 run 限额时预算应当置位")
+        assertTrue(totalWritten <= runLimit, "三个日志合计 $totalWritten 字节超过了整次构建上限 $runLimit")
+        val reason = budget.failureReason()
+        assertTrue(reason.orEmpty().contains("limit=run"), "合计超过整次构建上限必须判失败并点名 limit=run，实际：$reason")
     }
 
     @Test
@@ -243,8 +229,7 @@ class OutputBudgetTest {
         val budget = OutputBudget(perSinkLimit = 1024, runLimit = 4096)
         val first = budget.acquire("a")
         val buffer = ByteArray(600) { 'z'.code.toByte() }
-        val sink1 = java.io.ByteArrayOutputStream()
-        assertEquals(600, first.write(sink1, buffer, 600))
+        assertEquals(600, first.write(ByteArrayOutputStream(), buffer, 600))
         assertEquals(600, budget.usedBytes())
 
         // 新 sink 是新的单 sink 计数，但 run 已用字节延续
@@ -260,50 +245,34 @@ class OutputBudgetTest {
         val runB = OutputBudget(perSinkLimit = 1024, runLimit = 2048)
         val buffer = ByteArray(500) { 'a'.code.toByte() }
 
-        runA.acquire("a").write(java.io.ByteArrayOutputStream(), buffer, 500)
+        runA.acquire("a").write(ByteArrayOutputStream(), buffer, 500)
         assertEquals(500, runA.usedBytes())
         assertEquals(0, runB.usedBytes(), "另一个 run 的已用字节必须是 0")
     }
 
     @Test
-    @DisplayName("超限后子进程能被收尾且不留存活进程")
-    fun overrunChildIsStoppedAndReaped() {
+    @DisplayName("截断后照常抽干管道：子进程自己跑完退出，之后收尾 stop 不判失败，文件仍在界内")
+    fun truncatedChildKeepsRunningAndStopsCleanly() {
         val dir = tempDir()
         val logFile = File(dir, "bot-reap.log")
         val quota = 16L * 1024
         val budget = OutputBudget(perSinkLimit = quota, runLimit = quota * 4)
-        // 吐得很多，确保它在泵停下后仍然活着（验证收尾真的杀了它）
         val child = spawnChattyChild(dir, totalBytes = 128 * 1024, newlineEvery = 4096)
-        val handle = BotProcessHandle(
-            process = child,
-            pump = BoundedProcessOutputPump(
-                label = "reap",
-                input = child.inputStream,
-                logFile = logFile,
-                budget = budget,
-                drainDeadlineMillis = 500L,
-            ),
-            logFile = logFile,
-        )
-        val pumpThread = Thread({ handle.pump.run() }, "test-pump-reap")
-        pumpThread.isDaemon = true
+        val handle = BotProcessHandle(child, BoundedProcessOutputPump("reap", child.inputStream, logFile, budget), logFile)
+        val pumpThread = Thread({ handle.pump.run() }, "test-pump-reap").apply { isDaemon = true }
         handle.pumpThread = pumpThread
         supervisedBudgets += budget
-        budget.supervisor.register(handle, 3000)
+        budget.supervisor.register(handle, 8000)
         pumpThread.start()
         try {
-            // 等它吐过 quota（此时泵应已停止写正文）
-            val deadline = System.currentTimeMillis() + 10_000
-            while (System.currentTimeMillis() < deadline && !handle.isOverrun()) {
-                Thread.sleep(50)
-            }
-            assertTrue(handle.isOverrun(), "应当已超限")
+            assertTrue(child.waitFor(8, TimeUnit.SECONDS), "截断后管道照常被抽干，子进程应当自己跑完")
+            assertEquals(0, child.exitValue(), "子进程不应被杀，退出码应为 0")
+            assertTrue(handle.awaitPump(3), "子进程退出后泵应当读到 EOF 结束")
+            assertTrue(handle.isTruncated(), "该日志应当已截断")
 
             handle.stop()
-            pumpThread.join(5_000)
-
-            assertFalse(child.isAlive, "收尾后子进程不应再存活")
-            assertTrue(logFile.length() <= quota + OutputBudget.MARKER_MAX_BYTES, "文件仍应在界内")
+            assertNull(budget.failureReason(), "单日志截断与正常收尾都不得判失败")
+            assertTrue(logFile.length() <= quota, "文件仍应在单日志上限内（标记行也计入）")
         } finally {
             child.destroyForcibly()
             child.waitFor(5, TimeUnit.SECONDS)
@@ -311,40 +280,102 @@ class OutputBudgetTest {
     }
 
     @Test
-    @DisplayName("越限后预算可被外部读到：这是任务层把超限转 FAIL 的唯一依据")
-    fun overrunIsObservableToTheTaskLayer() {
-        // 事故真正的伤害不是「日志很大」，而是**判定链没有响**：
-        // director 报 PASS 而 fighter 零输出。所以必须验证「超限这件事本身可被读到」，
-        // 否则任务层无从转成失败。
+    @DisplayName("单日志截断可查询但不算失败；整次构建超限才判失败并点名触发者")
+    fun truncationIsObservableAndOnlyRunOverflowFails() {
         val budget = OutputBudget(perSinkLimit = 512, runLimit = 2048)
-        assertFalse(budget.isOverrun(), "初始不应越限")
-        assertEquals(null, budget.overrunReason(), "初始不应有越限说明")
+        assertNull(budget.failureReason(), "初始不应失败")
+        assertEquals(0, budget.truncatedSinks(), "初始不应有截断")
 
         val sink = budget.acquire("bot-a")
-        val out = java.io.ByteArrayOutputStream()
-        val chunk = ByteArray(600) { 'x'.code.toByte() }
-        sink.write(out, chunk, 600)
+        sink.write(ByteArrayOutputStream(), ByteArray(600) { 'x'.code.toByte() }, 600)
+        assertTrue(sink.isTruncated(), "写过单日志上限后该日志必须标记为截断")
+        assertEquals(1, budget.truncatedSinks(), "截断次数必须可读到")
+        assertNull(budget.failureReason(), "单日志截断不得判整次构建失败")
 
-        assertTrue(budget.isOverrun(), "写过 quota 之后预算必须置位")
-        val reason = budget.overrunReason()
-        assertTrue(reason != null && reason.contains("limit="), "越限说明必须点名触发者与限额，实际：$reason")
+        val tight = OutputBudget(perSinkLimit = 1024, runLimit = 1024)
+        tight.acquire("bot-b").write(ByteArrayOutputStream(), ByteArray(1000) { 'x'.code.toByte() }, 1000)
+        val reason = tight.failureReason()
+        assertTrue(reason != null && reason.contains("limit=run"), "整次构建超限必须判失败并点名 limit=run，实际：$reason")
+        assertFailsWith<IllegalStateException>("失败后健康检查必须抛出") { tight.checkHealthy() }
     }
 
     @Test
-    @DisplayName("多个 sink 中任意一个越限，整 run 预算即置位（不是只看最后一个）")
-    fun anySingleSinkOverrunMarksTheWholeRun() {
+    @DisplayName("一个日志截断不影响其他日志继续写")
+    fun oneTruncatedSinkDoesNotAffectOthers() {
         val budget = OutputBudget(perSinkLimit = 256, runLimit = 4096)
-        val chunk = ByteArray(400) { 'y'.code.toByte() }
+        budget.acquire("first").write(ByteArrayOutputStream(), ByteArray(400) { 'y'.code.toByte() }, 400)
+        assertEquals(1, budget.truncatedSinks(), "第一个日志应当被截断")
 
-        // 第一个 sink 越限
-        budget.acquire("first").write(java.io.ByteArrayOutputStream(), chunk, 400)
-        assertTrue(budget.isOverrun(), "第一个 sink 越限后 run 预算必须置位")
+        val wrote = budget.acquire("second").write(ByteArrayOutputStream(), ByteArray(10) { 'z'.code.toByte() }, 10)
+        assertEquals(10, wrote, "其他日志不受影响，应当照常写入")
+        assertNull(budget.failureReason(), "单日志截断不得让整次构建失败")
+    }
 
-        // 第二个 sink 即便没写满，run 也已处于不可逆越限态
-        val second = budget.acquire("second")
-        val wrote = second.write(java.io.ByteArrayOutputStream(), ByteArray(10) { 'z'.code.toByte() }, 10)
-        assertEquals(0, wrote, "run 已越限后，后续 sink 不得再写正文")
-        assertTrue(budget.isOverrun(), "越限是不可逆状态")
+    @Test
+    @DisplayName("日志数量不设上限：大规模压测的数百个 bot 各自一个日志也不失败")
+    fun sinkCountIsUnbounded() {
+        val budget = OutputBudget(perSinkLimit = 1024, runLimit = 1024L * 1024)
+        repeat(1000) { budget.acquire("bot-$it").write(ByteArrayOutputStream(), ByteArray(8), 8) }
+        assertNull(budget.failureReason(), "日志数量本身不得触发失败")
+        assertEquals(8000L, budget.usedBytes(), "每个日志的用量都应计入整次构建")
+    }
+
+    @Test
+    @DisplayName("某个日志写盘卡住时，判失败与查用量不被它拖住")
+    fun blockedDiskWriteDoesNotHoldTheBudget() {
+        val budget = OutputBudget(perSinkLimit = 4096, runLimit = 65536)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val stuck = object : OutputStream() {
+            override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
+            override fun write(b: ByteArray, off: Int, len: Int) {
+                entered.countDown()
+                release.await()
+            }
+        }
+        val writer = Thread { budget.acquire("stuck").write(stuck, ByteArray(100), 100) }.apply {
+            isDaemon = true
+            start()
+        }
+        try {
+            assertTrue(entered.await(2, TimeUnit.SECONDS), "写线程必须已经卡在写盘里")
+            val failer = Thread { budget.fail("TIMEOUT log=other.log") }.apply { start() }
+            failer.join(1000)
+            assertFalse(failer.isAlive, "写盘卡住时 fail 不得等它")
+            assertEquals("TIMEOUT log=other.log", budget.failureReason(), "失败原因应当立即可读")
+            assertEquals(100L, budget.usedBytes(), "用量在写盘前已记账，查询不得等写盘")
+        } finally {
+            release.countDown()
+            writer.join(1000)
+        }
+    }
+
+    @Test
+    @DisplayName("超过单日志上限后泵仍把管道读到 EOF，只是不再落盘")
+    fun pumpDrainsToEofAfterTruncation() {
+        val budget = OutputBudget(perSinkLimit = 4096, runLimit = 65536)
+        val input = ByteArrayInputStream(ByteArray(100_000) { 'q'.code.toByte() })
+        val logFile = File(tempDir(), "drain.log")
+        val pump = BoundedProcessOutputPump("drain", input, logFile, budget)
+        pump.run()
+        assertTrue(pump.isFinished(), "泵应当读到 EOF 后结束")
+        assertEquals(0, input.available(), "管道里的输出必须被读空，子进程才不会卡在写满的管道上")
+        assertTrue(pump.isTruncated(), "该日志应当已截断")
+        assertTrue(logFile.length() <= 4096, "落盘字节不得超过单日志上限，实际 ${logFile.length()}")
+    }
+
+    @Test
+    @DisplayName("整次构建判了超期等其他失败后日志照常落盘：被停掉的进程最后的输出不丢")
+    fun outputIsStillWrittenAfterOtherFailures() {
+        val budget = OutputBudget(perSinkLimit = 65536, runLimit = 1024L * 1024)
+        budget.fail("TIMEOUT log=other.log")
+        val input = ByteArrayInputStream(ByteArray(1000) { 'q'.code.toByte() })
+        val logFile = File(tempDir(), "last-words.log")
+        val pump = BoundedProcessOutputPump("last-words", input, logFile, budget)
+        pump.run()
+        assertEquals(1000L, pump.writtenBytes(), "上限之内的输出必须完整落盘")
+        assertEquals(1000L, logFile.length(), "日志文件应当包含全部输出")
+        assertEquals("TIMEOUT log=other.log", budget.failureReason(), "第一个失败原因保持不变")
     }
 
     @Test
@@ -359,21 +390,15 @@ class OutputBudgetTest {
             val pump = pumpTo(child, logFile, budget)
             child.waitFor(3, TimeUnit.SECONDS)
 
-            assertFalse(pump.isOverrun(), "正常输出不应被判超限")
-            assertFalse(budget.isOverrun(), "预算不应被置位")
+            assertFalse(pump.isTruncated(), "正常输出不应被截断")
+            assertNull(budget.failureReason(), "预算不应失败")
             // 不能断言「等于 totalBytes」：子进程按 newlineEvery 插入了换行，
             // 而 System.out.println 在 Windows 上写出 CRLF——那是子进程多写的字节，
             // 不是泵少写或多写。这里断言的是「泵一字不漏地透传了它对管道读到的一切」：
             // 落盘字节 >= 子进程正文量，且严格小于 quota（说明没被误判超限）。
             val size = logFile.length()
-            assertTrue(
-                size >= quota / 2,
-                "落盘 $size 字节少于子进程正文量 ${quota / 2}——泵丢字节了",
-            )
-            assertTrue(
-                size < quota,
-                "落盘 $size 字节已达 quota=$quota，但本用例的输入本不该触发限额",
-            )
+            assertTrue(size >= quota / 2, "落盘 $size 字节少于子进程正文量 ${quota / 2}——泵丢字节了")
+            assertTrue(size < quota, "落盘 $size 字节已达 quota=$quota，但本用例的输入本不该触发限额")
         } finally {
             child.destroyForcibly()
         }

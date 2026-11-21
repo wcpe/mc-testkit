@@ -37,8 +37,8 @@ internal object ScenarioHookRuntime {
         budget: OutputBudget? = null,
         lifetimeMs: Long? = null,
     ): Process {
-        // The legacy overload fails closed; null never means unlimited.
-        val owner = requireNotNull(budget) { "ExecHook requires a run output owner" }
+        // 没有预算就拒绝启动；null 绝不表示不限输出。
+        val owner = requireNotNull(budget) { "钩子进程必须交给本次构建的输出预算启动" }
         owner.checkHealthy()
         logFile.parentFile?.mkdirs()
         workDir.mkdirs()
@@ -120,7 +120,7 @@ internal object ScenarioHookRuntime {
             pidFile.inputStream().use { String(it.readNBytes(32), Charsets.UTF_8) }.trim().toLongOrNull() ?: return
         if (ProcessHandle.of(pid).isEmpty) return
         check(context.outputBudget().supervisor.stopPidFile(pidFile)) {
-            "Refusing unowned hook pid file: ${pidFile.name}"
+            "pid 文件 ${pidFile.name} 对应的进程不是本次构建启动的，拒绝按 pid 收尾"
         }
     }
 

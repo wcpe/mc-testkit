@@ -45,7 +45,7 @@ class HookContext(
     }
 
     /** 取已注入的运行期预算；未注入时 fail closed。 */
-    fun outputBudget(): OutputBudget = requireNotNull(outputBudgetSlot) { "Hook requires a run output owner" }
+    fun outputBudget(): OutputBudget = requireNotNull(outputBudgetSlot) { "钩子执行前任务层必须先注入本次构建的输出预算" }
 
     /** 记一条 lifecycle 日志。 */
     fun info(message: String) = log(message)

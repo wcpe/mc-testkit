@@ -63,6 +63,13 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
     override fun close() {
         val supervisor = budget.supervisor
         supervisor.close()
+        val truncated = budget.truncatedSinks()
+        if (truncated > 0) {
+            logger.warn(
+                "[mc-testkit] 本次构建有 $truncated 个 bot / 钩子日志超过单个日志上限 ${budget.perSinkLimit} 字节被截断（日志末尾有 [OUTPUT_LIMIT] 行），" +
+                    "判定不受影响；要看完整日志，调大 mc.testkit.bot.log.limit.bytes 或 MC_TESTKIT_E2E_BOT_LOG_LIMIT_BYTES。",
+            )
+        }
         val record = RunOutputState.closed(runId, budget.usedBytes(), budget.failureReason(), supervisor.survivors())
         owned.forEach { it.writeText(record) }
         checkHealthy()

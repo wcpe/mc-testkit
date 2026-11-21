@@ -149,9 +149,6 @@ internal class TaskExecutionContext(
     /** Shared BuildService survives task/context serialization; a fresh build gets a fresh owner. */
     fun outputBudget(): OutputBudget = outputService.get().attach(layout.resultsDir)
 
-    fun hasOutputOverrun(): Boolean = outputBudget().isOverrun()
-    fun outputOverrunReason(): String? = outputBudget().failureReason()
-
     /** The same real failure guard is called by every task and by result consumers. */
     fun failIfOutputOverrun() {
         outputBudget()

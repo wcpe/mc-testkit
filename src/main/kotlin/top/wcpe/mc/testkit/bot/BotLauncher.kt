@@ -1,7 +1,6 @@
 package top.wcpe.mc.testkit.bot
 
 import java.io.File
-import java.util.concurrent.atomic.AtomicBoolean
 
 /** 机器人进程启动所需的固定路径上下文（哪儿启、启哪个脚本、日志 / pid 落哪儿）。 */
 data class BotProcessContext(
@@ -35,8 +34,6 @@ class BotProcessHandle(
     val pump: BoundedProcessOutputPump,
     val logFile: File,
 ) {
-    internal val overrunFlag = AtomicBoolean(false)
-
     /**
      * 泵线程。由 [BotLauncher.launch] 在启动后填入；收尾方用它 [awaitPump]。
      *
@@ -56,7 +53,7 @@ class BotProcessHandle(
      * @return true 表示已确认泵已结束；false 表示等待超时（泵可能仍在 drain）
      */
     fun awaitPump(timeoutSeconds: Long): Boolean {
-        require(timeoutSeconds in 1..5) { "Pump join deadline must be 1..5 seconds" }
+        require(timeoutSeconds in 1..5) { "等待泵线程的期限须在 1 到 5 秒之间，实际为 $timeoutSeconds" }
         val thread = pumpThread ?: return true
         return try {
             thread.join(timeoutSeconds * 1000)
@@ -67,8 +64,8 @@ class BotProcessHandle(
         }
     }
 
-    /** 本 sink 是否已因超限 / 输出 IO 问题停止写正文。 */
-    fun isOverrun(): Boolean = overrunFlag.get() || pump.isOverrun()
+    /** 本日志是否已因超过单个日志上限被截断。 */
+    fun isTruncated(): Boolean = pump.isTruncated()
 
     /** 本 sink 已写出的正文字节数。 */
     fun writtenBytes(): Long = pump.writtenBytes()
@@ -98,7 +95,8 @@ class BotProcessHandle(
  * 从结构上就无法阻止。
  *
  * 现在改为 `Redirect.PIPE` + [BoundedProcessOutputPump]：固定 buffer 增量读、
- * 按 [OutputBudget] 限额落盘，超限写一行有界 `[OUTPUT_LIMIT]` 标记并使任务失败。
+ * 按 [OutputBudget] 限额落盘：单个日志超限只截断（写一行 `[OUTPUT_LIMIT]` 标记并告警），
+ * 整次构建超限才判失败并停掉全部受监管进程。
  *
  * ## 预算必须显式传入
  *
@@ -136,7 +134,9 @@ object BotLauncher {
         logger: (String) -> Unit = {},
     ): BotProcessHandle {
         budget.checkHealthy()
-        require(action.matches(Regex("[A-Za-z0-9_.-]{1,100}"))) { "Invalid bot log key" }
+        require(action.matches(Regex("[A-Za-z0-9_.-]{1,100}"))) {
+            "机器人日志 key 只能由字母、数字、下划线、点和连字符组成（1 到 100 个字符），实际为「$action」"
+        }
         val logFile = botLogFile(context.resultsDir, action)
         val pidFile = botPidFile(context.resultsDir, action)
         logFile.parentFile?.mkdirs()
@@ -159,7 +159,7 @@ object BotLauncher {
                 input = process.inputStream,
                 logFile = logFile,
                 budget = budget,
-                onOverrun = { reason -> logger("[OUTPUT_LIMIT] action=$action $reason") },
+                onTruncated = { logger("[OUTPUT_LIMIT] action=$action $it") },
             )
             val handle = BotProcessHandle(process = process, pump = pump, logFile = logFile)
 

@@ -1,6 +1,9 @@
 package top.wcpe.mc.testkit.bot
 
 import java.io.File
+import java.nio.channels.FileChannel
+import java.nio.channels.FileLock
+import java.nio.file.StandardOpenOption
 import java.time.Instant
 import java.util.Properties
 
@@ -74,15 +77,19 @@ internal object ProcessLedger {
             val startedAtMillis = info?.startInstant()?.map { it.toEpochMilli() }?.orElse(0L) ?: 0L
             val file = file(resultsDir)
             file.parentFile?.mkdirs()
-            val properties = load(file)
-            properties[propKey(key, "pid")] = pid.toString()
-            properties[propKey(key, "port")] = port.toString()
-            properties[propKey(key, "commandLine")] = commandLine
-            properties[propKey(key, "command")] = command
-            properties[propKey(key, "arguments")] = arguments.joinToString(ARGUMENT_SEPARATOR)
-            properties[propKey(key, "startedAtMillis")] = startedAtMillis.toString()
-            properties[propKey(key, "recordedAt")] = Instant.now().toString()
-            file.outputStream().use { properties.store(it, LEDGER_HEADER) }
+            // 读改写整个过程持跨进程文件锁：`@Synchronized` 只挡本 JVM 内的线程。
+            // Gradle 可能派多个 worker 进程，两个进程各读旧快照再整表写回时，后写者会冲掉前者的记录
+            // —— 丢掉的那条记录对应的进程从此再也收不回来，而且丢记录本身没有任何日志。
+            updateLocked(file) { properties ->
+                properties[propKey(key, "pid")] = pid.toString()
+                properties[propKey(key, "port")] = port.toString()
+                properties[propKey(key, "commandLine")] = commandLine
+                properties[propKey(key, "command")] = command
+                properties[propKey(key, "arguments")] = arguments.joinToString(ARGUMENT_SEPARATOR)
+                properties[propKey(key, "startedAtMillis")] = startedAtMillis.toString()
+                properties[propKey(key, "recordedAt")] = Instant.now().toString()
+                true
+            }
         }
     }
 
@@ -96,12 +103,44 @@ internal object ProcessLedger {
         runCatching {
             val file = file(resultsDir)
             if (!file.isFile) return
+            updateLocked(file) { properties ->
+                val removed = properties.keys.map { it.toString() }
+                    .filter { it.startsWith("$key.") }
+                    .onEach { properties.remove(it) }
+                removed.isNotEmpty()
+            }
+        }
+    }
+
+    /**
+     * 在跨进程文件锁的保护下读改写台账。
+     *
+     * 锁文件是 `<台账>.lock`：不锁台账本身，因为台账是用 `Properties.store` 整表重写的
+     * （先截断再写），锁一个会被截断的文件没有意义。
+     *
+     * 拿不到锁时（`tryLock` 返回 null 或抛异常）**降级为无锁写入而不是放弃**：台账是收尾兜底的增强，
+     * 磁盘或平台不支持文件锁时，宁可承担一次极小的并发丢记录概率，也不能让起服因台账写不进去而失败。
+     *
+     * @param file 台账文件
+     * @param mutate 就地修改属性表；返回 true 表示需要写回
+     */
+    private fun updateLocked(file: File, mutate: (Properties) -> Boolean) {
+        val lockFile = File(file.parentFile, file.name + ".lock")
+        var channel: FileChannel? = null
+        var lock: FileLock? = null
+        try {
+            channel = FileChannel.open(
+                lockFile.toPath(),
+                StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE,
+            )
+            lock = runCatching { channel.tryLock() }.getOrNull()
             val properties = load(file)
-            val removed = properties.keys.map { it.toString() }
-                .filter { it.startsWith("$key.") }
-                .onEach { properties.remove(it) }
-            if (removed.isEmpty()) return
+            if (!mutate(properties)) return
             file.outputStream().use { properties.store(it, LEDGER_HEADER) }
+        } finally {
+            runCatching { lock?.release() }
+            runCatching { channel?.close() }
         }
     }
 

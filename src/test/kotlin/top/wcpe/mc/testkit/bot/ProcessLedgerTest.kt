@@ -1,4 +1,4 @@
-package top.wcpe.mc.testkit.task
+package top.wcpe.mc.testkit.bot
 
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test

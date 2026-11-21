@@ -1,6 +1,8 @@
 package top.wcpe.mc.testkit.task
 
 import top.wcpe.mc.testkit.bot.PidFileStopResult
+import top.wcpe.mc.testkit.bot.ProcessLedger
+import top.wcpe.mc.testkit.bot.ProcessRecord
 import top.wcpe.mc.testkit.bot.stopProcessByPid
 import top.wcpe.mc.testkit.bot.stopProcessByPidFile
 import java.io.File

@@ -1,4 +1,4 @@
-package top.wcpe.mc.testkit.task
+package top.wcpe.mc.testkit.bot
 
 import java.io.File
 import java.time.Instant

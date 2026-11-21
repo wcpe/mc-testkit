@@ -97,6 +97,32 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
             ?: throw IllegalStateException("Process is not owned by this run")
     }
 
+    /**
+     * Waits until [process] and its observed descendants are gone, forcing them after [ESCALATE_AFTER_MS]. A sent stop
+     * is not a finished one: on Linux destroy() is only SIGTERM, and a killed process stays alive to ProcessHandle
+     * until it is reaped.
+     */
+    fun awaitStopped(process: Process, timeoutMs: Long): Boolean {
+        val (root, tree) = synchronized(this) {
+            val c = children.firstOrNull { it.handle.process === process }
+                ?: throw IllegalStateException("Process is not owned by this run")
+            c.root to c.tree.values.toList()
+        }
+        val start = System.nanoTime()
+        val deadline = start + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        awaitGone(process, root, tree, minOf(deadline, start + TimeUnit.MILLISECONDS.toNanos(ESCALATE_AFTER_MS)))
+        tree.forEach { it.kill(true) }
+        root.kill(true)
+        awaitGone(process, root, tree, deadline)
+        return !root.alive() && tree.none { it.alive() }
+    }
+
+    private fun awaitGone(process: Process, root: Identity, tree: List<Identity>, deadline: Long) {
+        val rootWaitMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
+        if (rootWaitMs > 0) process.waitFor(rootWaitMs, TimeUnit.MILLISECONDS)
+        while (System.nanoTime() < deadline && (root.alive() || tree.any { it.alive() })) Thread.sleep(10)
+    }
+
     @Synchronized
     fun bindPidFile(process: Process, file: File) {
         val c = children.firstOrNull { it.handle.process === process }
@@ -145,7 +171,7 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
                             }
                         }
                         if (!c.stopping && now >= c.deadline) budget.fail("TIMEOUT log=${c.handle.logFile.name.take(100)}")
-                        if (c.stopping && now - c.stoppedAt >= TimeUnit.MILLISECONDS.toNanos(200)) {
+                        if (c.stopping && now - c.stoppedAt >= TimeUnit.MILLISECONDS.toNanos(ESCALATE_AFTER_MS)) {
                             c.tree.values.forEach { it.kill(true) }
                             c.root.kill(true)
                         }
@@ -167,18 +193,19 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
             if (markDetached && children.any { !it.stopping && it.root.alive() }) budget.fail("RUN_FAIL detached-child-at-build-end")
             requestStopAll()
             closed = true
-            children.toList()
+            children.map { it to it.tree.values.toList() }
         }
         // One deadline for the whole run, not one timeout per child.
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
-        snapshot.forEach { c ->
-            c.tree.values.forEach { it.kill(true) }
+        snapshot.forEach { (c, tree) ->
+            tree.forEach { it.kill(true) }
             c.root.kill(true)
         }
-        snapshot.forEach { c ->
+        snapshot.forEach { (c, tree) ->
+            awaitGone(c.handle.process, c.root, tree, deadline)
             val remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()).coerceAtLeast(1)
             c.handle.pumpThread?.join(remaining)
-            if (c.handle.pumpThread?.isAlive == true || c.root.alive() || c.tree.values.any { it.alive() }) {
+            if (c.handle.pumpThread?.isAlive == true || c.root.alive() || tree.any { it.alive() }) {
                 budget.fail("RUN_FAIL cleanup-deadline")
             }
         }
@@ -188,5 +215,9 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
         closeChildren(true)
         monitor?.interrupt()
         if (Thread.currentThread() !== shutdown) runCatching { Runtime.getRuntime().removeShutdownHook(shutdown) }
+    }
+
+    companion object {
+        private const val ESCALATE_AFTER_MS = 200L
     }
 }

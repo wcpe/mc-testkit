@@ -77,7 +77,9 @@ class BotProcessHandle(
      * 收尾本进程：先温和，超时强杀；**只收尾本句柄自己的进程**，不按可复用 pid 误杀。
      */
     fun stop(logger: (String) -> Unit = {}) {
-        pump.budget.supervisor.stop(process)
+        val supervisor = pump.budget.supervisor
+        supervisor.stop(process)
+        if (!supervisor.awaitStopped(process, 3000)) pump.budget.fail("RUN_FAIL stop-deadline")
         if (!awaitPump(3)) pump.budget.fail("RUN_FAIL pump-stop-deadline")
         logger("已结束机器人进程 pid=${process.pid()} log=${logFile.name}")
     }

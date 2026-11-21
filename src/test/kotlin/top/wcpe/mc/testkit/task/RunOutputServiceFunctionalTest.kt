@@ -135,7 +135,7 @@ class RunOutputServiceFunctionalTest {
     }
 
     @Test
-    @DisplayName("上一次构建停在 RUNNING：持续拒绝且不覆盖记录，删掉状态文件后恢复")
+    @DisplayName("旧版本写下的 RUNNING（没有持有者）：持续拒绝且不覆盖记录，删掉状态文件后恢复")
     fun interruptedPriorRunKeepsRefusingUntilItsStateIsCleared() {
         consumer(1024)
         val state = File(dir, "build/mc-testkit/results/output-run.state")
@@ -242,6 +242,66 @@ class RunOutputServiceFunctionalTest {
         } finally {
             listOf(backend, bot, survivor).forEach(Process::destroyForcibly)
         }
+    }
+
+    @Test
+    @DisplayName("上一次构建被强杀（停在 RUNNING、持有者已退出）且台账里还有它的 bot：拒绝并指向 stopE2eProcesses，收掉后下一次构建自己接手")
+    fun killedPriorRunWithLiveBotRecoversAfterStopProcesses() {
+        consumer(1024)
+        val results = File(dir, "build/mc-testkit/results").apply { mkdirs() }
+        val bot = sleeper()
+        try {
+            ProcessLedger.record(results, "bot/full", bot.pid(), 0)
+            val state = File(results, RunOutputState.FILE_NAME)
+            val killed = RunOutputState.running("00000000-0000-0000-0000-000000000003", exitedProcess())
+            state.writeText(killed)
+
+            val refused = runner().buildAndFail()
+            assertTrue(refused.output.contains("state=RUNNING run=00000000-0000-0000-0000-000000000003 owner=ended ledger-live=1"), refused.output.takeLast(2000))
+            assertTrue(refused.output.contains("./gradlew stopE2eProcesses"), refused.output.takeLast(2000))
+            assertTrue(refused.output.contains("bot/full"), "拒绝时应列出台账里仍存活的进程：${refused.output.takeLast(2000)}")
+            assertEquals(killed, state.readText(), "被拒的构建不得覆盖它据以拒绝的记录")
+
+            val stop = direct("stopE2eProcesses").build()
+            assertTrue(bot.waitFor(20, TimeUnit.SECONDS), "台账里上一次构建的 bot 应被收掉：${stop.output.takeLast(2000)}")
+
+            runner().build()
+            assertTrue(state.readText().startsWith("CLOSED_OK"), "下一次构建应自己接手并成功收尾：${state.readText()}")
+        } finally {
+            bot.destroyForcibly()
+        }
+    }
+
+    @Test
+    @DisplayName("持有记录的构建还在跑（停在 RUNNING、持有者仍存活）：拒绝并提示等它结束；它退出后台账里没有存活进程，下一次构建自己接手")
+    fun liveOwnerIsWaitedForThenAbandonedRunIsTakenOver() {
+        consumer(1024)
+        val state = File(dir, "build/mc-testkit/results/${RunOutputState.FILE_NAME}").apply { parentFile.mkdirs() }
+        val owner = sleeper()
+        try {
+            val identity = assertNotNull(ProcessIdentity.of(owner.toHandle()), "前提：取得到启动时刻")
+            val running = RunOutputState.running("00000000-0000-0000-0000-000000000004", identity)
+            state.writeText(running)
+
+            val refused = runner().buildAndFail()
+            assertTrue(refused.output.contains("state=RUNNING run=00000000-0000-0000-0000-000000000004 owner=$identity"), refused.output.takeLast(2000))
+            assertTrue(refused.output.contains("等它结束"), refused.output.takeLast(2000))
+            assertEquals(running, state.readText(), "被拒的构建不得覆盖它据以拒绝的记录")
+
+            assertTrue(owner.destroyForcibly().waitFor(20, TimeUnit.SECONDS), "前提：持有者已退出")
+            runner().build()
+            assertTrue(state.readText().startsWith("CLOSED_OK"), "持有者退出后应自己接手并成功收尾：${state.readText()}")
+        } finally {
+            owner.destroyForcibly()
+        }
+    }
+
+    /** 一个已经退出的进程的身份，充当被强杀的构建 JVM。 */
+    private fun exitedProcess(): ProcessIdentity {
+        val process = sleeper()
+        val identity = assertNotNull(ProcessIdentity.of(process.toHandle()), "前提：取得到启动时刻")
+        assertTrue(process.destroyForcibly().waitFor(20, TimeUnit.SECONDS), "前提：进程已退出")
+        return identity
     }
 
     private fun direct(task: String) = GradleRunner.create().withProjectDir(dir).withPluginClasspath()

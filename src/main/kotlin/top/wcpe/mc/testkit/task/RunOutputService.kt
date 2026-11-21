@@ -4,7 +4,11 @@ import org.gradle.api.GradleException
 import org.gradle.api.logging.Logging
 import org.gradle.api.services.BuildService
 import org.gradle.api.services.BuildServiceParameters
+import top.wcpe.mc.testkit.bot.LEDGER_KEY_BOT
+import top.wcpe.mc.testkit.bot.LEDGER_KEY_HOOK
 import top.wcpe.mc.testkit.bot.OutputBudget
+import top.wcpe.mc.testkit.bot.ProcessIdentity
+import top.wcpe.mc.testkit.bot.ProcessLedger
 import top.wcpe.mc.testkit.contract.McTestkitTaskNames
 import java.io.File
 import java.util.*
@@ -24,14 +28,12 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
         val state = File(resultsDir, RunOutputState.FILE_NAME)
         if (states.add(state)) {
             resultsDir.mkdirs()
-            when (val prior = RunOutputState.read(state)) {
+            val writers by lazy { liveWriters(resultsDir) }
+            when (val prior = RunOutputState.read(state) { writers }) {
                 is RunOutputState.Prior.Refused -> {
                     logger.error(
-                        "[mc-testkit] 结果目录 ${resultsDir.absolutePath} 的上一次构建可能仍有进程在写输出（${prior.detail}），" +
-                            "本次不接手。先跑 ./gradlew ${McTestkitTaskNames.STOP_PROCESSES}（或对应的 stop<场景>Cluster、stop<场景>Stress、" +
-                            "stop<名字>Serve 等，它们都不受这道检查拦截）：它们按进程台账收掉之前的构建留下的进程，也收掉这份记录里收尾时没停下的进程，" +
-                            "记录里的进程都结束后下一次构建自己接手。记录停在 RUNNING（构建被强杀或断电）或 live=unknown 时无法确认，" +
-                            "确认没有进程还在写这个目录后，删掉 ${state.absolutePath} 再重跑。",
+                        "[mc-testkit] 结果目录 ${resultsDir.absolutePath} 的上一次构建可能仍有进程在写输出（${prior.detail}），本次不接手。" +
+                            remedyHint(prior.remedy, state) { writers },
                     )
                     budget.fail("RUN_FAIL prior-output-owner-not-successful ${prior.detail}")
                 }
@@ -44,6 +46,14 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
                     own(state)
                 }
 
+                is RunOutputState.Prior.Abandoned -> {
+                    logger.warn(
+                        "[mc-testkit] 结果目录 ${resultsDir.absolutePath} 的上一次构建（run=${prior.runId}）没收尾就结束了（构建进程被强杀、断电，或收尾前出错），" +
+                            "进程台账里也没有它留下的仍在写日志的 bot 或钩子进程，本次照常接手；场景结果文件开跑前会清掉，不会沿用上一次的结果。",
+                    )
+                    own(state)
+                }
+
                 RunOutputState.Prior.None, RunOutputState.Prior.ClosedOk -> own(state)
             }
         }
@@ -51,8 +61,34 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
     }
 
     private fun own(state: File) {
-        state.writeText(RunOutputState.running(runId))
+        state.writeText(RunOutputState.running(runId, ProcessIdentity.current()))
         owned += state
+    }
+
+    /** 进程台账里身份核对得上、仍存活、又不归本次构建监管的 bot 与钩子进程：往结果目录写日志的只有它们。 */
+    private fun liveWriters(resultsDir: File): List<String> = ProcessLedger.records(resultsDir)
+        .filter { it.key.startsWith("$LEDGER_KEY_BOT/") || it.key.startsWith("$LEDGER_KEY_HOOK/") }
+        .filter { !budget.supervisor.owns(it.pid) && it.matchesLiveProcess() }
+        .map { it.key }
+
+    private fun remedyHint(remedy: RunOutputState.Remedy, state: File, writers: () -> List<String>): String {
+        val stop = "./gradlew ${McTestkitTaskNames.STOP_PROCESSES}"
+        return when (remedy) {
+            RunOutputState.Remedy.STOP_PROCESSES -> {
+                val listed = writers().takeIf { it.isNotEmpty() }?.let { "台账里仍存活的进程：${it.joinToString("、")}。" }.orEmpty()
+                "先跑 $stop（或对应的 stop<场景>Cluster、stop<场景>Stress、stop<名字>Serve 等，它们都不受这道检查拦截）：" +
+                    "它们按进程台账收掉之前的构建留下的进程，也收掉这份记录里收尾时没停下的进程；这些进程都结束后，下一次构建自己接手。" +
+                    listed
+            }
+
+            RunOutputState.Remedy.WAIT_OWNER ->
+                "持有这份记录的构建 JVM 还在运行（多为同一工程的另一个构建）：等它结束后重跑。确认没有构建在跑、只是 Gradle 守护进程卡住时，" +
+                    "先 ./gradlew --stop 停掉守护进程，之后的构建会按进程台账判断能否接手。"
+
+            RunOutputState.Remedy.DELETE_STATE ->
+                "这份记录无法确认上一次构建的进程是否都已结束（旧版本写下的 RUNNING、live=unknown 或读不懂）：" +
+                    "先跑 $stop 收掉台账里能找到的进程，确认没有进程还在写这个目录后，删掉 ${state.absolutePath} 再重跑。"
+        }
     }
 
     fun checkHealthy() {

@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.bot
 
+import top.wcpe.mc.testkit.contract.McTestkitPidFile
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -27,45 +28,6 @@ enum class PidFileStopResult {
 }
 
 /**
- * pid 文件的内容格式：第一行 pid，第二行进程启动时刻（毫秒）。第二行可选（兼容旧文件）。
- *
- * 为什么要第二行：pid 文件是**跨轮次残留物**，OS 会把旧进程的 pid 回收后分配给新进程。
- * 只认 pid 就会在「陈旧 pid 文件恰好指向无关进程」时误杀用户自己的 IDE / 数据库 / 另一个项目。
- * 同仓库的进程台账路径早已用「命令行 + 启动时刻」核对身份（见 [ProcessRecord.matchesLiveProcess]），
- * 而 pid 文件路径此前**不做任何校验**，两条收尾路径的安全等级不一致。
- */
-private const val PID_FILE_START_LINE = 2
-
-/**
- * 写一个带身份的 pid 文件（pid + 启动时刻）。
- *
- * 拿不到启动时刻时**仍写 pid**（不放弃收尾能力），只是读回时无法校验身份，
- * 届时会按「无法确认」拒绝杀（见 [stopProcessByPidFile]）。
- *
- * @param pidFile 目标 pid 文件（父目录自动创建）
- * @param pid 进程号
- */
-fun writePidFile(pidFile: File, pid: Long) {
-    pidFile.parentFile?.mkdirs()
-    val startedAt = ProcessHandle.of(pid).orElse(null)
-        ?.info()?.startInstant()?.map { it.toEpochMilli() }?.orElse(null)
-    pidFile.writeText(
-        if (startedAt == null) pid.toString() else "$pid\n$startedAt",
-    )
-}
-
-/**
- * 读 pid 文件里的启动时刻；没有第二行 / 解析不了时返回 null（表示「无从校验」）。
- */
-private fun readStartMillis(pidFile: File): Long? =
-    runCatching {
-        pidFile.readLines(Charsets.UTF_8)
-            .getOrNull(PID_FILE_START_LINE - 1)
-            ?.trim()
-            ?.toLongOrNull()
-    }.getOrNull()
-
-/**
  * 按 pid 文件结束进程（机器人驱动与结果判定 高风险区：进程生命周期 / 收尾 / 跨平台；模型见 ADR-0004）。
  *
  * 先温和 [ProcessHandle.destroy]，限时未退则 [ProcessHandle.destroyForcibly] 强杀，最后删除 pid 文件。
@@ -88,35 +50,50 @@ fun stopProcessByPidFile(pidFile: File, logger: (String) -> Unit = {}): PidFileS
         // 进程本就没起来（或已被收尾）：no-op
         return PidFileStopResult.NO_PID_FILE
     }
-    val pid = pidFile.readText().trim().lines().firstOrNull()?.trim()?.toLongOrNull()
+    val pid = McTestkitPidFile.readPid(pidFile)
     if (pid == null) {
         // 内容非法：清理脏 pid 文件后 no-op
         pidFile.delete()
         return PidFileStopResult.INVALID_PID_FILE
     }
 
-    val handle = ProcessHandle.of(pid).orElse(null)
-    if (handle == null) {
-        // 进程已退出：删除陈旧 pid 文件
-        pidFile.delete()
-        return PidFileStopResult.PROCESS_GONE
-    }
+    // 身份校验：recording 里有启动时刻就必须一致，否则这个 pid 已被别的进程复用。
+    when (val verdict = McTestkitPidFile.verify(pidFile, pid)) {
+        McTestkitPidFile.Verdict.Gone -> {
+            pidFile.delete()
+            return PidFileStopResult.PROCESS_GONE
+        }
 
-    // 身份校验：pid 文件里记了启动时刻就必须一致，否则这个 pid 已被别的进程复用。
-    // 拿不到活进程的启动时刻时保守拒杀——宁可漏收尾（并提示手工排查），也不误杀无关进程。
-    val expected = readStartMillis(pidFile)
-    if (expected != null) {
-        val actual = handle.info().startInstant().map { it.toEpochMilli() }.orElse(null)
-        if (actual == null || actual != expected) {
+        is McTestkitPidFile.Verdict.Reused -> {
             logger(
-                "pid 文件 ${pidFile.name} 里的进程（pid=$pid）启动时刻与记录不符（记录=$expected，实际=$actual），" +
-                    "该 pid 已被复用，不按它收尾以免误杀无关进程；已清理这条陈旧记录",
+                "pid 文件 ${pidFile.name} 里的进程（pid=$pid）启动时刻与记录不符" +
+                    "（记录=${verdict.expected}，实际=${verdict.actual}），该 pid 已被复用，" +
+                    "不按它收尾以免误杀无关进程；已清理这条陈旧记录",
             )
             pidFile.delete()
             return PidFileStopResult.INVALID_PID_FILE
         }
+
+        // 旧格式（只有 pid、没有启动时刻）或平台取不到启动时刻：无法核对身份。
+        //
+        // 这里选择**放行并告警**而不是拒杀，理由有两条，方向相反但结论一致：
+        // ① 兼容：升级前写下的所有 pid 文件都是单行，拒杀会让它们全部失效——而它们正是
+        //    「上一轮被强杀、进程还在跑」的唯一凭证，等于把最需要收尾的场景全废掉；
+        // ② 收益有限：pid 复用误杀要求「旧进程已退出 + pid 恰好被无关进程占用 + 那个 pid
+        //    仍是本工具写的那个文件」三个条件同时成立，概率远低于残留进程占着端口不让跑。
+        // 新格式（两行）已经能精确核对，这条路只会走到旧文件上。
+        McTestkitPidFile.Verdict.Unverifiable -> {
+            logger(
+                "pid 文件 ${pidFile.name} 没有可核对的启动时刻（旧格式或平台不支持），" +
+                    "无法确认 pid=$pid 是否仍是本工具起的那个进程；按兼容口径继续收尾。" +
+                    "若该 pid 已被无关进程占用，请改用台账（stop 任务）或按端口手工排查",
+            )
+        }
+
+        is McTestkitPidFile.Verdict.Same -> Unit
     }
 
+    val handle = ProcessHandle.of(pid).orElse(null) ?: return PidFileStopResult.PROCESS_GONE
     stopProcessByPid(pid, handle, logger)
     pidFile.delete()
     return PidFileStopResult.STOPPED

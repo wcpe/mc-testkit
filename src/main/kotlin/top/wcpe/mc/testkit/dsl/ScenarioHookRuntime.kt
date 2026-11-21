@@ -5,6 +5,7 @@ import top.wcpe.mc.testkit.bot.LEDGER_KEY_HOOK
 import top.wcpe.mc.testkit.bot.OutputBudget
 import top.wcpe.mc.testkit.bot.ProcessLedger
 import top.wcpe.mc.testkit.bot.stopProcessTree
+import top.wcpe.mc.testkit.contract.McTestkitPidFile
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -125,11 +126,9 @@ internal object ScenarioHookRuntime {
             context.info("pid 文件不存在（${pidFile.name}），跳过收尾")
             return
         }
-        // pid 文件首行是 pid，第二行是启动时刻（见 bot.writePidFile）：只取首行解析。
-        // 不读死字节数——pid 位数与启动时刻位数都不固定，按行切分才不会因截断拿到半截数字。
-        val pid = runCatching {
-            pidFile.readLines(Charsets.UTF_8).firstOrNull()?.trim()?.toLongOrNull()
-        }.getOrNull() ?: return
+        // pid 文件格式见 contract/McTestkitPidFile（首行 pid、次行启动时刻）。按行取首行，
+        // 不按固定字节数读取：位数变化时读死 N 字节会拿到半截数字并静默跳过收尾。
+        val pid = McTestkitPidFile.readPid(pidFile) ?: return
         val handle = ProcessHandle.of(pid).orElse(null) ?: return
         if (context.outputBudget().supervisor.stopPidFile(pidFile)) return
         val key = ledgerKey(context.resultsDir, pidFile)

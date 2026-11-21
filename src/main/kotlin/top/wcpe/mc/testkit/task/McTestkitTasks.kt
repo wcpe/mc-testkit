@@ -122,7 +122,7 @@ private fun recordProcessedPid(
     // ServerLauncher.launch 对同款情形有「强杀刚起的进程」的保护，这里对齐。
     try {
         // 带身份写入 pid（pid + 启动时刻）：停任务按 pid 文件收尾前会核对，防 pid 复用误杀
-        top.wcpe.mc.testkit.bot.writePidFile(pidFile, process.pid())
+        top.wcpe.mc.testkit.contract.McTestkitPidFile.write(pidFile, process.pid())
         ProcessLedger.record(ctx.layout.resultsDir, ledgerKey, process.pid(), port)
     } catch (ex: Exception) {
         ctx.warn("登记进程 $ledgerKey（pid=${process.pid()}）失败，已强杀该进程：${ex.message}")
@@ -210,7 +210,13 @@ object McTestkitTasks {
 
     /** 装配全部 e2e 任务。 */
     fun register(project: Project, extension: McTestkitExtension) {
-        // ① 复用 拓扑 DSL 解析 + 配置期校验（失败即抛中文 GradleException，阻断后续注册）
+        // ① 把进程台账与结果文件读取的告警接到 Gradle 日志（默认落 stderr，因为 bot/ 与 verify/
+        //    包只依赖 contract/ 与 JDK，不引入 Gradle API）。这两类告警都代表「能力降级」——
+        //    台账写不进去跨构建收不回进程、结果文件编码不合法让 message 受损——需要用户知道。
+        ProcessLedger.useWarningSink { project.logger.warn(it) }
+        top.wcpe.mc.testkit.verify.ResultReader.useWarningSink { project.logger.warn(it) }
+
+        // ①' 复用 拓扑 DSL 解析 + 配置期校验（失败即抛中文 GradleException，阻断后续注册）
         val topology = TopologyResolver.resolve(extension)
 
         // ①' 多 bot 展开后 key/username 唯一性校验（单场景多 bot）：TopologyResolver 只查 role 唯一，

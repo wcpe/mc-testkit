@@ -1,5 +1,7 @@
 package top.wcpe.mc.testkit.dsl
 
+import top.wcpe.mc.testkit.bot.OutputBudget
+import top.wcpe.mc.testkit.bot.ProcessLedger
 import java.io.File
 
 /**
@@ -12,6 +14,7 @@ import java.io.File
  * @property resultsDir 结果目录（桩写 `<场景名>.properties` 的落点）。
  * @property backendRunDirs 后端名 → 运行目录（钩子可向其中写配置、读日志）。
  * @property proxyRunDir 代理运行目录；场景未经代理时为 null。
+ * @property processLifetimeMs 钩子起的后台进程交给 run 进程监管的寿命上限（毫秒，由场景的结果等待上限推出）；null 表示不设。
  * @property log 中文日志回调（统一 `[mc-testkit]` 前缀）。
  */
 class HookContext(
@@ -19,8 +22,42 @@ class HookContext(
     val resultsDir: File,
     val backendRunDirs: Map<String, File>,
     val proxyRunDir: File?,
+    val processLifetimeMs: Long? = null,
     private val log: (String) -> Unit,
 ) : java.io.Serializable {
+
+    /**
+     * 本 run 的输出字节预算（运行期注入）。
+     *
+     * **为什么是 @Transient 可变槽而不是构造参数**：`HookContext` 在**注册期**构造、被任务动作
+     * 闭包捕获，而配置缓存要求整个捕获图可序列化；`OutputBudget` 是运行期对象（含原子计数与
+     * 已用状态），既不该也不能被序列化带过去。
+     *
+     * 因此这里的约定是：**任务在 `doLast` 里注入**（`attachOutputBudget`），钩子用它。
+     * 未注入时明确拒绝执行外部命令，不退回无预算路径。
+     */
+    @Transient
+    @Volatile
+    private var outputBudgetSlot: OutputBudget? = null
+
+    @Transient
+    @Volatile
+    private var cleanupSlot = false
+
+    /**
+     * 由任务层在运行期注入本 run 的预算（同一 run 的所有钩子共享同一个）。
+     * [cleanup] 为 true 表示场景后钩子这类收尾：本次构建已判失败时钩子进程照样启动。
+     */
+    fun attachOutputBudget(budget: OutputBudget, cleanup: Boolean = false) {
+        outputBudgetSlot = budget
+        cleanupSlot = cleanup
+    }
+
+    /** 是否在收尾（场景后钩子）。 */
+    fun isCleanup(): Boolean = cleanupSlot
+
+    /** 取已注入的运行期预算；未注入时 fail closed。 */
+    fun outputBudget(): OutputBudget = requireNotNull(outputBudgetSlot) { "钩子执行前任务层必须先注入本次构建的输出预算" }
 
     /** 记一条 lifecycle 日志。 */
     fun info(message: String) = log(message)
@@ -55,7 +92,8 @@ fun interface ScenarioHook : java.io.Serializable {
 /**
  * 执行一条外部命令的钩子（起控制面、清理等）。
  *
- * 进程以**后台**方式启动并立即返回（不阻塞场景），pid 落盘以便 `afterScenario` 经 [StopPidHook] 收尾。
+ * 进程以**后台**方式启动并立即返回（不阻塞场景），pid 落盘以便 `afterScenario` 经 [StopPidHook] 收尾；
+ * 同时登记进程台账 `hook/<pid 文件相对结果目录的路径>`，构建被强杀时之后的 stop 任务与 [StopPidHook] 据此核对身份后收尾。
  *
  * @property command 命令行（首元素为可执行文件；经 shell 包装以兼容 Windows 的 `.bat` / `.exe`）。
  * @property env 追加给子进程的环境变量（覆盖同名宿主变量）。
@@ -86,8 +124,24 @@ class ExecHook(
         val pidFile = File(context.resultsDir, pidFileName ?: "hook-${context.scenarioName}.pid")
 
         context.info("执行钩子命令：${command.first()}（日志 ${logFile.name}）")
-        val process = ScenarioHookRuntime.startBackground(command, env, workDir, logFile)
-        pidFile.writeText(process.pid().toString())
+        val process = ScenarioHookRuntime.startBackground(
+            command,
+            env,
+            workDir,
+            logFile,
+            // 与 bot 共享同一个 run 预算：钩子的 stdout 也是无界落盘面。
+            budget = context.outputBudget(),
+            lifetimeMs = context.processLifetimeMs,
+            cleanup = context.isCleanup(),
+        )
+        context.outputBudget().supervisor.bindPidFile(process, pidFile)
+        try {
+            pidFile.writeText(process.pid().toString())
+        } catch (ex: Exception) {
+            context.outputBudget().fail("IOFAIL hook-pid ${ex.javaClass.simpleName}")
+            throw ex
+        }
+        ProcessLedger.record(context.resultsDir, ScenarioHookRuntime.ledgerKey(context.resultsDir, pidFile), process.pid(), readyPort)
 
         if (readyPort > 0) {
             ScenarioHookRuntime.awaitPort(context, readyPort, readyTimeoutMs, "钩子端口 $readyPort")
@@ -102,6 +156,7 @@ class ExecHook(
  * 按 pid 文件收尾进程的钩子（`afterScenario` 清理控制面等）。
  *
  * 复用编排既有的按 pid 收尾语义：进程已退出则静默跳过，避免「清理时报错盖住真正失败」。
+ * 本次构建起的交给进程监管停；之前的构建留下的按进程台账核对身份后停；对不上的不碰。
  *
  * @property pidFileName pid 文件名（落在 [HookContext.resultsDir] 下）。
  */

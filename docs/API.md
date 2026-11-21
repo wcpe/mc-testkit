@@ -33,6 +33,7 @@ mcTestkit {
         env("MYPLUGIN_NODE", "s1")
         templateDirectory("MC_TESTKIT_E2E_S1_TEMPLATE_DIR")
         mavenServer("io.papermc.paper:paper:1.12.2") // 可省；服务端 jar 来自 Maven 坐标（优先级：*_JAR > 本坐标 > 内置下载）
+        runDirectory = "run/s1"   // 可省；持久运行目录（相对工程目录），不再每轮清空，世界与插件数据留到下一轮（FR-33）
     }
     // 代理节点与路由
     proxy("wf") {
@@ -70,6 +71,12 @@ mcTestkit {
         via = "wf"               // 可选：经代理 N-listener 钉服；省略则 bot 直连后端端口
         stress { botsPerServer = 100; durationSeconds = 300 } // botsPerServer/durationSeconds 必填 >0
         bot { username = "Stress"; action = "continuous-stress" }
+    }
+    // 长时间场景（FR-32）：按场景放宽等桩写出结果文件的上限（秒，默认 600，须 >0）；各类场景通用
+    scenario("long-load") {
+        backend = "s1"
+        resultTimeoutSeconds = 1500 // 要给足「起服 + 场景全程 + 收尾」
+        bot { username = "Load"; action = "long-load" }
     }
     // 单场景多 bot（FR-16，ADR-0009）·异质双角色（单后端直连）：多个具名 bot("角色")，各自 username/action/env
     scenario("gui-edit") {
@@ -113,6 +120,8 @@ mcTestkit {
     }
 }
 ```
+
+**结果等待上限（`resultTimeoutSeconds`，FR-32）**：编排以「桩写出结果文件」为场景完成信号，等它的上限默认 600 秒（`McTestkitDefaults.RESULT_TIMEOUT_SECONDS`），可按场景声明 `resultTimeoutSeconds` 覆盖，须 >0（否则配置期中文报错）。直连、经代理与集群场景到点仍无结果即强制结束节点并判失败，报错带出实际上限；压测场景先等 `stress.durationSeconds`，再额外等 `resultTimeoutSeconds`。场景自身要跑很久（长时间负载、长观测窗口）时，上限要给足「起服 + 场景全程 + 收尾」，否则未跑完的场景会被当作桩未收尾而截断。同一上限也推出场景 bot 与场景钩子后台进程的监管期限：`resultTimeoutSeconds`（压测再加 `stress.durationSeconds`）+ 600 秒宽限，到期仍未收尾的进程判 TIMEOUT 并结束本 run；serve 人机混场的 bot 不设期限，随 serve 或构建结束收尾。
 
 **版本矩阵展开规则**：每个条目生成
 - 后端 `backendNamePrefix + key`（默认 `v` + key，如 `v1201`）
@@ -164,7 +173,14 @@ scenario("batch-admin") {
 
 **机器人目录定位（Gradle 属性，非 DSL 块）**：消费方照抄 `template/bot` 到其项目；编排经 Gradle 属性 `mcTestkit.botDir` 定位（缺省相对**根工程**的 `e2e-bot`，入口脚本固定 `<botDir>/src/connectAndWait.js`）。目录命名不同的用 `-PmcTestkit.botDir=<目录>` 覆盖（相对路径相对根工程解析，绝对路径直接采用），保证可移植、不写死本机绝对路径。这是 FR-04 唯一新增可配项，刻意走 Gradle 属性而非新增 DSL 顶层块（保持 §3.1 冻结形态不变）。
 
-**运行目录注入点（公开访问器，非 DSL 块）**：`mcTestkit.backendRunDirectory("<后端名>")` 返回该后端节点运行目录的 `Provider<Directory>`（`<buildDir>/mc-testkit/run-<后端名>`）。目录命名由 `McTestkitRunDirectories` 单点定义、与任务侧路径推导同源，消费方**不要自己拼目录路径**：布局属插件内部实现，自行拼写会在布局调整后静默失配（历史事故：消费方按旧布局写配置，配置落在无人使用的目录，服务端以默认配置启动、场景静默失败）。用法：注入任务以 `dependsOn("prepareE2e<场景>")` 保证顺序，动作内 `provider.get().asFile` 取目录；不要把扩展对象本身捕获进任务动作（配置缓存不友好）。
+**运行目录注入点（公开访问器，非 DSL 块）**：`mcTestkit.backendRunDirectory("<后端名>")` 返回该后端节点运行目录的 `Provider<Directory>`（`<buildDir>/mc-testkit/run-<后端名>`；该后端声明了 `runDirectory` 时返回那个持久目录）。目录命名由 `McTestkitRunDirectories` 单点定义、与任务侧路径推导同源，消费方**不要自己拼目录路径**：布局属插件内部实现，自行拼写会在布局调整后静默失配（历史事故：消费方按旧布局写配置，配置落在无人使用的目录，服务端以默认配置启动、场景静默失败）。用法：注入任务以 `dependsOn("prepareE2e<场景>")` 保证顺序，动作内 `provider.get().asFile` 取目录；不要把扩展对象本身捕获进任务动作（配置缓存不友好）。
+
+**持久运行目录（`backend { runDirectory = "run/s1" }`，FR-33，加法扩展）**：默认每个后端在 `<buildDir>/mc-testkit/run-<后端名>` 里起服，每轮只保留 `libraries` / `cache` / `assets` / `versions`，其余清空。声明 `runDirectory`（相对工程目录，或绝对路径）后，该后端改在这个目录起服，且**不再每轮清空**：世界、插件数据、日志都留到下一轮，适合要沿用上一轮状态的手测或长测；要从头来过，删掉这个目录即可。
+
+- 每轮仍会做：铺模板（世界目录与 `logs` 照旧不从模板拷）、重写权威配置（`eula.txt`，`server.properties` 的端口 / 离线模式等）、合并 bot 的 `ops.json`、注入本轮的待测 / 依赖插件 jar。
+- 每轮会清掉的框架产物：上一轮由框架注入、记在目录里 `.mc-testkit-injected-plugins` 清单中的插件 jar（依赖升版后文件名变了也不会新旧并存；自己放进 `plugins/` 的 jar 不受影响）、`server-libraries/`、根目录的 `*.pid`。上一轮经代理留下的转发开关（`spigot.yml` 的 `settings.bungeecord`、`config/paper-global.yml` 的 `proxies.velocity.enabled`）会先复位，经代理的场景随后重新打开，直连场景因此不会被残留开关拒之门外。
+- 注册期校验（中文报错）：不能是工程目录本身或其上级；不能与 `<buildDir>/mc-testkit` 重叠（那里随 `clean` 清空、代理目录每轮整删）；两个后端不能指向同一目录或互相嵌套。声明为空白在拓扑解析时即被拒。
+- `mcTestkit.backendRunDirectory("<后端名>")` 与钩子里的 `HookContext.backendRunDir(...)` 都返回这个目录。持久目录不参与 `server-base` 持久运行库缓存的回写（运行库本来就留在原地）。
 
 **依赖插件按 Maven 坐标解析（`dependencies { mavenPlugin(…) }`，加法扩展）**：`DependenciesSpec` 新增 `mavenPlugin(coordinate)`，声明一个依赖插件注入，坐标为 `group:artifact:version`。它解决的是「制品不随公开仓库分发」的场景——此前只能本机放文件 + 设环境变量，CI 里没有那个文件就跑不了；现在直接写坐标即可。
 
@@ -247,13 +263,14 @@ dependencies {
 | `npmInstallE2eBot` | 安装机器人 mineflayer 依赖（固定名） |
 | `syncE2eRuntimeCache` | 运行库/下载缓存回写到持久缓存（固定名）。**由各终态任务（`e2e<Key>` / `e2e<Key>Via<Proxy>` / `e2e<Key>Cluster` / `e2e<Key>Stress` / `serve<Key>`）经 `finalizedBy` 自动执行**，通常无需手工调用；按后端分别回写 `server-base/<backendName>/` |
 | `purgeE2eRuntimeCache` | 清空持久缓存（固定名） |
-| `stopProxy<Proxy>` | 停止某代理（按 pid 收尾）；由 `e2e<Key>Via<Proxy>` 经 `finalizedBy` 触发，亦可单独调用 |
+| `stopE2eProcesses` | 收掉之前的构建留下的全部后端、代理、机器人与钩子进程（固定名，不论声明了哪些拓扑都注册，只有直连场景的工程靠它收尾）：只认进程台账与 `output-run.state` 里身份核对得上的进程，连同子孙进程一起收；不按 pid 文件停（之前的构建留下的 pid 文件可能已指向复用了该 pid 的无关进程），本次构建仍在监管的进程留给监管，不接手结果目录（见 §3.7）。同一条命令里的场景、钩子与 serve 任务都排在它之后：`./gradlew stopE2eProcesses e2e<Key>` 先收尾再开跑。直连场景端口被占、结果目录拒绝接手时的报错都指向它 |
+| `stopProxy<Proxy>` | 停止某代理（按 pid 文件与进程台账收尾）；由 `e2e<Key>Via<Proxy>` 经 `finalizedBy` 触发，亦可单独调用 |
 | `e2e<Key>Cluster` | 集群跑某场景：N 后端全后台 + 代理（单 listener + N 具名 server）+ bot 经代理 `/server` 切换，读结果判 PASS/FAIL（FR-10） |
-| `stop<Key>Cluster` | 停止某集群场景的全部后端与代理（按 pid 收尾）；由 `e2e<Key>Cluster` 经 `finalizedBy` 触发，亦可单独调用 |
+| `stop<Key>Cluster` | 停止某集群场景的全部后端、代理与机器人（本次构建起的 bot 交给进程监管停，服务端与代理按 pid 文件收，之前的构建留下的按进程台账核对身份后收，见 §3.7）；由 `e2e<Key>Cluster` 经 `finalizedBy` 触发，亦可单独调用 |
 | `e2e<Key>Stress` | 压测跑某场景：N 服 × M bot 钉服持续施压（代理 N-listener 钉服或直连）+ 各服结果聚合判 PASS/FAIL（FR-11） |
-| `stop<Key>Stress` | 停止某压测场景的全部后端、代理与机器人（按 pid 收尾）；由 `e2e<Key>Stress` 经 `finalizedBy` 触发，亦可单独调用 |
+| `stop<Key>Stress` | 停止某压测场景的全部后端、代理与机器人（收尾方式同 `stop<Key>Cluster`）；由 `e2e<Key>Stress` 经 `finalizedBy` 触发，亦可单独调用 |
 | `serve<Key>` | 持久起服挂住供真人手测（FR-17，ADR-0011）：起后端（声明 `via` 则先起代理）、注入插件、桩空闲不判定，**前台阻塞**到手动停（Ctrl+C / `stop<Key>Serve`）。挂住期间**终端输入即服务端控制台命令**：直连转发到后端、集群 serve 转发到代理（见下条）。声明 `backends(...)` 即集群 serve（N 后端 + 代理整套挂起、`/server` 切服，FR-18）；可选 `bot { }` 起 bot 人机混场（FR-19）。`<Key>` = serve 名折 PascalCase |
-| `stop<Key>Serve` | 停止某 serve 的全部后端 + 代理 + 机器人（按 pid 收尾）；供「另一终端停」或「Ctrl+C 没清干净」时兜底。**注意**：在 `serve<Key>` 所在终端直接敲 `stop` 即可停后端（见控制台命令），本任务用于另一终端兜底 |
+| `stop<Key>Serve` | 停止某 serve 的全部后端 + 代理 + 机器人（收尾方式同 `stop<Key>Cluster`）；供「另一终端停」或「Ctrl+C 没清干净」时兜底。**注意**：在 `serve<Key>` 所在终端直接敲 `stop` 即可停后端（见控制台命令），本任务用于另一终端兜底 |
 | `e2eMatrix<Key>` | 版本矩阵串行聚合：dependsOn 矩阵全部场景任务 + mustRunAfter 链（versionMatrix） |
 | `e2eMatrix<Key>SmokeOnly` | 版本矩阵仅 smoke 子集串行聚合 |
 
@@ -333,6 +350,7 @@ dependencies {
 - 压测（FR-11）：`…STRESS_DURATION_SECONDS`（施压秒数，编排→bot 与桩）、`…BOT_INDEX`（每 bot 进程序号；FR-16 同质批量复制亦复用）、`…STRESS_RANDOM_SEED`（共享随机种子；bot 用 `seed xor botIndex` 播种 RNG 使各 bot 可复现且互异）。规模（服数 / 每服 bot 数）由 DSL `backends(...)` + `stress { botsPerServer }` 表达，不走 env。经代理时机器人协议版本仍由编排固定为后端版本（环境契约，FR-05）。
 - 单场景多 bot（FR-16）：**不新增 env**，复用 `…BOT_USERNAME`（多进程时编排强制下发**唯一**名，盖过消费方单值 override）、`…BOT_ACTION`（各 bot 各自的分发动作）、`…BOT_INDEX`（同质 `count = N` 复制时下发 1..N，桩据此按 index 聚合）；集群下每个 bot 仍各自收到 `…CLUSTER_BACKENDS` 以经代理 `/server` 切换。规模（份数 / 角色）由 DSL `bot { count }` + 多个 `bot("角色")` 表达，不走 env（ADR-0009）。
 - 机器人协议版本（`…BOT_VERSION`）经代理时由编排自动固定为后端版本（环境契约，FR-05）。
+- 输出预算（FR-34）：`…BOT_LOG_LIMIT_BYTES` / `…BOT_LOG_RUN_LIMIT_BYTES`（单个日志文件 / 整个构建的字节上限，由插件自身读取，不属于编排与 bot / 桩之间的契约；对应的系统属性优先，见 §3.7）。
 - 代理下载版本缺省取**后端版本**（与 `…BOT_VERSION` 同源）；Waterfall 在 PaperMC 仅按 major.minor 发布，故其缺省与 `…WATERFALL_VERSION` 覆盖均解析为 major.minor（后端 `1.20.1` → Waterfall `1.20`），传完整补丁号版本会 404。
 
 发布由 CI 完成（打 `vX.Y.Z` tag 触发 `release.yml`，见 `docs/CONTRIBUTING.md` §8 / `docs/OPERATIONS.md` §1.2）；发布凭据仅存 GitHub 仓库的 `release` environment secrets，不入库。本地仅在需要手工试验 `./gradlew publish` 时才提供同名的 `WCPE_MAVEN_USERNAME` / `WCPE_MAVEN_PASSWORD`（Gradle 属性或环境变量）。
@@ -473,7 +491,7 @@ scenario("full") {
 |---|---|---|
 | `beforeScenario` | 运行目录就绪后、**服务端启动前** | 起外部依赖、等它就绪 |
 | `readyScenario` | **全部节点端口就绪后**、bot 启动前 | 依赖服务端的初始化 |
-| `afterScenario` | 场景判定之后 | 按 pid 收尾、清理 |
+| `afterScenario` | 场景判定之后 | 按 pid 收尾、清理（本次构建已判失败时照样执行，起的收尾进程照样启动） |
 
 > **为什么不是单个 beforeScenario**：外部控制面天然有「起进程 → 服务端注册 → 审批」三段时序。
 > 压缩成一段会导致要么审批在服务端起来前做（失败），要么控制面在服务端起来后才起（注册失败且拖慢）。
@@ -493,7 +511,7 @@ bot 先起、后端后起，不存在「全部节点已就绪」的时刻。在�
 | 实现 | 作用 |
 |---|---|
 | `ExecHook` | 起后台进程（支持 TCP / 日志双就绪门），pid 落 `resultsDir/hook-<场景>.pid` |
-| `StopPidHook` | 按 pid 收尾（进程已退出则静默跳过），与框架既有收尾语义一致 |
+| `StopPidHook` | 按 pid 收尾（进程已退出则静默跳过）：本次构建起的交给进程监管停；之前的构建留下的按进程台账核对身份后连同子孙进程一起停；对不上的（pid 已被复用或没登记）不碰，只记一行日志 |
 | `HttpHook` | 发 HTTP 请求（用 `HttpURLConnection`，不抬高最低运行 JDK） |
 | `SleepHook` | 沉降等待（等异步模块就绪等） |
 | `HookChain` | 按序串联多个钩子，任一步失败即中断 |
@@ -519,6 +537,74 @@ bot 先起、后端后起，不存在「全部节点已就绪」的时刻。在�
 > 因此取证必须走 `registerProbe`：结果只经 `E2E_PROBE_RESULT:<name>:<text>` 回显给触发者，**不写结果文件、不关服**，判定权完全留在机器人/编排那一侧。
 
 > **须原子落盘**：桩写结果文件必须**原子**完成（写同目录临时文件 + 原子 rename 替换），避免编排 verify 读到「写了一半」的结果文件而误判。单后端前台路径靠「后端进程退出后才 verify」时序天然隔离，但集群/压测轮询结果文件、以及消费方桩异步写时存在并发窗口，故约定为契约。共享库 `harness-core` 的 `McTestkitResultWriter` 已按此实现；`template/harness` 继承 `McTestkitHarnessPlugin` 即获得该保证（消费方自写桩须照此保证，见 §4）。
+
+### 3.7 机器人与钩子进程的输出预算（FR-34，[ADR-0029](adr/0029-bot-output-budget-and-run-ownership.md)）
+
+bot 进程与场景钩子后台进程（`ExecHook`）的 stdout / stderr 合流写入各自的日志文件（bot 为结果目录下的 `bot-<key>.log`，钩子为其声明的日志文件），按字节计入预算。服务端日志不计入。
+
+| 上限 | 默认 | 调整（系统属性优先，其次环境变量） |
+|---|---|---|
+| 单个日志文件 | 64 MiB | `mc.testkit.bot.log.limit.bytes` / `MC_TESTKIT_E2E_BOT_LOG_LIMIT_BYTES` |
+| 整个构建合计 | 1 GiB | `mc.testkit.bot.log.runLimit.bytes` / `MC_TESTKIT_E2E_BOT_LOG_RUN_LIMIT_BYTES` |
+
+- 取值为字节数（十进制正整数），不超过 16 GiB；单文件上限不得大于构建上限，构建上限至少 32 KiB。非法值使任务失败，不退回默认。系统属性须落在执行构建的 JVM 上：命令行 `-Dmc.testkit.bot.log.limit.bytes=…`，或 `gradle.properties` 里的 `systemProp.mc.testkit.bot.log.limit.bytes=…`。
+- 日志文件个数与受监管进程数不设上限（压测一次起数百个 bot 是正当用法），磁盘由整个构建的字节上限兜底。
+- 单个日志越限只截断这个日志：末尾写一行 `[OUTPUT_LIMIT] limit=per-sink sink=<文件名>`，之后的输出照常从管道读出来丢掉（进程不会卡在写满的管道上），构建结束时告警截断了几个日志；不判失败、不停任何进程。
+- 整个构建越限：触发者的日志末尾写一行 `[OUTPUT_LIMIT] limit=run sink=<文件名>`，结束本次构建监管的全部 bot 与钩子进程，任务以 `RUN_FAIL: OUTPUT_LIMIT limit=run …` 失败——桩或导演已写出 PASS 也一样。
+- 钩子拿不到预算时拒绝启动外部命令，不退回无上限写盘。本次构建已判失败后，普通 bot 与钩子进程拒绝启动；场景后钩子（`afterScenario`）起的收尾进程照样启动、照样计入预算与监管。
+
+判失败的全部情形（原因为有界 ASCII 文本，先到先得，任务报错为 `RUN_FAIL: <原因>`）：
+
+| 原因 | 含义 |
+|---|---|
+| `OUTPUT_LIMIT limit=run sink=<文件名>` | 越过整个构建上限（单个日志越限只截断，不在此列） |
+| `CHILD_EXIT code=<n>` | 受监管进程非零退出 |
+| `TIMEOUT log=<日志文件名>` | 超过监管期限：场景 `resultTimeoutSeconds` + 600 秒宽限，压测另加 `stress.durationSeconds`（见 FR-32）；serve 的 bot 不设期限 |
+| `RUN_FAIL inherited-pipe-or-descendant` | 根进程已退出，子孙进程仍在或仍握着输出管道 |
+| `RUN_FAIL descendant-count` | 单个进程的子孙超过 1024 个 |
+| `RUN_FAIL detached-child-at-build-end` | 构建结束时仍有既没停止、也没退出的受监管进程（随即被杀掉） |
+| `RUN_FAIL stop-deadline` / `RUN_FAIL pump-stop-deadline` / `RUN_FAIL cleanup-deadline` | 停止 / 收尾期限内无法确认进程已退出、日志已写完 |
+| `IOFAIL sink=<文件名> <异常>` | 写日志失败 |
+| `RUN_FAIL bot-start <异常>` / `RUN_FAIL hook-start <异常>` / `IOFAIL bot-launch <异常>` / `IOFAIL hook-pid <异常>` | bot / 钩子进程起不来，或 pid 文件写不进 |
+| `RUN_FAIL after-hook <异常>` | 场景后钩子执行出错 |
+| `RUN_FAIL supervisor <异常>` | 进程监管线程自身出错 |
+| `RUN_FAIL prior-output-owner-not-successful <说明>` | 结果目录的上一次构建可能仍有进程在写（见下） |
+
+**结果目录的输出所有权 `output-run.state`**：每个结果目录一份，记录最近一次构建对该目录输出的所有权（UTF-8，按行）。只有起进程、读判定的任务（`e2e*`、`serve*` 等）接手结果目录；`stopE2eProcesses`、`stop<Key>Cluster`、`stop<Key>Stress`、`stop<Key>Serve`、`stopProxy<Proxy>`、`after<Key>Scenario` 与运行库缓存任务（`syncE2eRuntimeCache` / `purgeE2eRuntimeCache`）不接手、不写记录，也不受下表的拒绝影响。
+
+```text
+RUNNING                     构建进行中
+<runId>
+owner=<pid>@<启动毫秒>      跑这次构建的 JVM；取不到启动时刻时为空
+```
+
+```text
+CLOSED_OK 或 RUN_FAIL        构建已收尾
+<runId>
+bytes=<计入预算的字节数>
+<失败原因，成功时为空行>
+live=<pid>@<启动毫秒>,…    收尾期限到时仍存活的受监管进程；正常为空，无法确认时为 unknown
+```
+
+下一次构建接手该目录时：
+
+| 上一次的记录 | 本次 |
+|---|---|
+| 没有、空文件或 `CLOSED_OK` | 接手 |
+| `RUN_FAIL`，且 `live=` 为空或所列进程都已结束 | 告警后接手。上一次的失败已由那次构建报告；场景结果文件开跑前会清掉，不会沿用 |
+| `RUNNING`，`owner=` 已结束或就是当前 JVM，且进程台账里没有仍在写日志的 bot 与钩子进程 | 告警后接手。那次构建没收尾就结束了（被强杀、断电或收尾前出错）；一个 Gradle 守护进程同时只跑一个构建，持有者就是当前 JVM 时那次构建必定已经结束。「仍在写日志」指台账里身份核对得上、仍存活、又不归本次构建监管的 `bot/…` 与 `hook/…` 记录 |
+| 其余情形（见下表） | 拒绝：`RUN_FAIL prior-output-owner-not-successful <说明>`，并保留原记录 |
+
+拒绝时的说明与恢复办法（报错日志给出状态文件路径与对应步骤）：
+
+| 说明 | 含义 | 恢复 |
+|---|---|---|
+| `state=RUNNING run=… owner=ended ledger-live=<个数>` | 持有者已结束，台账里还有它留下的、仍在写日志的 bot 或钩子进程（报错列出它们的台账 key） | 跑 `stopE2eProcesses`（或对应的 stop 任务），之后的构建自己接手 |
+| `state=RUN_FAIL run=… live=<pid>@<启动毫秒>,…` | 上一次失败，收尾时没停下的进程仍存活（只列仍存活的） | 同上 |
+| `state=RUNNING run=… owner=<pid>@<启动毫秒>` | 持有记录的构建 JVM 仍存活且不是当前 JVM，多为同一工程的另一个构建正在用这个目录 | 等它结束后重跑；确认没有构建在跑、只是 Gradle 守护进程卡住时，先 `./gradlew --stop` |
+| `state=RUNNING run=… owner=unrecorded`、`state=RUN_FAIL run=… live=unknown`、`state=RUN_FAIL run=… live=unrecorded`、`state=unreadable`、`state=oversized` | 无法确认：旧版本写下的 `RUNNING`（没有持有者）、持有者为空（取不到启动时刻）或读不懂、收尾时无法确认进程是否都已结束、没有 `live=` 行的旧格式、读不懂或超过 4 KiB | 跑 `stopE2eProcesses` 收掉台账里能找到的进程，确认没有进程还在写这个目录后，删除该文件重跑 |
+
+stop 任务不受这道检查拦截：它们按进程台账收掉之前的构建留下的服务端、代理、bot 与钩子进程（台账记着命令与启动时刻，对不上的不杀；对得上的连同子孙进程一起收），也收掉 `RUN_FAIL` 记录里 `live=` 列出、pid 与启动时刻都对得上的进程。记录本身不用动，下一次构建按上表重新判定后自己接手。被拒的构建不改写记录，所以隐患未消除前会一直拒绝。
 
 ## 4. 共享构件（FR-09，ADR-0014）
 

@@ -8,6 +8,7 @@ import top.wcpe.mc.testkit.config.ServerProperties
 import top.wcpe.mc.testkit.config.editYaml
 import top.wcpe.mc.testkit.config.setNested
 import top.wcpe.mc.testkit.contract.McTestkitEnv
+import top.wcpe.mc.testkit.provision.INJECTED_LIBRARY_DIR_NAME
 import top.wcpe.mc.testkit.topology.ResolvedBackend
 import top.wcpe.mc.testkit.topology.ResolvedProxy
 import java.io.File
@@ -152,17 +153,25 @@ internal fun composeNodeJvmArgs(
  *
  * `ops.json` 必须在注入 dependencies **之前**、且必然在起服前落盘：服务端只在启动时读它，
  * 晚写等于本轮不提权（ADR-0027）。
+ *
+ * @param persistent 运行目录是否为消费方声明的持久目录（`backend { runDirectory }`）。是则不清空目录，
+ *   只整理框架自己产出、跨轮会出错的内容（见 [refreshPersistentRunDir]），其后步骤与非持久目录相同。
  */
 internal fun stageBackendRuntime(
     runDirectory: File,
     backend: ResolvedBackend,
     resources: BackendRuntimeResources,
     cacheDirectory: File? = null,
+    persistent: Boolean = false,
     logger: (String) -> Unit = {},
 ) {
     // 顺序有讲究：先清理可重建内容（保留运行库 / 缓存子目录），再从持久缓存补齐缺失的运行库。
     // 反过来会在恢复后立刻被清理覆盖，等于缓存没生效。
-    cleanRunDirPreservingRuntimeCaches(runDirectory)
+    if (persistent) {
+        refreshPersistentRunDir(runDirectory)
+    } else {
+        cleanRunDirPreservingRuntimeCaches(runDirectory)
+    }
     requireDirectory(runDirectory, "后端「${backend.name}」运行目录")
     if (cacheDirectory != null) {
         // 只在真的补到东西时汇报：首次运行（缓存还没被回写过）恢复量为 0，
@@ -178,7 +187,71 @@ internal fun stageBackendRuntime(
     }
     writeBackendAuthority(runDirectory, backend)
     writeBotOps(runDirectory, backend, resources.opNames, logger)
-    injectBackendDependencies(runDirectory, resources.dependencyJars, logger)
+    injectBackendDependencies(runDirectory, resources.dependencyJars, persistent, logger)
+}
+
+/**
+ * 持久运行目录里记录「上一轮由框架注入到 `plugins/` 的 jar 文件名」的清单（每行一个）。
+ *
+ * 依赖插件按原文件名注入，版本一变文件名就变；不记下来就分不清哪些是框架放的、哪些是消费方自己放的。
+ */
+internal const val INJECTED_PLUGINS_MANIFEST = ".mc-testkit-injected-plugins"
+
+/**
+ * 持久运行目录（`backend { runDirectory }`）每轮起服前的整理：只动框架自己产出、跨轮会出错的内容，
+ * 世界、插件数据、日志与消费方自己放进来的文件原样保留。
+ *
+ * - 删上一轮注入、记在 [INJECTED_PLUGINS_MANIFEST] 里的插件 jar：本轮稍后重新注入，不删的话依赖升版后
+ *   新旧两个 jar 会同时进 `plugins/`。不在清单里的 jar 不动。
+ * - 删 [INJECTED_LIBRARY_DIR_NAME]：消费方每轮重建，陈旧注入不得漏进本轮 classpath（与非持久目录同口径）。
+ * - 删根目录的 `*.pid`：上一轮进程的 pid，留着会被收尾任务误认。
+ * - 复位上一轮经代理时打开的转发开关（`spigot.yml` 的 `settings.bungeecord`、`paper-global.yml` 的
+ *   `proxies.velocity.enabled`）：本轮若直连，残留的开关会让后端拒绝 bot 的直连握手；本轮若经代理，
+ *   编排会在铺好目录后重新打开。只改已存在的文件，模板里的显式配置随后照常覆盖。
+ */
+private fun refreshPersistentRunDir(runDirectory: File) {
+    if (!runDirectory.isDirectory) return
+    val pluginsDirectory = File(runDirectory, "plugins")
+    readInjectedPluginManifest(runDirectory).forEach { name -> deleteRetrying(File(pluginsDirectory, name)) }
+    val injectedLibraries = File(runDirectory, INJECTED_LIBRARY_DIR_NAME)
+    if (injectedLibraries.exists() && !injectedLibraries.deleteRecursively()) {
+        throw GradleException("无法清理持久运行目录里的 ${injectedLibraries.absolutePath}；请关闭占用文件的进程后重试。")
+    }
+    runDirectory.listFiles { file -> file.isFile && file.name.endsWith(".pid", ignoreCase = true) }
+        ?.forEach { deleteRetrying(it) }
+    resetProxyForwarding(runDirectory)
+}
+
+private fun resetProxyForwarding(runDirectory: File) {
+    val spigot = File(runDirectory, "spigot.yml")
+    if (spigot.isFile) {
+        editYaml(spigot) { root -> setNested(root, listOf("settings", "bungeecord"), false) }
+    }
+    val paperGlobal = File(runDirectory, "config/paper-global.yml")
+    if (paperGlobal.isFile) {
+        editYaml(paperGlobal) { root -> setNested(root, listOf("proxies", "velocity", "enabled"), false) }
+    }
+}
+
+/** 读清单；只认不含路径分隔符的 `.jar` 文件名，清单被改坏也不会删到 `plugins/` 之外。 */
+private fun readInjectedPluginManifest(runDirectory: File): List<String> {
+    val manifest = File(runDirectory, INJECTED_PLUGINS_MANIFEST)
+    if (!manifest.isFile) return emptyList()
+    return manifest.readLines(Charsets.UTF_8)
+        .map { it.trim() }
+        .filter { name ->
+            name.endsWith(".jar", ignoreCase = true) && '/' !in name && '\\' !in name
+        }
+}
+
+private fun deleteRetrying(target: File, retryMillis: Long = 60_000L) {
+    val deadline = System.currentTimeMillis() + retryMillis
+    while (target.exists() && !target.delete()) {
+        if (System.currentTimeMillis() >= deadline) {
+            throw GradleException("无法删除 ${target.absolutePath}：文件被占用（上一轮服务端句柄尚未释放）。")
+        }
+        Thread.sleep(250)
+    }
 }
 
 /**
@@ -307,13 +380,21 @@ private fun writeBackendAuthority(runDirectory: File, backend: ResolvedBackend) 
 private fun injectBackendDependencies(
     runDirectory: File,
     dependencies: List<ResolvedPluginJar>,
+    persistent: Boolean,
     logger: (String) -> Unit,
 ) {
     val pluginsDirectory = File(runDirectory, "plugins").apply { mkdirs() }
-    dependencies.forEach { dependency ->
+    val injected = dependencies.map { dependency ->
         val targetName = if (dependency.underTest) UNDER_TEST_TARGET_FILE_NAME else dependency.jar.name
         copyOverwritingRetrying(dependency.jar, File(pluginsDirectory, targetName))
         logger("已注入后端插件：${dependency.jar.name} → plugins/$targetName")
+        targetName
+    }
+    if (persistent) {
+        File(runDirectory, INJECTED_PLUGINS_MANIFEST).writeText(
+            injected.joinToString(separator = "\n", postfix = if (injected.isEmpty()) "" else "\n"),
+            Charsets.UTF_8,
+        )
     }
 }
 

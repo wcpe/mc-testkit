@@ -38,6 +38,12 @@ data class ResolvedBackend(
      * （[version] 仍驱动配置生成与 Java 运行时选择）。
      */
     val mavenServer: String? = null,
+    /**
+     * 持久运行目录的原始声明（相对工程目录或绝对路径）；null 表示默认的 `build/mc-testkit/run-<后端名>`。
+     *
+     * 声明了即持久：编排不再每轮清空该目录。路径在注册期按工程目录解析并校验（本类只载声明，不碰文件系统）。
+     */
+    val runDirectory: String? = null,
 ) : java.io.Serializable
 
 /**

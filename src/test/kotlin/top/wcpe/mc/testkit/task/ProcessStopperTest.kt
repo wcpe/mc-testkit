@@ -2,10 +2,17 @@ package top.wcpe.mc.testkit.task
 
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import top.wcpe.mc.testkit.bot.GuardChild
+import top.wcpe.mc.testkit.bot.ProcessIdentity
+import top.wcpe.mc.testkit.bot.ProcessLedger
 import top.wcpe.mc.testkit.bot.botPidFile
+import top.wcpe.mc.testkit.bot.fixtureClasspath
+import top.wcpe.mc.testkit.bot.javaCommand
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -116,6 +123,96 @@ class ProcessStopperTest {
             assertEquals(0, summary.stopped)
             assertEquals(1, summary.ledgerSkipped, "应记为跳过")
             assertTrue(ProcessLedger.records(resultsDir).isEmpty(), "陈旧记录应被清理")
+        } finally {
+            child.first.destroyForcibly()
+            child.first.waitFor(10, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    @DisplayName("台账里本次构建仍在监管的进程留给监管：既不杀也不注销记录")
+    fun ledgerLeavesSupervisedProcessToItsOwner() {
+        val child = spawnLongLivedChild(resultsDir)
+        try {
+            ProcessLedger.record(resultsDir, "bot/stress-s1-1", child.first.pid(), 0)
+
+            val summary = stopTrackedProcesses(resultsDir, emptyList(), logger = {}, owned = { it == child.first.pid() })
+
+            assertTrue(child.first.isAlive, "本次构建仍在监管的进程不得被台账路径杀掉")
+            assertEquals(0, summary.stopped, "不应计入收尾")
+            assertEquals(listOf("bot/stress-s1-1"), ProcessLedger.records(resultsDir).map { it.key }, "它的台账记录必须保留")
+        } finally {
+            child.first.destroyForcibly()
+            child.first.waitFor(10, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    @DisplayName("之前的构建留下的钩子进程按台账收尾时连同子孙进程一起收掉")
+    fun ledgerStopsEarlierBuildProcessWithItsDescendants() {
+        val parent = ProcessBuilder(javaCommand(), "-cp", fixtureClasspath(), GuardChild::class.java.name, "tree")
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .start()
+        var descendants = emptyList<ProcessHandle>()
+        try {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+            while (descendants.isEmpty() && System.nanoTime() < deadline) {
+                Thread.sleep(50)
+                descendants = parent.descendants().use { it.toList() }
+            }
+            assertTrue(descendants.isNotEmpty(), "前提：子孙进程已经起来")
+            ProcessLedger.record(resultsDir, "hook/hook-full.pid", parent.pid(), 0)
+
+            val summary = stopTrackedProcesses(resultsDir, emptyList(), logger = {})
+
+            assertStops(parent)
+            assertEquals(1, summary.ledgerStopped, "应记为台账兜底")
+            val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+            while (descendants.any { it.isAlive } && System.nanoTime() < until) Thread.sleep(50)
+            assertTrue(descendants.none { it.isAlive }, "子孙进程也应被收掉")
+        } finally {
+            descendants.forEach { it.destroyForcibly() }
+            parent.destroyForcibly()
+            parent.waitFor(10, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    @DisplayName("上一次失败构建记在状态文件里没停下的进程被收掉，之后的构建能接手")
+    fun recordedSurvivorsAreStoppedSoNextBuildCanTakeOver() {
+        val child = spawnLongLivedChild(resultsDir)
+        try {
+            val identity = assertNotNull(ProcessIdentity.of(child.first.toHandle()), "前提：取得到启动时刻")
+            val state = File(resultsDir, RunOutputState.FILE_NAME)
+            state.writeText(RunOutputState.closed("run-1", 1024, "TIMEOUT log=bot-x.log", listOf(identity)))
+            assertIs<RunOutputState.Prior.Refused>(RunOutputState.read(state), "前提：记录里的进程还活着时拒绝接手")
+
+            val summary = stopTrackedProcesses(resultsDir, emptyList(), logger = {})
+
+            assertStops(child.first)
+            assertEquals(1, summary.survivorsStopped, "应记为按状态记录收掉")
+            assertEquals(1, summary.stopped, "应计入收尾总数")
+            assertIs<RunOutputState.Prior.ContainedFailure>(RunOutputState.read(state), "记录里的进程都结束后应当能接手")
+        } finally {
+            child.first.destroyForcibly()
+        }
+    }
+
+    @Test
+    @DisplayName("状态文件里的启动时刻对不上时不杀同 pid 的进程（防 pid 复用误杀）")
+    fun recordedSurvivorWithMismatchedStartIsLeftAlone() {
+        val child = spawnLongLivedChild(resultsDir)
+        try {
+            val identity = assertNotNull(ProcessIdentity.of(child.first.toHandle()), "前提：取得到启动时刻")
+            val reused = ProcessIdentity(identity.pid, identity.startMillis - 60_000)
+            File(resultsDir, RunOutputState.FILE_NAME)
+                .writeText(RunOutputState.closed("run-1", 1024, "TIMEOUT log=bot-x.log", listOf(reused)))
+
+            val summary = stopTrackedProcesses(resultsDir, emptyList(), logger = {})
+
+            assertTrue(child.first.isAlive, "启动时刻对不上的进程不得被杀")
+            assertEquals(0, summary.survivorsStopped, "不应计入收尾")
         } finally {
             child.first.destroyForcibly()
             child.first.waitFor(10, TimeUnit.SECONDS)

@@ -1,19 +1,25 @@
 package top.wcpe.mc.testkit.dsl
 
 import org.junit.jupiter.api.DisplayName
+import top.wcpe.mc.testkit.bot.GuardChild
+import top.wcpe.mc.testkit.bot.OutputBudget
+import top.wcpe.mc.testkit.bot.ProcessLedger
+import top.wcpe.mc.testkit.bot.fixtureClasspath
+import top.wcpe.mc.testkit.bot.javaCommand
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
- * 场景钩子的声明与运行时行为单元测试（零网络、零外部进程依赖）。
+ * 场景钩子的声明与运行时行为单元测试（零网络；只派生本 JVM 的子进程，不依赖外部程序）。
  *
  * 覆盖三块：
  * 1. [ScenarioSpec] 的钩子声明累积（顺序、可多次声明）；
- * 2. [ScenarioHookRuntime] 的就绪门与 pid 收尾（用临时目录与当前进程自身当靶子）；
+ * 2. [ScenarioHookRuntime] 的就绪门与 pid 收尾（用临时目录与派生的子进程当靶子）；
  * 3. 序列化往返——钩子会被任务动作闭包捕获，配置缓存要求整个捕获图可序列化。
  */
 class ScenarioHooksTest {
@@ -28,6 +34,12 @@ class ScenarioHooksTest {
         )
 
     private fun tempDir(): File = Files.createTempDirectory("mc-testkit-hooks-test").toFile()
+
+    private fun sleeper(): Process =
+        ProcessBuilder(javaCommand(), "-cp", fixtureClasspath(), GuardChild::class.java.name, "long-sleep")
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .start()
 
     @Test
     @DisplayName("ScenarioSpec 按声明顺序累积场景前 / 就绪后 / 场景后钩子")
@@ -115,6 +127,45 @@ class ScenarioHooksTest {
         // 指向一个几乎不可能存活的 pid
         File(dir, "dead.pid").writeText("2147483646")
         StopPidHook("dead.pid").run(ctx)
+    }
+
+    @Test
+    @DisplayName("按 pid 文件收尾：之前的构建留下、台账里身份对得上的钩子进程被收掉，记录随之注销")
+    fun stopPidHookStopsEarlierBuildProcessFromLedger() {
+        val dir = tempDir()
+        val ctx = hookContext(dir).apply { attachOutputBudget(OutputBudget(), cleanup = true) }
+        val child = sleeper()
+        try {
+            val pidFile = File(dir, "hook-probe.pid").apply { writeText(child.pid().toString()) }
+            ProcessLedger.record(dir, ScenarioHookRuntime.ledgerKey(dir, pidFile), child.pid(), 0)
+
+            StopPidHook("hook-probe.pid").run(ctx)
+
+            assertTrue(child.waitFor(20, TimeUnit.SECONDS), "台账里身份对得上的钩子进程应被收掉")
+            assertTrue(ProcessLedger.records(dir).isEmpty(), "收掉后台账记录应注销")
+        } finally {
+            child.destroyForcibly()
+        }
+    }
+
+    @Test
+    @DisplayName("按 pid 文件收尾：pid 指向的进程不是本工具登记的就不碰，也不抛错")
+    fun stopPidHookLeavesUnrecordedProcessAlone() {
+        val dir = tempDir()
+        val log = mutableListOf<String>()
+        val ctx = hookContext(dir, log).apply { attachOutputBudget(OutputBudget(), cleanup = true) }
+        val child = sleeper()
+        try {
+            File(dir, "hook-probe.pid").writeText(child.pid().toString())
+
+            StopPidHook("hook-probe.pid").run(ctx)
+
+            assertTrue(child.isAlive, "台账里没有的进程不得被按 pid 杀掉")
+            assertTrue(log.any { it.contains("不按 pid 收尾") }, "应记一行说明为何不收尾：$log")
+        } finally {
+            child.destroyForcibly()
+            child.waitFor(10, TimeUnit.SECONDS)
+        }
     }
 
     @Test

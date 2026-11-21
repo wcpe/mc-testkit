@@ -63,6 +63,7 @@ object TopologyResolver {
                 environment = spec.environment,
                 templateDirectory = spec.templateDirectoryDeclaration,
                 mavenServer = spec.mavenServer,
+                runDirectory = spec.runDirectory,
             )
         }
         val resolvedProxies = proxies.mapIndexed { index, spec ->
@@ -87,7 +88,12 @@ object TopologyResolver {
         return Topology(backends = resolvedBackends, proxies = resolvedProxies)
     }
 
-    /** 显式 Java 主版本必须为正数，避免把明显错误的声明拖到启动期。 */
+    /**
+     * 显式 Java 主版本必须为正数，避免把明显错误的声明拖到启动期。
+     *
+     * 后端的 runDirectory 若声明则不得为空白；路径本身（与工作目录重叠、后端间共用等）要按工程目录解析后才能判，
+     * 在注册期校验。
+     */
     private fun validateNodeRuntimeDeclarations(proxies: List<ProxySpec>, backends: List<BackendSpec>) {
         proxies.forEach { proxy ->
             if (proxy.javaVersion != null && proxy.javaVersion!! <= 0) {
@@ -97,6 +103,11 @@ object TopologyResolver {
         backends.forEach { backend ->
             if (backend.javaVersion != null && backend.javaVersion!! <= 0) {
                 throw GradleException("mcTestkit 后端「${backend.name}」的 javaVersion 必须为正整数。")
+            }
+            if (backend.runDirectory?.isBlank() == true) {
+                throw GradleException(
+                    "mcTestkit 后端「${backend.name}」的 runDirectory 不能为空白；不需要持久运行目录时去掉该声明即可。",
+                )
             }
         }
     }
@@ -191,6 +202,7 @@ object TopologyResolver {
      * （集群编排/压测编排，ADR-0008）：① 集群（声明 backends、无 stress）须有 via 且代理路由覆盖全部后端；
      * ② 压测（声明 stress）须有 ≥1 backends、botsPerServer / durationSeconds 为正，via 可选（设了则
      * 须路由覆盖）。单后端 backend 与多后端 backends 互斥。多 bot 声明（单场景多 bot）由 [validateScenarioBots] 校验。
+     * 各类场景的 resultTimeoutSeconds 均须为正。
      */
     private fun validateScenarioRefs(
         backends: List<BackendSpec>,
@@ -206,6 +218,12 @@ object TopologyResolver {
 
             // 多 bot / 复制份数声明合法性（单场景多 bot，ADR-0009）
             validateScenarioBots(scenario, isStress)
+
+            if (scenario.resultTimeoutSeconds <= 0) {
+                throw GradleException(
+                    "mcTestkit 场景「${scenario.name}」的 resultTimeoutSeconds 必须 >0（等桩写出结果文件的上限秒数）。",
+                )
+            }
 
             // 单后端 backend 与多后端 backends 互斥（集群 / 压测都用 backends）
             if (hasBackends && scenario.backend != null) {

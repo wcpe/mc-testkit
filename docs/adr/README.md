@@ -11,7 +11,7 @@
 | [0005](0005-kotlin-language-version.md) | Kotlin 语言/API 版本锁 1.9，兼容 K1 与 K2 | 已接受 |
 | [0006](0006-public-contract-conventions.md) | 对外契约命名约定（env 前缀 / 任务命名 / 控制协议 / 结果文件） | 已接受 |
 | [0008](0008-cluster-and-stress-dsl.md) | 集群/压测以「扩展 scenario 块」表达，编排走「后台多后端 + 轮询结果文件」（补充 0006/0004） | 已接受 |
-| [0009](0009-multi-bot-per-scenario.md) | 单场景多 bot：扩 scenario 的 bot 声明加 `count` + `bot("角色")`，复用既有 env/任务名（补充 0008） | 已接受 |
+| [0009](0009-multi-bot-per-scenario.md) | 单场景多 bot：扩 scenario 的 bot 声明加 `count` + `bot("角色")`，复用既有 env/任务名（补充 0008） | 已接受（决策 4 的 bot 收尾方式被 0029 取代） |
 | [0010](0010-velocity-modern-forwarding.md) | Velocity modern forwarding（共享 secret + 单端口 → 不支持压测钉服，补充 0004/0008） | 已接受 |
 | [0011](0011-persistent-serve-mode.md) | 持久/挂起手测模式：`serve` 顶层块 + 非自停生命周期（补充 0004） | 已接受 |
 | [0012](0012-proxy-runtime-and-javaagent.md) | 代理版本、独立 Java 运行时与 Java Agent 注入（补充 0010） | 已接受 |
@@ -31,6 +31,7 @@
 | [0026](0026-plugin-artifact-source-and-shared-backend-serial.md) | 依赖插件产物来源 `plugin(from = …)`（扩展 0015）+ 共用同一后端的场景自动串行（补齐 FR-04 的多场景并行缺口） | 已接受 |
 | [0027](0027-bot-command-channels.md) | bot 命令执行通道：原版 OP 提权（`bot { op = true }`）+ 插件消息 console 通道（`E2E_CMD` 协议）+ 机器人侧 `execCommand` 封装 | 已接受 |
 | [0028](0028-pr-gating-by-change-nature.md) | PR 门禁按变更性质分级：发版提交与纯文档更新可直推 `master`，代码修复 / 功能 / 重构仍必须走 PR（取代 0018 决策 1） | 已接受 |
+| [0029](0029-bot-output-budget-and-run-ownership.md) | bot 与钩子进程的输出走管道 + 字节预算（单个日志超限只截断，整次构建超限判失败）；结果目录记录输出所有权，只在上一次构建可能仍有进程在写时拒绝接手；停任务不接手，按进程台账跨构建收掉 bot 与钩子进程（取代 0009 决策 4 的 bot 收尾方式） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

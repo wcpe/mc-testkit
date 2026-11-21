@@ -7,13 +7,19 @@ import org.gradle.api.Project
 import org.gradle.api.Task
 import org.gradle.api.file.FileCollection
 import org.gradle.api.logging.Logger
+import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.TaskProvider
 import top.wcpe.mc.testkit.bot.BotConnection
 import top.wcpe.mc.testkit.bot.BotLauncher
 import top.wcpe.mc.testkit.bot.BotProcessContext
-import top.wcpe.mc.testkit.bot.botPidFile
-import top.wcpe.mc.testkit.bot.stopProcessByPidFile
+import top.wcpe.mc.testkit.bot.BotProcessHandle
+import top.wcpe.mc.testkit.bot.LEDGER_KEY_BACKEND
+import top.wcpe.mc.testkit.bot.LEDGER_KEY_PROXY
+import top.wcpe.mc.testkit.bot.OutputBudget
+import top.wcpe.mc.testkit.bot.ProcessLedger
+import top.wcpe.mc.testkit.bot.RunOutputSupervisor
+import top.wcpe.mc.testkit.bot.botLogFile
 import top.wcpe.mc.testkit.config.BackendBungeeCordConfig
 import top.wcpe.mc.testkit.config.BackendVelocityConfig
 import top.wcpe.mc.testkit.config.MinecraftVersionGroup
@@ -66,14 +72,14 @@ import java.util.concurrent.TimeUnit
 /** Gradle 任务分组名（生成的 e2e 任务都归此组，`./gradlew tasks` 下成组展示）。 */
 private const val TASK_GROUP = "mc-testkit e2e"
 
+/** 本次构建输出预算与进程监管的共享构建服务名（[RunOutputService]）。 */
+private const val RUN_OUTPUT_SERVICE = "mc-testkit-run-output"
+
 /** 持久手测（serve）任务分组名（与 e2e 测试任务分开展示，语义是「起服供人手测」而非「跑测试」）。 */
 private const val SERVE_TASK_GROUP = "mc-testkit serve"
 
 /** Gradle 属性名：覆盖机器人目录（缺省 [RunLayout.DEFAULT_BOT_DIR]）。 */
 private const val BOT_DIR_PROPERTY = "mcTestkit.botDir"
-
-/** 等结果文件写出的上限（秒）：超时仍无结果即视为桩未正常收尾 / 启动失败。 */
-private const val BACKEND_WAIT_TIMEOUT_SECONDS = 600L
 
 /** 结果文件写出后，给后端 JVM 优雅自停的窗口（秒）；到时仍未退则强杀（不空等到上限）。 */
 private const val BACKEND_SELF_STOP_GRACE_SECONDS = 30L
@@ -142,7 +148,28 @@ internal class TaskExecutionContext(
     val projectDir: File,
     val botDir: File,
     val dependencies: DependencyDeclarations,
+    val outputService: Provider<RunOutputService>,
 ) : java.io.Serializable {
+    /**
+     * 本次构建共用的输出预算与进程监管，不接手结果目录：停进程、清理与场景后钩子这类收尾用它。
+     *
+     * 构建服务随每次顶层构建新建，任务与本上下文经配置缓存序列化后拿到的仍是同一个。
+     */
+    fun runBudget(): OutputBudget = outputService.get().budget
+
+    /** 接手结果目录（[RunOutputService.attach]）并返回本次构建的输出预算；会起 bot / 钩子进程的路径用它。 */
+    fun outputBudget(): OutputBudget = outputService.get().attach(layout.resultsDir)
+
+    /** 接手结果目录后做健康检查；读判定结果前后调用，上一次构建遗留的隐患与本次的输出失败都在这里抛出。 */
+    fun checkRunHealthy() {
+        val service = outputService.get()
+        service.attach(layout.resultsDir)
+        service.checkHealthy()
+    }
+
+    /** [pid] 是否是本次构建起的、仍在进程监管下的 bot / 钩子进程；停止任务把它们留给监管，不按台账另杀一遍。 */
+    fun ownsProcess(pid: Long): Boolean = runBudget().supervisor.owns(pid)
+
     /** 任务执行期按名读环境变量（不捕获任何 Gradle 对象，兼容配置缓存序列化）。 */
     fun readEnv(name: String): String? = System.getenv(name)
 
@@ -196,7 +223,7 @@ object McTestkitTasks {
 
         // ② 配置期一次性提取动作执行上下文快照（全部可序列化）：动作闭包捕获 ctx 而非 Project，
         //    兼容 Gradle 9.x 配置缓存（捕获 Project 会在存储阶段报 cannot serialize DefaultProject）
-        val ctx = executionContextOf(project, extension)
+        val ctx = executionContextOf(project, extension, topology)
 
         // ②' Maven 坐标来源（依赖插件 + 服务端/代理 jar）：只传给需要它们的任务注册点，
         //     避免无关任务触发仓库访问；服务端坐标在注册期先查镜像，命中即不创建解析配置
@@ -207,8 +234,9 @@ object McTestkitTasks {
             serverCoordinates = serverCoordinatesOf(extension),
         )
 
-        // ③ 固定名任务（npm 安装 / 缓存回写 / 清缓存）
+        // ③ 固定名任务（npm 安装 / 缓存回写 / 清缓存 / 收掉之前的构建留下的进程）
         registerFixedTasks(project, ctx)
+        registerStopProcessesTask(project, ctx, topology)
 
         // ④ 数据驱动：每个场景注册 prepare / e2e（+ bot 时 launch / withBot；+ via 时经代理任务）
         // 显式声明的产物来源（ADR-0025）向下传递，供 prepare / verify / serve 自动接线
@@ -239,6 +267,9 @@ object McTestkitTasks {
 
         // ⑦ 共享同一后端的场景自动串行（ADR-0026）
         chainScenariosSharingBackend(project, topology, extension)
+
+        // ⑧ 场景与 serve 任务排在 stopE2eProcesses 之后
+        orderRuntimeTasksAfterStopProcesses(project, extension)
     }
 
     /**
@@ -268,6 +299,23 @@ object McTestkitTasks {
             if (existing.isNotEmpty()) {
                 project.tasks.named(taskName).configure { mustRunAfter(existing) }
             }
+        }
+    }
+
+    /**
+     * 同一条命令里先收掉之前的构建留下的进程，再跑本次的场景与 serve：`./gradlew stopE2eProcesses e2e<Key>`
+     * 一步恢复；[McTestkitTaskNames.STOP_PROCESSES] 也就碰不到本次构建起的服务端与代理（它们不归进程监管，
+     * 台账核对身份又对得上，并发跑就会被当成残留停掉）。
+     */
+    private fun orderRuntimeTasksAfterStopProcesses(project: Project, extension: McTestkitExtension) {
+        val runtimeTasks = extension.declaredScenarios.flatMap { scenario ->
+            scenarioRuntimeTaskNames(scenario) +
+                McTestkitTaskNames.beforeScenario(scenario.name) +
+                McTestkitTaskNames.afterScenario(scenario.name)
+        } + extension.declaredServes.map { McTestkitTaskNames.serve(it.name) }
+        val registered = project.tasks.names
+        runtimeTasks.filter { it in registered }.forEach { taskName ->
+            project.tasks.named(taskName).configure { mustRunAfter(McTestkitTaskNames.STOP_PROCESSES) }
         }
     }
 
@@ -329,12 +377,20 @@ object McTestkitTasks {
                 extension.declaredProxies.mapNotNull { it.mavenServer }
             ).distinct()
 
-    /** 配置期一次性提取动作执行上下文快照（全部可序列化，供动作闭包安全捕获，兼容配置缓存）。 */
-    private fun executionContextOf(project: Project, extension: McTestkitExtension): TaskExecutionContext {
-        val layout = layoutOf(project)
+    /**
+     * 配置期一次性提取动作执行上下文快照（全部可序列化，供动作闭包安全捕获，兼容配置缓存）。
+     *
+     * 后端的持久运行目录（`backend { runDirectory }`）在这里按工程目录解析并校验，写进布局后各编排路径经
+     * [RunLayout.backendRunDir] / [RunLayout.clusterBackendRunDir] 统一生效。
+     */
+    private fun executionContextOf(project: Project, extension: McTestkitExtension, topology: Topology): TaskExecutionContext {
+        val layout = layoutOf(project).let { base ->
+            base.withBackendRunDirOverrides(resolvePersistentBackendRunDirs(project.projectDir, base.workRoot, topology.backends))
+        }
         return TaskExecutionContext(
             logger = project.logger,
             layout = layout,
+            outputService = runOutputService(project),
             projectDir = project.projectDir,
             // Isolated Projects：不用 `project.findProperty(...)`——它会沿项目层级上溯到父项目，
             // IP 下报 `cannot dynamically look up a property in the parent project`。
@@ -383,7 +439,7 @@ object McTestkitTasks {
             task.commandLine(npmExecutable(), "install", "--no-audit", "--no-fund", "--prefer-offline")
         }
 
-        registerTask(project, McTestkitTaskNames.SYNC_RUNTIME_CACHE) { task ->
+        registerTask(project, McTestkitTaskNames.SYNC_RUNTIME_CACHE, ownsRunOutput = false) { task ->
             task.group = TASK_GROUP
             task.description = "将运行库 / 下载缓存回写到持久缓存目录"
             task.doLast {
@@ -400,7 +456,7 @@ object McTestkitTasks {
             }
         }
 
-        registerTask(project, McTestkitTaskNames.PURGE_RUNTIME_CACHE) { task ->
+        registerTask(project, McTestkitTaskNames.PURGE_RUNTIME_CACHE, ownsRunOutput = false) { task ->
             task.group = TASK_GROUP
             task.description = "清空持久缓存目录（下次运行重新填充）"
             task.doLast {
@@ -408,6 +464,33 @@ object McTestkitTasks {
                 val cacheDir = ctx.layout.persistentServerBaseDir
                 cacheDir.deleteRecursively()
                 ctx.info("已清空持久缓存：${cacheDir.absolutePath}")
+            }
+        }
+    }
+
+    /**
+     * 注册 [McTestkitTaskNames.STOP_PROCESSES]：收掉之前的构建留下的进程，不接手结果目录。
+     *
+     * 只认身份核对得上的进程（[stopTrackedProcesses]）：进程台账里的服务端、代理、bot 与钩子进程核对命令与
+     * 启动时刻后连同子孙进程一起收，`output-run.state` 里收尾时没停下的进程核对 pid 与启动时刻后收。
+     * 不按 pid 文件停：pid 文件不带身份，之前的构建留下的那份可能已指向复用了这个 pid 的无关进程。
+     * 本次构建仍在监管的进程留给监管。
+     */
+    private fun registerStopProcessesTask(project: Project, ctx: TaskExecutionContext, topology: Topology) {
+        val layout = ctx.layout
+        val ports = topology.backends.map { it.port } + topology.proxies.map { it.port }
+        registerTask(project, McTestkitTaskNames.STOP_PROCESSES, ownsRunOutput = false) { task ->
+            task.group = TASK_GROUP
+            task.description = "停掉之前的构建留下的全部后端、代理、机器人与钩子进程（按进程台账核对身份收尾，不接手结果目录）"
+            task.doLast {
+                // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容配置缓存
+                val summary = stopTrackedProcesses(layout.resultsDir, emptyList(), ctx::info, owned = ctx::ownsProcess)
+                reportStopOutcome(
+                    ctx,
+                    summary,
+                    ports,
+                    "占着端口的进程不在进程台账里（手工起的服务端，或早于台账的残留）",
+                )
             }
         }
     }
@@ -443,7 +526,7 @@ object McTestkitTasks {
             listOfNotNull(resolveScenarioBackend(topology, scenario).name)
         }
         val proxyName = scenario.via
-        val hookCtx = hookContext(ctx, scenario.name, backendNames, proxyName)
+        val hookCtx = hookContext(ctx, scenario.name, backendNames, proxyName, scenarioProcessLifetimeMs(scenario))
 
         val before = if (scenario.beforeHooks.isNotEmpty()) {
             registerTask(project, McTestkitTaskNames.beforeScenario(scenario.name)) { task ->
@@ -459,7 +542,7 @@ object McTestkitTasks {
         }
 
         val after = if (scenario.afterHooks.isNotEmpty()) {
-            registerTask(project, McTestkitTaskNames.afterScenario(scenario.name)) { task ->
+            registerTask(project, McTestkitTaskNames.afterScenario(scenario.name), ownsRunOutput = false) { task ->
                 task.group = TASK_GROUP
                 task.description = "执行场景 ${scenario.name} 的场景后钩子（收尾外部依赖）"
                 task.doLast {
@@ -619,7 +702,7 @@ object McTestkitTasks {
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 try {
-                    runBackendForeground(ctx, backend, scenario.name, mavenSources)
+                    runBackendForeground(ctx, backend, scenario.name, scenario.resultTimeoutSeconds, mavenSources)
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
                     // 成功 / 失败都收尾全部 bot（多 bot 防残留；单 bot 已自停为安全 no-op）
@@ -695,12 +778,13 @@ object McTestkitTasks {
         // 多个经代理场景共用同名停代理任务，故先查是否已注册，未注册才注册（按代理名唯一）。
         val stopProxyName = "stopProxy" + proxy.name.replaceFirstChar { it.uppercaseChar() }
         if (stopProxyName !in project.tasks.names) {
-            registerTask(project, stopProxyName) { task ->
+            registerTask(project, stopProxyName, ownsRunOutput = false) { task ->
                 task.group = TASK_GROUP
-                task.description = "停止代理 ${proxy.name}（按 pid 收尾）"
+                task.description = "停止代理 ${proxy.name}（按 pid 文件与进程台账收尾）"
                 task.doLast {
                     // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
-                    val summary = stopTrackedProcesses(ctx.layout.resultsDir, listOf(proxyPidFile), ctx::info)
+                    val summary =
+                        stopTrackedProcesses(ctx.layout.resultsDir, listOf(proxyPidFile), ctx::info, owned = ctx::ownsProcess)
                     reportStopOutcome(
                         ctx,
                         summary,
@@ -761,11 +845,11 @@ object McTestkitTasks {
                         protocolVersion = ProxyProtocolVersion.forBackend(backend.version),
                     )
                     // ④ 前台起后端（自停 waitFor）
-                    runBackendForeground(ctx, backend, scenario.name, mavenSources)
+                    runBackendForeground(ctx, backend, scenario.name, scenario.resultTimeoutSeconds, mavenSources)
                     // ⑤ 只认结果文件判定
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
-                    // 双保险：先按 pid 收尾全部 bot（多 bot 防残留），再收尾代理（即便 finalizedBy 未触发）
+                    // 双保险：先停掉本次构建起的全部 bot（多 bot 防残留），再收尾代理（即便 finalizedBy 未触发）
                     if (scenario.botSpecs.isNotEmpty()) stopScenarioBots(ctx, scenario)
                     proxyProcess?.let { stopProcessQuietly(ctx, it, proxyPidFile) }
                 }
@@ -789,21 +873,21 @@ object McTestkitTasks {
     ) {
         val layout = ctx.layout
         val stopName = McTestkitTaskNames.stopCluster(scenario.name)
-        // 全部 bot 的 pid key（多 bot 各一支；停任务据此按 pid 收尾，防 straggler 残留）
+        // 全部 bot 的 key（多 bot 各一支）：停任务据此停掉本次构建起的 bot，之前的构建留下的按进程台账收尾
         val botKeys = BotProcessPlanner.expand(scenario.name, scenario.botSpecs).map { it.key }
 
-        // 停集群任务：按 pid 收尾全部后端 + 代理 + 全部 bot（单独可调；集群任务 finalizedBy 它）
-        registerTask(project, stopName) { task ->
+        // 停集群任务：收尾全部后端 + 代理 + 全部 bot（单独可调；集群任务 finalizedBy 它）
+        registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = TASK_GROUP
-            task.description = "停止集群场景 ${scenario.name} 的全部后端、代理与机器人（按 pid 收尾）"
+            task.description = "停止集群场景 ${scenario.name} 的全部后端、代理与机器人（按进程监管、pid 文件与进程台账收尾）"
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容配置缓存
+                stopOwnedBots(ctx, botKeys)
                 val summary = stopTrackedProcesses(
                     layout.resultsDir,
-                    clusterBackends.map { layout.clusterBackendPidFile(it.name) } +
-                        layout.proxyPidFile(proxy.name) +
-                        botKeys.map { botPidFile(layout.resultsDir, it) },
+                    clusterBackends.map { layout.clusterBackendPidFile(it.name) } + layout.proxyPidFile(proxy.name),
                     ctx::info,
+                    owned = ctx::ownsProcess,
                 )
                 reportStopOutcome(
                     ctx,
@@ -830,12 +914,18 @@ object McTestkitTasks {
             finalizeWithRuntimeCacheSync(task)
             // 场景前/就绪后钩子由统一注册的 before 任务与体内调用承载；集群路径需在起服前显式等 before
             hookTasks.before?.let { task.dependsOn(it) }
-            val clusterHookCtx = hookContext(ctx, scenario.name, clusterBackends.map { it.name }, proxy.name)
+            val clusterHookCtx = hookContext(
+                ctx,
+                scenario.name,
+                clusterBackends.map { it.name },
+                proxy.name,
+                scenarioProcessLifetimeMs(scenario),
+            )
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val backendProcesses = LinkedHashMap<String, Process>()
                 var proxyProcess: Process? = null
-                val botProcesses = mutableListOf<Process>()
+                val botProcesses = mutableListOf<BotProcessHandle>()
                 try {
                     val runtime = preflightRuntimeForTask(ctx, clusterBackends, listOf(proxy), mavenSources)
                     layout.resultsDir.mkdirs()
@@ -910,16 +1000,18 @@ object McTestkitTasks {
                         ),
                     )
                     // ④ 轮询结果文件（任一桩写出即完成）
-                    awaitClusterResult(ctx, resultFile, scenario.name)
+                    awaitClusterResult(ctx, resultFile, scenario.name, scenario.resultTimeoutSeconds)
                     // ⑤ 只认结果文件判定
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
                     // 双保险收尾：全部 bot（自停兜底）+ 后端 + 代理（即便 finalizedBy 未触发）
-                    botProcesses.forEach { destroyProcessQuietly(ctx, it) }
+                    botProcesses.forEach { destroyBotQuietly(ctx, it) }
                     backendProcesses.forEach { (name, proc) ->
                         stopProcessQuietly(ctx, proc, layout.clusterBackendPidFile(name))
                     }
                     proxyProcess?.let { stopProcessQuietly(ctx, it, layout.proxyPidFile(proxy.name)) }
+                    // 收尾之后统一判：输出越限 ⇒ 本次执行不可信，即便结果文件写的是 PASS。
+                    ctx.checkRunHealthy()
                 }
             }
         }
@@ -1031,6 +1123,8 @@ object McTestkitTasks {
      */
     private fun runReadyHooks(ctx: TaskExecutionContext, hooks: List<ScenarioHook>, hookCtx: HookContext) {
         if (hooks.isEmpty()) return
+        // 钩子的 stdout 也是无界落盘面：与 bot 共享同一个 run 预算。
+        hookCtx.attachOutputBudget(ctx.outputBudget())
         ctx.info("执行节点就绪后钩子（${hooks.size} 条）")
         hooks.forEach { it.run(hookCtx) }
     }
@@ -1045,6 +1139,7 @@ object McTestkitTasks {
         scenario: String,
         backendNames: List<String>,
         proxyName: String?,
+        processLifetimeMs: Long?,
     ): HookContext {
         val layout = ctx.layout
         val dirs = backendNames.associateWith { layout.clusterBackendRunDir(it) }
@@ -1054,6 +1149,7 @@ object McTestkitTasks {
             resultsDir = layout.resultsDir,
             backendRunDirs = dirs,
             proxyRunDir = proxyDir,
+            processLifetimeMs = processLifetimeMs,
             log = { ctx.info(it) },
         )
     }
@@ -1066,6 +1162,8 @@ object McTestkitTasks {
      */
     private fun runBeforeHooks(ctx: TaskExecutionContext, hooks: List<ScenarioHook>, hookCtx: HookContext) {
         if (hooks.isEmpty()) return
+        // 钩子的 stdout 也是无界落盘面：与 bot 共享同一个 run 预算。
+        hookCtx.attachOutputBudget(ctx.outputBudget())
         ctx.info("执行场景前钩子（${hooks.size} 条）")
         hooks.forEach { it.run(hookCtx) }
     }
@@ -1073,17 +1171,22 @@ object McTestkitTasks {
     /**
      * 执行「场景后」钩子链（收尾语义）。
      *
-     * **不在失败时短路**：某条收尾钩子抛异常只记 warn 并继续执行后续钩子——收尾阶段的异常不得
-     * 阻断其余资源的清理，也不得掩盖场景本身的判定失败（与既有「按 pid 收尾静默跳过」一致）。
+     * **不在失败时短路**：某条收尾钩子抛异常记 warn 并继续执行后续钩子，最后让本次构建失败——收尾的异常
+     * 不得阻断其余资源的清理；失败原因只保留第一个，不会盖住场景本身的判定失败。
+     *
+     * 收尾不接手结果目录（[TaskExecutionContext.runBudget]），本次构建已判失败时钩子进程照样能起。
      */
     private fun runAfterHooks(ctx: TaskExecutionContext, hooks: List<ScenarioHook>, hookCtx: HookContext) {
         if (hooks.isEmpty()) return
+        val budget = ctx.runBudget()
+        hookCtx.attachOutputBudget(budget, cleanup = true)
         ctx.info("执行场景后钩子（${hooks.size} 条）")
         hooks.forEach { hook ->
             try {
                 hook.run(hookCtx)
             } catch (ex: Exception) {
-                ctx.warn("场景后钩子执行失败（不阻断其余收尾）：${ex.message}")
+                budget.fail("RUN_FAIL after-hook ${ex.javaClass.simpleName}")
+                ctx.warn("场景后钩子执行失败（继续其余收尾）：${ex.message?.take(300)}")
             }
         }
     }
@@ -1111,17 +1214,21 @@ object McTestkitTasks {
         )
     }
 
-    /** 轮询等集群结果文件写出（任一桩写出即完成）；超时仍无即抛中文错误（收尾由 finally / finalizedBy 兜）。 */
-    private fun awaitClusterResult(ctx: TaskExecutionContext, resultFile: File, scenario: String) {
-        ctx.info("集群场景 $scenario 已全部起服，等待桩写出结果文件…")
-        val deadlineMs = System.currentTimeMillis() + BACKEND_WAIT_TIMEOUT_SECONDS * 1000L
+    /**
+     * 轮询等集群结果文件写出（任一桩写出即完成）；超时仍无即抛中文错误（收尾由 finally / finalizedBy 兜）。
+     *
+     * @param timeoutSeconds 等待上限（场景的 `resultTimeoutSeconds`）。
+     */
+    private fun awaitClusterResult(ctx: TaskExecutionContext, resultFile: File, scenario: String, timeoutSeconds: Long) {
+        ctx.info("集群场景 $scenario 已全部起服，等待桩写出结果文件（上限 ${timeoutSeconds}s）…")
+        val deadlineMs = System.currentTimeMillis() + timeoutSeconds * 1000L
         while (!resultFile.exists() && System.currentTimeMillis() < deadlineMs) {
             Thread.sleep(2000)
         }
         if (!resultFile.exists()) {
             throw GradleException(
-                "集群场景 $scenario 在 ${BACKEND_WAIT_TIMEOUT_SECONDS}s 内未写出结果文件" +
-                    "（桩可能未正常收尾 / 后端启动失败 / bot 切换未触达）；将收尾全部进程。",
+                "集群场景 $scenario 在 ${timeoutSeconds}s 内未写出结果文件" +
+                    "（桩可能未正常收尾 / 后端启动失败 / bot 切换未触达；场景本身要跑更久时调大 resultTimeoutSeconds）；将收尾全部进程。",
             )
         }
     }
@@ -1146,23 +1253,24 @@ object McTestkitTasks {
         val stopName = McTestkitTaskNames.stopStress(scenario.name)
         val action = scenario.botSpec?.action ?: scenario.name
 
-        // 全部 bot 的 log/pid key（停任务据此按 pid 收尾，防 straggler 残留）
+        // 全部 bot 的 key：停任务据此停掉本次构建起的 bot，之前的构建留下的按进程台账收尾
         val botKeys = stressBackends.indices.flatMap { idx ->
             (1..stress.botsPerServer).map { i -> stressBotKey(action, idx + 1, i) }
         }
 
-        // 停压测任务：按 pid 收尾全部后端 + 代理 + 全部 bot（单独可调；压测任务 finalizedBy 它）
-        registerTask(project, stopName) { task ->
+        // 停压测任务：收尾全部后端 + 代理 + 全部 bot（单独可调；压测任务 finalizedBy 它）
+        registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = TASK_GROUP
-            task.description = "停止压测场景 ${scenario.name} 的全部后端、代理与机器人（按 pid 收尾）"
+            task.description = "停止压测场景 ${scenario.name} 的全部后端、代理与机器人（按进程监管、pid 文件与进程台账收尾）"
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
+                stopOwnedBots(ctx, botKeys)
                 val summary = stopTrackedProcesses(
                     layout.resultsDir,
                     stressBackends.map { layout.clusterBackendPidFile(it.name) } +
-                        (proxy?.let { listOf(layout.proxyPidFile(it.name)) } ?: emptyList()) +
-                        botKeys.map { botPidFile(layout.resultsDir, it) },
+                        (proxy?.let { listOf(layout.proxyPidFile(it.name)) } ?: emptyList()),
                     ctx::info,
+                    owned = ctx::ownsProcess,
                 )
                 val stressPorts = stressBackends.map { it.port } +
                     (proxy?.let { p -> stressBackends.indices.map { index -> p.port + index } } ?: emptyList())
@@ -1193,7 +1301,7 @@ object McTestkitTasks {
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val backendProcesses = LinkedHashMap<String, Process>()
-                val botProcesses = mutableListOf<Process>()
+                val botProcesses = mutableListOf<BotProcessHandle>()
                 var proxyProcess: Process? = null
                 try {
                     val runtime = preflightRuntimeForTask(
@@ -1282,20 +1390,30 @@ object McTestkitTasks {
                                 botPort,
                                 protocolVersion,
                                 backend.version,
+                                scenarioProcessLifetimeMs(scenario),
                             )
                         }
                     }
 
                     // ④ 等全部 per-server 结果文件写出（桩到 duration 末聚合写出）
-                    awaitAllStressResults(ctx, layout, scenario.name, stressBackends, stress.durationSeconds)
+                    awaitAllStressResults(
+                        ctx,
+                        layout,
+                        scenario.name,
+                        stressBackends,
+                        stress.durationSeconds,
+                        scenario.resultTimeoutSeconds,
+                    )
 
                     // ⑤ 聚合判定：每服结果文件都须 PASS（只认结果文件，业务不变量由消费方桩在其中体现）
                     verifyStressResults(ctx, layout, scenario.name, stressBackends)
                 } finally {
                     // 双保险收尾：全部 bot（自停兜底）+ 全部后端 + 代理
-                    botProcesses.forEach { destroyProcessQuietly(ctx, it) }
+                    botProcesses.forEach { destroyBotQuietly(ctx, it) }
                     backendProcesses.forEach { (name, proc) -> stopProcessQuietly(ctx, proc, layout.clusterBackendPidFile(name)) }
                     proxy?.let { p -> proxyProcess?.let { stopProcessQuietly(ctx, it, layout.proxyPidFile(p.name)) } }
+                    // 收尾之后统一判：输出越限 ⇒ 本次执行不可信，即便结果文件写的是 PASS。
+                    ctx.checkRunHealthy()
                 }
             }
         }
@@ -1351,7 +1469,8 @@ object McTestkitTasks {
         botPort: Int,
         protocolVersion: String?,
         backendVersion: String,
-    ): List<Process> {
+        lifetimeMs: Long,
+    ): List<BotProcessHandle> {
         if (!MinecraftVersionGroup.isBotSupported(backendVersion)) {
             ctx.warn("$backendVersion 不支持 bot E2E，仅验服务端拉起（跳过压测 bot 启动）")
             return emptyList()
@@ -1367,7 +1486,7 @@ object McTestkitTasks {
         // 用户名基（Minecraft 离线名 ≤16 字符，bot 数多时请用短基名避免超限）；
         // 派生规则统一走 BotProcessPlanner，保证与写进 ops.json 的 OP 名字同源（ADR-0027）
         val baseName = BotProcessPlanner.stressUsernameBase(action, bot)
-        val processes = mutableListOf<Process>()
+        val processes = mutableListOf<BotProcessHandle>()
         for (i in 1..stress.botsPerServer) {
             val key = stressBotKey(action, serverIndex, i)
             val username = BotProcessPlanner.stressUsername(baseName, serverIndex, i)
@@ -1384,6 +1503,9 @@ object McTestkitTasks {
                 context = BotProcessContext(botDir = botDir, botScript = botScript, resultsDir = layout.resultsDir),
                 action = key,
                 environment = environment,
+                // 同一 run 的所有 bot 共享同一份预算：不因再次 launch 而重置
+                budget = ctx.outputBudget(),
+                lifetimeMs = lifetimeMs,
                 logger = { ctx.info(it) },
             )
         }
@@ -1391,17 +1513,22 @@ object McTestkitTasks {
         return processes
     }
 
-    /** 轮询等全部 per-server 结果文件写出（桩到 duration 末聚合写出）；超时仍缺则抛中文错误并报哪服。 */
+    /**
+     * 轮询等全部 per-server 结果文件写出（桩到 duration 末聚合写出）；超时仍缺则抛中文错误并报哪服。
+     *
+     * @param graceSeconds 压测时长之外的宽限（场景的 `resultTimeoutSeconds`）。
+     */
     private fun awaitAllStressResults(
         ctx: TaskExecutionContext,
         layout: RunLayout,
         scenario: String,
         backends: List<ResolvedBackend>,
         durationSeconds: Long,
+        graceSeconds: Long,
     ) {
-        ctx.info("压测场景 $scenario 已全部起服，持续 ${durationSeconds}s，等待各服桩写出结果文件…")
+        ctx.info("压测场景 $scenario 已全部起服，持续 ${durationSeconds}s，等待各服桩写出结果文件（另有宽限 ${graceSeconds}s）…")
         // 等待上限 = 压测时长 + 宽限（桩在 duration 末才聚合写出）
-        val deadlineMs = System.currentTimeMillis() + (durationSeconds + BACKEND_WAIT_TIMEOUT_SECONDS) * 1000L
+        val deadlineMs = System.currentTimeMillis() + (durationSeconds + graceSeconds) * 1000L
         while (backends.any { !stressResultFile(layout, scenario, it.name).exists() } &&
             System.currentTimeMillis() < deadlineMs
         ) {
@@ -1424,7 +1551,9 @@ object McTestkitTasks {
         backends: List<ResolvedBackend>,
     ) {
         backends.forEach { backend ->
+            ctx.checkRunHealthy()
             val result = ResultReader.read(layout.resultsDir, "$scenario-${backend.name}")
+            ctx.checkRunHealthy()
             ctx.info("压测服 ${backend.name} 通过：${result.message}")
         }
         ctx.info("压测场景 $scenario 全部 ${backends.size} 服聚合判定通过。")
@@ -1438,7 +1567,6 @@ object McTestkitTasks {
     private fun stressResultFile(layout: RunLayout, scenario: String, backendName: String): File =
         File(layout.resultsDir, McTestkitResultFile.fileName("$scenario-$backendName"))
 
-    /** 温和销毁一个进程（压测 bot 收尾双保险；pid 文件由停任务按 pid 清理，这里只灭进程）。 */
     /**
      * 打印一次停任务收尾的结果，并在「声明过的端口仍被占用」时给出可操作提示。
      *
@@ -1463,6 +1591,12 @@ object McTestkitTasks {
             ctx.info(
                 "注意：本次收尾了 ${summary.ledgerStopped} 个**上一轮**残留的进程——" +
                     "前一次构建应是被强制中断、未走到收尾（否则不会留到本轮）。",
+            )
+        }
+        if (summary.survivorsStopped > 0) {
+            ctx.info(
+                "其中 ${summary.survivorsStopped} 个是上一次构建收尾时没停下、记在 ${RunOutputState.FILE_NAME} 里的进程；" +
+                    "记录里的进程都结束后，下一次构建会自己接手结果目录。",
             )
         }
         if (summary.ledgerSkipped > 0) {
@@ -1502,6 +1636,35 @@ object McTestkitTasks {
     }
 
     /**
+     * 收尾一个 bot 句柄：停进程 + **等输出泵结束**。
+     *
+     * 为什么要多等泵一并：泵是子进程 stdout 的**唯一读者**。若进程先死而泵线程还在读，
+     * 那只是白跑；反过来若任务结束、读端先消失而子进程还活着，子进程写满管道缓冲区后会
+     * **永久阻塞**——既不退也不报错，只能靠下一轮台账清理。
+     *
+     * 泵线程是守护线程，所以这里等它有界（[PUMP_JOIN_TIMEOUT_SECONDS]），不因它卡住整个收尾。
+     */
+    private fun destroyBotQuietly(ctx: TaskExecutionContext, handle: BotProcessHandle) {
+        try {
+            handle.stop { ctx.info(it) }
+            // 进程停了还要等泵：泵是 stdout 唯一读者，若它仍在 drain 而任务已经往下走，
+            // 下一条 launch / 收尾会与它争同一个日志文件；daemon 退出时更会直接把它硬杀，
+            // 残留子进程失去读者 -> 堵塞。有界等待，超时只告警不抛。
+            if (!handle.awaitPump(PUMP_JOIN_TIMEOUT_SECONDS)) {
+                ctx.warn(
+                    "输出泵线程在 ${PUMP_JOIN_TIMEOUT_SECONDS}s 内未结束（log=${handle.logFile.name}）：" +
+                        "子进程可能仍有残留输出在 drain，本轮文件可能不完整。",
+                )
+            }
+        } catch (ex: Exception) {
+            ctx.warn("收尾机器人进程时异常（已忽略）：${ex.message}")
+        }
+    }
+
+    /** 等输出泵线程结束的有界上限。 */
+    private val PUMP_JOIN_TIMEOUT_SECONDS = 5L
+
+    /**
      * 注册持久手测（serve）任务（持久手测 serve，ADR-0011）：`serve<Key>` 前台起后端（声明 via 则先后台起代理）、
      * 注入插件、下发哨兵场景使桩空闲，**挂住**到用户手动停（Ctrl+C → JVM shutdown hook 收尾；或单独跑
      * `stop<Key>Serve` 按 pid 兜底）。serve 不判 PASS/FAIL（不绕过结果文件自判，架构不变量 §3）。
@@ -1522,7 +1685,7 @@ object McTestkitTasks {
         }
     }
 
-    /** 单后端 serve（持久手测 serve）：起单后端（+ 可选经代理）挂住，`stop<Key>Serve` 按 pid 收尾后端（+ 代理）。 */
+    /** 单后端 serve（持久手测 serve）：起单后端（+ 可选经代理）挂住，`stop<Key>Serve` 收尾后端（+ 代理与 bot）。 */
     private fun registerSingleServeTasks(
         project: Project,
         ctx: TaskExecutionContext,
@@ -1534,23 +1697,24 @@ object McTestkitTasks {
         val backend = resolveServeBackend(topology, serve)
         val proxy = serve.via?.let { via -> topology.proxies.first { it.name == via } } // 已由 TopologyResolver 校验存在 + 路由
         val stopName = McTestkitTaskNames.stopServe(serve.name)
-        // 可选 bot（serve 人机混场）的 pid key（停任务据此按 pid 收尾，防 straggler 残留）
+        // 可选 bot（serve 人机混场）的 key：停任务据此停掉本次构建起的 bot，之前的构建留下的按进程台账收尾
         val botKeys = BotProcessPlanner.expand(serve.name, serve.botSpecs).map { it.key }
 
-        // 停 serve 任务：按 pid 收尾后端（+ 代理 + 全部 bot）的兜底（另一终端停 / Ctrl+C 没清干净时用）
-        registerTask(project, stopName) { task ->
+        // 停 serve 任务：收尾后端（+ 代理 + 全部 bot）的兜底（另一终端停 / Ctrl+C 没清干净时用）
+        registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = SERVE_TASK_GROUP
             task.description =
-                "停止 serve「${serve.name}」的后端${proxy?.let { " 与代理 ${it.name}" } ?: ""}${if (botKeys.isNotEmpty()) " 与机器人" else ""}（按 pid 收尾）"
+                "停止 serve「${serve.name}」的后端${proxy?.let { " 与代理 ${it.name}" } ?: ""}${if (botKeys.isNotEmpty()) " 与机器人" else ""}（按进程监管、pid 文件与进程台账收尾）"
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val layout = ctx.layout
+                stopOwnedBots(ctx, botKeys)
                 val summary = stopTrackedProcesses(
                     layout.resultsDir,
                     listOf(provisionPidFile(layout.backendRunDir(backend.name), backend.name)) +
-                        (proxy?.let { listOf(layout.proxyPidFile(it.name)) } ?: emptyList()) +
-                        botKeys.map { botPidFile(layout.resultsDir, it) },
+                        (proxy?.let { listOf(layout.proxyPidFile(it.name)) } ?: emptyList()),
                     ctx::info,
+                    owned = ctx::ownsProcess,
                 )
                 reportStopOutcome(
                     ctx,
@@ -1644,12 +1808,12 @@ object McTestkitTasks {
         var logTail: Thread? = null
         var consolePump: Thread? = null
         var attach: ServeAttachConsole? = null
-        val botProcesses = mutableListOf<Process>()
+        val botProcesses = mutableListOf<BotProcessHandle>()
         // Ctrl+C / JVM 退出兜底：收尾 bot + 后端 + 代理（幂等、吞异常，与 finally 双保险）。先注册以覆盖整段生命周期。
         // 注：hook 在执行期创建、不进配置缓存序列化图；即便被序列化，ctx 亦可序列化（不含 Project）。
         val shutdownHook = Thread {
             attach?.stop()
-            botProcesses.forEach { destroyProcessQuietly(ctx, it) }
+            botProcesses.forEach { destroyBotQuietly(ctx, it) }
             backendProcess?.let { destroyProcessTreeQuietly(ctx, it) }
             proxyProcess?.let { destroyProcessQuietly(ctx, it) }
         }
@@ -1692,6 +1856,7 @@ object McTestkitTasks {
                     backendVersion = backend.version,
                     backendPort = connectPort,
                     protocolVersion = protocolVersion,
+                    lifetimeMs = null,
                 )
                 ctx.info("serve「$serveName」已起 ${botProcesses.size} 个 bot（人机混场，不判定）")
             }
@@ -1716,7 +1881,7 @@ object McTestkitTasks {
             logTail?.interrupt()
             consolePump?.interrupt()
             // 三重收尾兜底（即便 shutdown hook 未触发）：bot（自停兜底 + 按 pid）+ 后端 + 代理，删 pid
-            botProcesses.forEach { destroyProcessQuietly(ctx, it) }
+            botProcesses.forEach { destroyBotQuietly(ctx, it) }
             if (botSpecs.isNotEmpty()) stopBots(ctx, serveName, botSpecs)
             backendProcess?.let { stopProcessTreeQuietly(ctx, it, provisionPidFile(backendRunDir, backend.name)) }
             proxy?.let { p -> proxyProcess?.let { stopProcessQuietly(ctx, it, layout.proxyPidFile(p.name)) } }
@@ -1957,22 +2122,22 @@ object McTestkitTasks {
         val clusterBackends = serve.backendRefs.map { name -> topology.backends.first { it.name == name } } // 已校验存在
         val proxy = topology.proxies.first { it.name == serve.via } // 集群 serve 必有 via 且已校验路由覆盖
         val stopName = McTestkitTaskNames.stopServe(serve.name)
-        // 可选 bot（serve 人机混场）的 pid key（停任务据此按 pid 收尾，防 straggler 残留）
+        // 可选 bot（serve 人机混场）的 key：停任务据此停掉本次构建起的 bot，之前的构建留下的按进程台账收尾
         val botKeys = BotProcessPlanner.expand(serve.name, serve.botSpecs).map { it.key }
 
-        registerTask(project, stopName) { task ->
+        registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = SERVE_TASK_GROUP
             task.description =
-                "停止集群 serve「${serve.name}」的全部后端、代理 ${proxy.name}${if (botKeys.isNotEmpty()) " 与机器人" else ""}（按 pid 收尾）"
+                "停止集群 serve「${serve.name}」的全部后端、代理 ${proxy.name}${if (botKeys.isNotEmpty()) " 与机器人" else ""}（按进程监管、pid 文件与进程台账收尾）"
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val layout = ctx.layout
+                stopOwnedBots(ctx, botKeys)
                 val summary = stopTrackedProcesses(
                     layout.resultsDir,
-                    clusterBackends.map { layout.clusterBackendPidFile(it.name) } +
-                        layout.proxyPidFile(proxy.name) +
-                        botKeys.map { botPidFile(layout.resultsDir, it) },
+                    clusterBackends.map { layout.clusterBackendPidFile(it.name) } + layout.proxyPidFile(proxy.name),
                     ctx::info,
+                    owned = ctx::ownsProcess,
                 )
                 reportStopOutcome(
                     ctx,
@@ -2022,11 +2187,11 @@ object McTestkitTasks {
         var logTail: Thread? = null
         var consolePump: Thread? = null
         var attach: ServeAttachConsole? = null
-        val botProcesses = mutableListOf<Process>()
+        val botProcesses = mutableListOf<BotProcessHandle>()
         // Ctrl+C / JVM 退出兜底（执行期创建，不进配置缓存序列化图；ctx 可序列化）
         val shutdownHook = Thread {
             attach?.stop()
-            botProcesses.forEach { destroyProcessQuietly(ctx, it) }
+            botProcesses.forEach { destroyBotQuietly(ctx, it) }
             backendProcesses.values.forEach { destroyProcessQuietly(ctx, it) }
             proxyProcess?.let { destroyProcessTreeQuietly(ctx, it) }
         }
@@ -2092,6 +2257,7 @@ object McTestkitTasks {
                     backendVersion = clusterBackends.first().version,
                     backendPort = proxy.port,
                     protocolVersion = ProxyProtocolVersion.forBackend(clusterBackends.first().version),
+                    lifetimeMs = null,
                     sharedExtraEnv = mapOf(
                         McTestkitEnv.CLUSTER_BACKENDS to clusterBackends.joinToString(",") { it.name },
                     ),
@@ -2118,7 +2284,7 @@ object McTestkitTasks {
             logTail?.interrupt()
             consolePump?.interrupt()
             // 三重收尾兜底：bot（自停兜底 + 按 pid）+ 全部后端 + 代理，删 pid
-            botProcesses.forEach { destroyProcessQuietly(ctx, it) }
+            botProcesses.forEach { destroyBotQuietly(ctx, it) }
             if (botSpecs.isNotEmpty()) stopBots(ctx, serveName, botSpecs)
             backendProcesses.forEach { (name, proc) -> stopProcessQuietly(ctx, proc, layout.clusterBackendPidFile(name)) }
             proxyProcess?.let { stopProcessTreeQuietly(ctx, it, layout.proxyPidFile(proxy.name)) }
@@ -2177,12 +2343,17 @@ object McTestkitTasks {
         opNames: List<String> = emptyList(),
     ) {
         ctx.layout.resultsDir.mkdirs()
+        val persistent = ctx.layout.isPersistentBackendRunDir(backend.name)
+        if (persistent) {
+            ctx.info("后端 ${backend.name} 使用持久运行目录（不清空，世界与插件数据保留）：${runDir.absolutePath}")
+        }
         stageBackendRuntime(
             runDir,
             backend,
             // 只把「本后端要提权的用户名」并入资源，不改动预检结果里的模板 / 依赖插件
             resources.copy(opNames = opNames),
             cacheDirectory = ctx.layout.persistentBackendCacheDir(backend.name),
+            persistent = persistent,
         ) { ctx.info(it) }
     }
 
@@ -2195,14 +2366,20 @@ object McTestkitTasks {
      * 起服前做端口预检（见 [requirePortsAvailable]）：本函数是「前台起后端」的唯一入口，在此设闸可让
      * 所有调用方（直连 e2e / 经代理）自动获得保护，不必各自复制。
      *
-     * @param stopTaskName 报错文案里建议执行的收尾任务名；直连 e2e 无配套停任务故为 null。
+     * 后端起来后登记进程台账：构建被强杀时它会比构建活得久，[McTestkitTaskNames.STOP_PROCESSES] 据此按身份收掉它。
+     * 任务被取消（等待线程被中断）或等待途中出错时，`finally` 连同子进程一起收掉后端，不留到下一次构建。
+     *
+     * @param resultTimeoutSeconds 等桩写出结果文件的上限（场景的 `resultTimeoutSeconds`）。
+     * @param stopTaskName 端口被占时报错文案里建议执行的收尾任务名；直连场景没有配套的停任务，默认给
+     *   [McTestkitTaskNames.STOP_PROCESSES]。
      */
     private fun runBackendForeground(
         ctx: TaskExecutionContext,
         backend: ResolvedBackend,
         scenario: String,
+        resultTimeoutSeconds: Long,
         sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
-        stopTaskName: String? = null,
+        stopTaskName: String? = McTestkitTaskNames.STOP_PROCESSES,
     ) {
         val layout = ctx.layout
         val runDir = layout.backendRunDir(backend.name)
@@ -2227,30 +2404,37 @@ object McTestkitTasks {
             javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
         )
-        // 等被测后端跑完：以「桩写出结果文件」为权威完成信号（结果文件是真源，见 verify/），
-        // 而非死等 JVM 退出——真实后端的依赖（数据源 / Redis 连接池等非守护线程）常使 JVM 在
-        // Bukkit.shutdown 后仍不退出。结果出现后给一小段优雅自停窗口，仍不退则强杀，避免空等到超时。
-        val resultFile = File(layout.resultsDir, McTestkitResultFile.fileName(scenario))
-        val deadlineMs = System.currentTimeMillis() + BACKEND_WAIT_TIMEOUT_SECONDS * 1000L
-        while (process.isAlive && !resultFile.exists() && System.currentTimeMillis() < deadlineMs) {
-            Thread.sleep(2000)
-        }
-        if (resultFile.exists() && process.isAlive) {
-            // 结果已写出：给优雅自停窗口；到时仍活则强杀（非守护线程卡住 JVM 时不空等到超时）
-            if (!process.waitFor(BACKEND_SELF_STOP_GRACE_SECONDS, TimeUnit.SECONDS) && process.isAlive) {
-                ctx.info(
-                    "后端 ${backend.name} 结果已写出，但 JVM 未在 ${BACKEND_SELF_STOP_GRACE_SECONDS}s 内自停" +
-                        "（常因依赖连接池非守护线程），强制结束，不影响结果判定。",
-                )
-                process.destroyForcibly()
-                process.waitFor(15, TimeUnit.SECONDS)
+        val pidFile = provisionPidFile(runDir, backend.name)
+        recordProcessedPid(ctx, pidFile, "$LEDGER_KEY_BACKEND/${backend.name}", process, backend.port)
+        try {
+            // 等被测后端跑完：以「桩写出结果文件」为权威完成信号（结果文件是真源，见 verify/），
+            // 而非死等 JVM 退出——真实后端的依赖（数据源 / Redis 连接池等非守护线程）常使 JVM 在
+            // Bukkit.shutdown 后仍不退出。结果出现后给一小段优雅自停窗口，仍不退则强杀，避免空等到超时。
+            val resultFile = File(layout.resultsDir, McTestkitResultFile.fileName(scenario))
+            val deadlineMs = System.currentTimeMillis() + resultTimeoutSeconds * 1000L
+            while (process.isAlive && !resultFile.exists() && System.currentTimeMillis() < deadlineMs) {
+                Thread.sleep(2000)
             }
-        }
-        if (!resultFile.exists()) {
-            if (process.isAlive) process.destroyForcibly()
-            throw GradleException(
-                "后端 ${backend.name} 在 ${BACKEND_WAIT_TIMEOUT_SECONDS}s 内未写出结果文件（桩可能未正常收尾 / 启动失败）；已强制结束。",
-            )
+            if (resultFile.exists() && process.isAlive) {
+                // 结果已写出：给优雅自停窗口；到时仍活则强杀（非守护线程卡住 JVM 时不空等到超时）
+                if (!process.waitFor(BACKEND_SELF_STOP_GRACE_SECONDS, TimeUnit.SECONDS) && process.isAlive) {
+                    ctx.info(
+                        "后端 ${backend.name} 结果已写出，但 JVM 未在 ${BACKEND_SELF_STOP_GRACE_SECONDS}s 内自停" +
+                            "（常因依赖连接池非守护线程），强制结束，不影响结果判定。",
+                    )
+                    process.destroyForcibly()
+                    process.waitFor(15, TimeUnit.SECONDS)
+                }
+            }
+            if (!resultFile.exists()) {
+                if (process.isAlive) process.destroyForcibly()
+                throw GradleException(
+                    "后端 ${backend.name} 在 ${resultTimeoutSeconds}s 内未写出结果文件" +
+                        "（桩可能未正常收尾 / 启动失败；场景本身要跑更久时调大 resultTimeoutSeconds）；已强制结束。",
+                )
+            }
+        } finally {
+            stopProcessTreeQuietly(ctx, process, pidFile)
         }
     }
 
@@ -2310,7 +2494,7 @@ object McTestkitTasks {
      * **版本范围校验（多版本服务端拉起）**：[backendVersion] < 1.8（即 1.7.10）时跳过 bot 启动 + 日志告警，
      * 场景仍继续（不因无 bot 判 FAIL）。
      *
-     * @return 全部已起进程（供调用方按需收尾；亦各自写了 `bot-<key>.pid` 供按 pid 收尾）。
+     * @return 全部已起进程（供调用方按需收尾；各自写了 `bot-<key>.pid` 并登记进程台账）。
      */
     private fun launchScenarioBots(
         ctx: TaskExecutionContext,
@@ -2319,8 +2503,35 @@ object McTestkitTasks {
         backendPort: Int,
         protocolVersion: String?,
         sharedExtraEnv: Map<String, String> = emptyMap(),
-    ): List<Process> =
-        launchBots(ctx, scenario.name, scenario.botSpecs, backendVersion, backendPort, protocolVersion, sharedExtraEnv)
+    ): List<BotProcessHandle> =
+        launchBots(
+            ctx,
+            scenario.name,
+            scenario.botSpecs,
+            backendVersion,
+            backendPort,
+            protocolVersion,
+            lifetimeMs = scenarioProcessLifetimeMs(scenario),
+            sharedExtraEnv = sharedExtraEnv,
+        )
+
+    /**
+     * 场景内 bot / 钩子后台进程交给 run 进程监管的寿命上限（毫秒）。
+     *
+     * 监管期限只是兜底：编排最多等 `resultTimeoutSeconds`（压测先等 `stress.durationSeconds`）就会收尾这些进程，
+     * 期限必须比它长，再留 [PROCESS_LIFETIME_SLACK_SECONDS] 覆盖起服、钩子与收尾；更短会抢在编排之前把仍在
+     * 正常运行的 bot 判成 TIMEOUT。封顶 [RunOutputSupervisor.MAX_LIFETIME_MS]。
+     */
+    internal fun scenarioProcessLifetimeMs(scenario: ScenarioSpec): Long {
+        val capSeconds = TimeUnit.MILLISECONDS.toSeconds(RunOutputSupervisor.MAX_LIFETIME_MS)
+        val seconds = scenario.resultTimeoutSeconds.coerceAtMost(capSeconds) +
+            (scenario.stressSpec?.durationSeconds ?: 0L).coerceIn(0L, capSeconds) +
+            PROCESS_LIFETIME_SLACK_SECONDS
+        return TimeUnit.SECONDS.toMillis(seconds.coerceAtMost(capSeconds))
+    }
+
+    /** [scenarioProcessLifetimeMs] 在编排自身等待之外留的宽限（秒）。 */
+    internal const val PROCESS_LIFETIME_SLACK_SECONDS = 600L
 
     /**
      * 起一组 bot 进程（单场景多 bot 多 bot 展开 + 每进程 env 装配；**场景与 serve 共用**，serve 人机混场）。
@@ -2330,6 +2541,8 @@ object McTestkitTasks {
      *
      * **版本范围校验（多版本服务端拉起）**：[backendVersion] < 1.8（即 1.7.10）时跳过 bot 启动 + 日志告警，
      * 场景仍继续（不因无 bot 判 FAIL）。
+     *
+     * [lifetimeMs] 是各 bot 交给进程监管的寿命上限：场景取 [scenarioProcessLifetimeMs]，serve 人机混场传 null（随会话收尾）。
      */
     private fun launchBots(
         ctx: TaskExecutionContext,
@@ -2338,8 +2551,9 @@ object McTestkitTasks {
         backendVersion: String,
         backendPort: Int,
         protocolVersion: String?,
+        lifetimeMs: Long?,
         sharedExtraEnv: Map<String, String> = emptyMap(),
-    ): List<Process> {
+    ): List<BotProcessHandle> {
         if (!MinecraftVersionGroup.isBotSupported(backendVersion)) {
             ctx.warn("$backendVersion 不支持 bot E2E，仅验服务端拉起（跳过 bot 启动）")
             return emptyList()
@@ -2355,22 +2569,29 @@ object McTestkitTasks {
                 key = plan.key,
                 backendPort = backendPort,
                 protocolVersion = protocolVersion,
+                lifetimeMs = lifetimeMs,
                 extraEnv = extraEnv,
             )
         }
     }
 
-    /** 按 plan key 收尾场景全部 bot 的 pid 文件（单 bot / 已自停为安全 no-op，[stopProcessByPidFile]）。 */
+    /**
+     * 停掉本次构建起的这些 bot（交给进程监管，先温和后强杀）。没起过或已自停的是安全 no-op；之前的构建留下的 bot
+     * 由 stop 任务按进程台账核对身份后收尾（[stopTrackedProcesses]），bot 的 pid 文件只供排查，不交给只认 pid 的收尾路径。
+     */
+    private fun stopOwnedBots(ctx: TaskExecutionContext, keys: List<String>) {
+        if (keys.isEmpty()) return
+        val supervisor = ctx.runBudget().supervisor
+        keys.forEach { supervisor.stopLog(botLogFile(ctx.layout.resultsDir, it)) }
+    }
+
+    /** 停掉场景的全部 bot，见 [stopOwnedBots]。 */
     private fun stopScenarioBots(ctx: TaskExecutionContext, scenario: ScenarioSpec) =
         stopBots(ctx, scenario.name, scenario.botSpecs)
 
-    /** 按 plan key 收尾一组 bot 的 pid 文件（**场景与 serve 共用**，serve 人机混场；单 bot / 已自停为安全 no-op）。 */
-    private fun stopBots(ctx: TaskExecutionContext, name: String, botSpecs: List<BotSpec>) {
-        val resultsDir = ctx.layout.resultsDir
-        BotProcessPlanner.expand(name, botSpecs).forEach { plan ->
-            stopProcessByPidFile(botPidFile(resultsDir, plan.key)) { ctx.info(it) }
-        }
-    }
+    /** 按 plan key 停掉一组 bot（**场景与 serve 共用**，serve 人机混场），见 [stopOwnedBots]。 */
+    private fun stopBots(ctx: TaskExecutionContext, name: String, botSpecs: List<BotSpec>) =
+        stopOwnedBots(ctx, BotProcessPlanner.expand(name, botSpecs).map { it.key })
 
     /**
      * 起一个 bot 进程：env 由 [BotConnection] 建（含协议版本固定），[BotLauncher] 后台拉起。
@@ -2386,8 +2607,9 @@ object McTestkitTasks {
         key: String,
         backendPort: Int,
         protocolVersion: String?,
+        lifetimeMs: Long?,
         extraEnv: Map<String, String> = emptyMap(),
-    ): Process {
+    ): BotProcessHandle {
         val layout = ctx.layout
         val botDir = ctx.botDir
         val botScript = File(botDir, RunLayout.BOT_SCRIPT_RELATIVE)
@@ -2414,13 +2636,18 @@ object McTestkitTasks {
             context = BotProcessContext(botDir = botDir, botScript = botScript, resultsDir = layout.resultsDir),
             action = key,
             environment = environment,
+            // 同一 run 的所有 bot 共享同一份预算：不因再次 launch 而重置
+            budget = ctx.outputBudget(),
+            lifetimeMs = lifetimeMs,
             logger = { ctx.info(it) },
         )
     }
 
     /** 只认结果文件判定（[ResultReader]）：缺失或失败抛中文错误，通过则打印 message。 */
     private fun verifyScenarioResult(ctx: TaskExecutionContext, scenario: String) {
+        ctx.checkRunHealthy()
         val result = ResultReader.read(ctx.layout.resultsDir, scenario)
+        ctx.checkRunHealthy()
         ctx.info("E2E 场景 $scenario 通过：${result.message}")
     }
 
@@ -2434,23 +2661,45 @@ object McTestkitTasks {
      *
      * 统一声明 [outputsUpToDateWhenNever]：本插件任务全为副作用生命周期任务（起服 / 写运行目录 /
      * 收尾 / 回写缓存），不得因构建缓存或输入未变而跳过。
+     *
+     * [ownsRunOutput] 为 true 的任务开跑前接手结果目录的输出监管（[RunOutputService.attach]），开跑前与结束后
+     * 都过健康检查。停进程、清理缓存、场景后钩子这类收尾任务传 false：不接手、不过健康检查，上一次构建
+     * 没收好尾或本次已判失败时照样能跑，否则连收尾都做不了。
      */
     private fun registerTask(
         project: Project,
         name: String,
+        ownsRunOutput: Boolean = true,
         configure: (Task) -> Unit,
     ): TaskProvider<DefaultTask> {
         val provider = project.tasks.register(name, DefaultTask::class.java)
         provider.configure(object : Action<DefaultTask> {
             override fun execute(task: DefaultTask) {
                 outputsUpToDateWhenNever(task)
+                val service = runOutputService(project)
+                task.usesService(service)
+                if (ownsRunOutput) {
+                    val results = layoutOf(project).resultsDir
+                    task.doFirst {
+                        service.get().attach(results)
+                        service.get().checkHealthy()
+                    }
+                }
                 configure(task)
+                if (ownsRunOutput) task.doLast { service.get().checkHealthy() }
             }
         })
         return provider
     }
 
-    /** 注册一个 [Exec] 任务并配置之，返回 [TaskProvider]（两步式，理由同 [registerTask]）。 */
+    private fun runOutputService(project: Project): Provider<RunOutputService> =
+        project.gradle.sharedServices.registerIfAbsent(RUN_OUTPUT_SERVICE, RunOutputService::class.java) {}
+
+    /**
+     * 注册一个 [Exec] 任务并配置之，返回 [TaskProvider]（两步式，理由同 [registerTask]）。
+     *
+     * Exec 任务（npm install）不起 bot / 钩子进程、不写结果目录，不接手输出监管。
+     */
     private fun registerExec(
         project: Project,
         name: String,

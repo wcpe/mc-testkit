@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit.task
 
 import org.gradle.api.GradleException
+import top.wcpe.mc.testkit.bot.ProcessLedger
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -72,7 +73,7 @@ private object DefaultPortAvailabilityProbe : PortAvailabilityProbe {
  * 预检把这件事提前到起服**之前**，并给出中文原因与按端口排查的命令。
  *
  * 纯判定 + 抛错，**不代为清理**：占用端口的可能是用户手工起的服务端，自动杀进程属于越权；
- * 收尾交给配套的 `stop<Key>Serve` 等停任务（按进程台账兜底，见 [ProcessLedger]）。
+ * 收尾交给 `stopE2eProcesses` 或配套的 `stop<Key>Serve` 等停任务（按进程台账兜底，见 [ProcessLedger]）。
  *
  * @param targets 待检端口与用途标签（标签进报错，指明是哪个节点撞了端口）。
  * @param stopTaskName 建议用户执行的收尾任务名（进报错文案）；null 时不提。

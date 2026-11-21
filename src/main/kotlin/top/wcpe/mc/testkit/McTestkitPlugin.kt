@@ -29,6 +29,7 @@ class McTestkitPlugin : Plugin<Project> {
         // 运行根目录与任务侧同源（McTestkitRunDirectories），供消费方经
         // McTestkitExtension.backendRunDirectory 拿到注入落点
         extension.runRoot = project.layout.buildDirectory.dir(McTestkitRunDirectories.WORK_DIR_NAME)
+        extension.projectDirectory = project.layout.projectDirectory
         // 依赖声明的产物来源解析能力：spec 只承载声明、不持有 Project（ADR-0025）
         extension.declaredDependencies.fileResolver = { project.files(it) }
         // 等 mcTestkit { } 声明就绪后，按拓扑数据驱动注册任务（含配置期校验，任务自动编排）

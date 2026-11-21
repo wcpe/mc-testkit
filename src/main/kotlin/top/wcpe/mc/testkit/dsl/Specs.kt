@@ -28,6 +28,17 @@ class BackendSpec(val name: String) {
     /** 监听端口；null 表示留待拓扑解析（拓扑 DSL）按端口基数推导。 */
     var port: Int? = null
 
+    /**
+     * 持久运行目录（相对工程目录，或绝对路径）；null 表示默认的 `build/mc-testkit/run-<后端名>`。
+     *
+     * 声明后该后端就在这个目录里起服，且**不再每轮清空**：世界、插件数据、日志留到下一轮继续用。
+     * 框架每轮仍会重写自己负责的内容（`eula.txt`、`server.properties` 的端口与离线模式等权威配置、模板、
+     * bot 的 `ops.json`），并换上本轮的待测 / 依赖插件 jar——上一轮注入、本轮不再声明的 jar 会被移除。
+     * 要从头来过，删掉这个目录即可。不能放在 `build/mc-testkit` 下、不能是工程目录本身，也不能与其它后端共用
+     * （注册期校验）。
+     */
+    var runDirectory: String? = null
+
     private val mutableEnvironment = LinkedHashMap<String, String>()
     private val mutableJvmArgs = mutableListOf<String>()
     private val mutableJavaAgents = mutableListOf<String>()
@@ -264,6 +275,14 @@ class ScenarioSpec(val name: String) : java.io.Serializable {
 
     /** 经哪个代理（按名称引用；null 表示直连后端）。 */
     var via: String? = null
+
+    /**
+     * 编排等桩写出结果文件的上限（秒），默认 [McTestkitDefaults.RESULT_TIMEOUT_SECONDS]；须 >0（配置期校验）。
+     *
+     * 到点仍无结果即强制结束节点并判失败。场景自身就要跑很久（长时间负载、长观测窗口）时按需调大，
+     * 上限比场景自身还短会把未跑完的场景判成「桩未收尾」。压测场景在 `stress.durationSeconds` 之外再等这么久。
+     */
+    var resultTimeoutSeconds: Long = McTestkitDefaults.RESULT_TIMEOUT_SECONDS
 
     private val mutableBackends = mutableListOf<String>()
 

@@ -1,4 +1,4 @@
-package top.wcpe.mc.testkit.task
+package top.wcpe.mc.testkit.bot
 
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
@@ -85,6 +85,19 @@ class ProcessLedgerTest {
 
         val keys = ProcessLedger.records(resultsDir).map { it.key }.sorted()
         assertEquals(listOf("backend/s1", "proxy/wf"), keys)
+    }
+
+    @Test
+    @DisplayName("多个线程同时登记 bot 与钩子进程时记录不丢")
+    fun concurrentRecordsAreNotLost() {
+        val threads = (0 until 8).map { t ->
+            Thread {
+                repeat(20) { i -> ProcessLedger.record(resultsDir, "bot/t$t-$i", 1_000_000L + t * 100 + i, 0) }
+            }.apply { start() }
+        }
+        threads.forEach { it.join(TimeUnit.SECONDS.toMillis(30)) }
+
+        assertEquals(160, ProcessLedger.records(resultsDir).size, "并发登记的每条记录都应当保留")
     }
 
     @Test

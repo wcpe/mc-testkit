@@ -88,6 +88,7 @@ class TaskOrchestrationFunctionalTest {
         assertTrue("npmInstallE2eBot" in output, "应注册固定名任务 npmInstallE2eBot")
         assertTrue("syncE2eRuntimeCache" in output, "应注册固定名任务 syncE2eRuntimeCache")
         assertTrue("purgeE2eRuntimeCache" in output, "应注册固定名任务 purgeE2eRuntimeCache")
+        assertTrue("stopE2eProcesses" in output, "应注册固定名任务 stopE2eProcesses")
 
         // smoke：无 bot，仅 prepare + e2e
         assertTrue("prepareE2eSmoke" in output, "应注册 prepareE2eSmoke")
@@ -133,6 +134,26 @@ class TaskOrchestrationFunctionalTest {
         assertTrue(prepareIdx >= 0, "dry-run 应列出 :prepareE2eSmoke\n$output")
         assertTrue(verifyIdx >= 0, "dry-run 应列出 :e2eSmoke\n$output")
         assertTrue(prepareIdx < verifyIdx, "prepareE2eSmoke 应排在 e2eSmoke 之前\n$output")
+    }
+
+    @Test
+    @DisplayName("同一条命令里 stopE2eProcesses 排在场景任务之前，不论命令行里的顺序")
+    fun stopProcessesRunsBeforeScenarioTasks() {
+        writeFullConsumer()
+        val output = GradleRunner.create()
+            .withProjectDir(projectDir)
+            .withPluginClasspath()
+            .withArguments("e2eBuyViaProxyViaWf", "stopE2eProcesses", "--dry-run", "--stacktrace")
+            .build()
+            .output
+
+        val stopIdx = output.indexOf(":stopE2eProcesses ")
+        assertTrue(stopIdx >= 0, "dry-run 应列出 :stopE2eProcesses\n$output")
+        listOf(":prepareE2eBuyViaProxy ", ":e2eBuyViaProxyViaWf ").forEach { task ->
+            val idx = output.indexOf(task)
+            assertTrue(idx >= 0, "dry-run 应列出 $task\n$output")
+            assertTrue(stopIdx < idx, "stopE2eProcesses 应排在 $task 之前\n$output")
+        }
     }
 
     @Test

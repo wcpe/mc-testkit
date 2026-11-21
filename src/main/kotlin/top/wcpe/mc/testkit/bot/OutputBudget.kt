@@ -10,8 +10,8 @@ class OutputBudget(
     val runLimit: Long = DEFAULT_RUN_LIMIT,
 ) {
     init {
-        require(perSinkLimit in 1..MAX_LIMIT && runLimit in 1..MAX_LIMIT)
-        require(perSinkLimit <= runLimit)
+        require(perSinkLimit in 1..MAX_LIMIT && runLimit in 1..MAX_LIMIT) { "输出上限须在 1 到 $MAX_LIMIT 字节之间" }
+        require(perSinkLimit <= runLimit) { "单个日志文件上限（$perSinkLimit）不得大于整个构建上限（$runLimit）" }
     }
 
     private var used = 0L
@@ -102,15 +102,19 @@ class OutputBudget(
         const val MAX_LIMIT = 1024L * 1024 * 1024
         const val MARKER_MAX_BYTES = 512
         const val MAX_SINKS = 128
-        fun fromConfig(): OutputBudget = OutputBudget(
-            readLimit("mc.testkit.bot.log.limit.bytes") ?: DEFAULT_PER_SINK_LIMIT,
-            readLimit("mc.testkit.bot.log.runLimit.bytes") ?: DEFAULT_RUN_LIMIT,
-        )
+        fun fromConfig(): OutputBudget = fromLookup(System::getProperty, System::getenv)
 
-        private fun readLimit(key: String): Long? {
-            val raw = System.getProperty(key) ?: System.getenv(key.replace('.', '_').uppercase()) ?: return null
-            require(raw.matches(Regex("[1-9][0-9]{0,15}"))) { "Invalid positive integer: $key" }
-            return raw.toLong().also { require(it <= MAX_LIMIT) { "Limit exceeds $MAX_LIMIT: $key" } }
+        /** 系统属性优先，其次环境变量（前缀按 ADR-0006 用 `MC_TESTKIT_E2E_`）；非法值直接失败，不退回默认。 */
+        internal fun fromLookup(property: (String) -> String?, env: (String) -> String?): OutputBudget {
+            fun limit(key: String, envKey: String): Long? {
+                val raw = property(key) ?: env(envKey) ?: return null
+                require(raw.matches(Regex("[1-9][0-9]{0,15}"))) { "$key / $envKey 须为十进制正整数（字节），实际为「$raw」" }
+                return raw.toLong().also { require(it <= MAX_LIMIT) { "$key / $envKey 不得超过 $MAX_LIMIT 字节，实际为 $it" } }
+            }
+            return OutputBudget(
+                limit("mc.testkit.bot.log.limit.bytes", "MC_TESTKIT_E2E_BOT_LOG_LIMIT_BYTES") ?: DEFAULT_PER_SINK_LIMIT,
+                limit("mc.testkit.bot.log.runLimit.bytes", "MC_TESTKIT_E2E_BOT_LOG_RUN_LIMIT_BYTES") ?: DEFAULT_RUN_LIMIT,
+            )
         }
     }
 }

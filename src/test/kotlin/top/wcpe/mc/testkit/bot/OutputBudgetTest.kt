@@ -6,6 +6,7 @@ import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -375,6 +376,28 @@ class OutputBudgetTest {
             )
         } finally {
             child.destroyForcibly()
+        }
+    }
+
+    @Test
+    @DisplayName("输出上限先读系统属性、再读 MC_TESTKIT_E2E_ 前缀的环境变量，无前缀的旧名不生效")
+    fun limitsComeFromPropertyThenPrefixedEnvironment() {
+        val env = mapOf(
+            "MC_TESTKIT_E2E_BOT_LOG_LIMIT_BYTES" to "4096",
+            "MC_TESTKIT_E2E_BOT_LOG_RUN_LIMIT_BYTES" to "65536",
+        )
+        val fromEnv = OutputBudget.fromLookup({ null }, env::get)
+        assertEquals(4096L, fromEnv.perSinkLimit, "单文件上限必须取自环境变量")
+        assertEquals(65536L, fromEnv.runLimit, "构建上限必须取自环境变量")
+        val fromProperty = OutputBudget.fromLookup(mapOf("mc.testkit.bot.log.limit.bytes" to "8192")::get, env::get)
+        assertEquals(8192L, fromProperty.perSinkLimit, "系统属性必须盖过环境变量")
+        val legacy = mapOf("MC_TESTKIT_BOT_LOG_LIMIT_BYTES" to "1", "MC_TESTKIT_BOT_LOG_RUNLIMIT_BYTES" to "1")
+        val defaults = OutputBudget.fromLookup({ null }, legacy::get)
+        assertEquals(OutputBudget.DEFAULT_PER_SINK_LIMIT, defaults.perSinkLimit, "无前缀的旧名不得生效")
+        assertEquals(OutputBudget.DEFAULT_RUN_LIMIT, defaults.runLimit, "无前缀的旧名不得生效")
+        val inverted = mapOf("MC_TESTKIT_E2E_BOT_LOG_LIMIT_BYTES" to "1048576", "MC_TESTKIT_E2E_BOT_LOG_RUN_LIMIT_BYTES" to "65536")
+        assertFailsWith<IllegalArgumentException>("单文件上限大于构建上限必须拒绝") {
+            OutputBudget.fromLookup({ null }, inverted::get)
         }
     }
 }

@@ -1,6 +1,6 @@
 'use strict'
 
-const { waitForMessage } = require('@wcpe/mc-testkit-bot/lib/messages')
+const { waitForMessage, sendChatSafely } = require('@wcpe/mc-testkit-bot/lib/messages')
 const { execCommand, execCommands } = require('@wcpe/mc-testkit-bot/lib/exec')
 
 // bot 命令通道**实机自检**驱动（FR-29 / FR-30 / FR-31，ADR-0027）。
@@ -69,7 +69,31 @@ module.exports = async function runBotCommand(context) {
   // 关键点：这条命令走的是**玩家身份**，需要 OP。桩侧刻意**不给**权限附件
   // （见 McTestkitE2eHarnessPlugin.prepareBotCommandScenario），所以能成功就只可能是因为
   // 框架写的 ops.json 生效了。
-  const opProbe = await runPlayerCommand(bot, 'gamemode creative', config)
+  //
+  // 判通过必须有正面证据：`gamemode creative` 成功时服务端静默，仅凭「没等到拒绝」分不清
+  // 「生效了」与「命令根本没发出去」（断线 / 聊天被拦 / 被限流）。故用 console 身份读回
+  // 该玩家的真实游戏模式作为证据——console 有权限，读到的值反映的是玩家身份那条命令的结果。
+  const opProbe = await runPlayerCommand(
+    bot,
+    'gamemode creative',
+    config,
+    async () => {
+      const probe = await execCommand(bot, 'data get entity ' + bot.username + ' playerGameType')
+      if (!probe.ok) {
+        return { ok: false, output: probe.output }
+      }
+      // 期望读到 1（creative）。读不到数字就说明取证本身没成立，不能当通过。
+      const matched = /(-?\d+)/.exec(probe.output)
+      if (!matched) {
+        return { ok: false, output: `取证输出里没有游戏模式数值：${probe.output}` }
+      }
+      const mode = Number(matched[1])
+      if (mode !== 1) {
+        return { ok: false, output: `玩家游戏模式仍为 ${mode}（期望 1=creative），命令未生效` }
+      }
+      return { ok: true, output: `console 取证确认玩家游戏模式为 creative（${probe.output}）` }
+    }
+  )
   if (!opProbe.ok) {
     failures.push(`玩家 OP 验证失败（bot 未能以 OP 身份执行命令）：${opProbe.output}`)
   } else {
@@ -77,14 +101,16 @@ module.exports = async function runBotCommand(context) {
   }
 
   // ── 回传结论 ──
+  // 结论经聊天帧回传，而原版 chat 单包上限 256 字符：超长的包会在服务端解码期被丢弃并断开玩家，
+  // 表现为「桩一直等到超时、日志里只有一条 mineflayer kicked」。故走 sendChatSafely 截断。
   const detail = failures.length === 0 ? evidence.join(' ; ') : failures.join(' ; ')
 
   if (failures.length === 0) {
     log(`命令通道自检全部通过：${detail}`)
-    bot.chat(`E2E_BOT_COMMAND_PASS:${detail}`)
+    sendChatSafely(bot, 'E2E_BOT_COMMAND_PASS:', detail)
   } else {
     log(`命令通道自检失败：${detail}`)
-    bot.chat(`E2E_BOT_COMMAND_FAIL:${detail}`)
+    sendChatSafely(bot, 'E2E_BOT_COMMAND_FAIL:', detail)
   }
 }
 
@@ -95,12 +121,29 @@ module.exports = async function runBotCommand(context) {
  * 服务端的拒绝文案随版本与语言而变，故按几个稳定特征判断而不是精确匹配整句：
  * 英文的 `permission` / `Unknown or incomplete command`，中文的「权限」。
  *
+ * ## 为什么「等到超时没被拒绝」不能算通过
+ *
+ * 曾经这里把「没有等到任何回显」当成「命令被接受」——理由是 `gamemode` 这类命令
+ * 成功时静默。但「没有回显」有好几种完全不同的成因，而它们都指向失败：
+ *
+ * - bot 已被踢 / 连接已断：`bot.chat` 对已结束的连接静默无效，什么回显都不会来；
+ * - 聊天被服务端插件拦截（反刷屏、聊天过滤）：命令根本没出去；
+ * - 被 spam 限流：同上。
+ *
+ * 三者都会被判成「OP 生效」，这是**假通过**——而本场景存在的意义正是验证 OP 真的生效，
+ * 判错的代价比判失败大得多（假失败有人查，假通过没人查）。
+ *
+ * 因此改为**必须有正面证据**：执行完立刻以 console 身份读真实状态（`consoleProbe`），
+ * 只有读到「命令确实生效」才算通过。超时一律算失败。
+ *
  * @param {Object} bot mineflayer bot
  * @param {string} command 不带前导 `/` 的命令
  * @param {Object} config 机器人配置（用其 readyTimeoutMs 作等待上限）
+ * @param {Function|null} consoleProbe 无参异步函数：以 console 身份取证，返回
+ *   `{ ok: boolean, output: string }`。返回 null 表示无可用取证途径（此时不判通过）
  * @returns {Promise<{ok: boolean, output: string}>}
  */
-async function runPlayerCommand(bot, command, config) {
+async function runPlayerCommand(bot, command, config, consoleProbe) {
   // 先挂监听再看历史：命令到达与回显之间可能有竞态，waitForMessage 自带历史回扫
   bot.chat(`/${command}`)
   try {
@@ -111,19 +154,29 @@ async function runPlayerCommand(bot, command, config) {
         if (/permission|权限|Unknown or incomplete command|未知或不完整/i.test(text)) {
           return true
         }
-        // 成功信号：gamemode / time 这类命令成功时静默，只有 OP 生效才会不报权限错。
-        // 因此「等到超时都没等到拒绝」即视为通过——由调用方据此判 ok。
+        // 成功信号：gamemode / time 这类命令成功时静默，不靠聊天回显判通过
         return false
       },
-      // 等拒绝的时间窗口不必长：拒绝是即时的，超时本身就意味着没被拒绝
+      // 等拒绝的时间窗口不必长：拒绝是即时的
       Math.min(3000, config.readyTimeoutMs)
     )
     return { ok: false, output: `服务端拒绝：${echoed}` }
   } catch (error) {
-    // 超时 = 没等到任何拒绝 = 命令被接受（这类命令成功时无回显）
-    if (/等待消息超时/.test(error.message)) {
-      return { ok: true, output: `${command} 未收到权限拒绝，视为 OP 生效` }
+    if (!/等待消息超时/.test(error.message)) {
+      return { ok: false, output: `执行 ${command} 时异常：${error.message}` }
     }
-    return { ok: false, output: `执行 ${command} 时异常：${error.message}` }
+    // 没等到拒绝——这既可能是「命令被接受」，也可能是「命令根本没出去」。
+    // 只有拿到正面证据才判通过（见本函数 KDoc）。
+    if (typeof consoleProbe !== 'function') {
+      return {
+        ok: false,
+        output: `${command} 未收到回显，且没有可用的正面取证途径，不能据此判为通过`
+      }
+    }
+    const probe = await consoleProbe()
+    if (!probe.ok) {
+      return { ok: false, output: `${command} 未收到回显，且正面取证失败：${probe.output}` }
+    }
+    return { ok: true, output: `${command} 未收到拒绝，正面取证确认已生效：${probe.output}` }
   }
 }

@@ -1,9 +1,9 @@
 package top.wcpe.mc.testkit.task
 
 import org.gradle.api.GradleException
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.io.TempDir
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import top.wcpe.mc.testkit.contract.McTestkitResultFile
 import java.io.File
 import kotlin.test.Test

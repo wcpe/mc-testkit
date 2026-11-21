@@ -138,6 +138,10 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
         return true
     }
 
+    /** [pid] 是否是本次构建登记且仍在运行的进程。它活着，这个 pid 就不会被别的进程占用。 */
+    @Synchronized
+    fun owns(pid: Long): Boolean = children.any { !it.retired && it.process.pid() == pid && it.process.isAlive }
+
     /** 本 JVM 当前全部子孙进程；一次调用只扫一遍进程表。 */
     private fun scan(): List<ProcessHandle> = ProcessHandle.current().descendants().use { it.toList() }
 

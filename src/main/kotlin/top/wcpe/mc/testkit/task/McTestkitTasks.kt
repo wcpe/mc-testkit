@@ -19,7 +19,7 @@ import top.wcpe.mc.testkit.bot.LEDGER_KEY_PROXY
 import top.wcpe.mc.testkit.bot.OutputBudget
 import top.wcpe.mc.testkit.bot.ProcessLedger
 import top.wcpe.mc.testkit.bot.RunOutputSupervisor
-import top.wcpe.mc.testkit.bot.stopProcessByPidFile
+import top.wcpe.mc.testkit.bot.botLogFile
 import top.wcpe.mc.testkit.config.BackendBungeeCordConfig
 import top.wcpe.mc.testkit.config.BackendVelocityConfig
 import top.wcpe.mc.testkit.config.MinecraftVersionGroup
@@ -148,7 +148,7 @@ internal class TaskExecutionContext(
     val projectDir: File,
     val botDir: File,
     val dependencies: DependencyDeclarations,
-    val outputService: org.gradle.api.provider.Provider<RunOutputService>,
+    val outputService: Provider<RunOutputService>,
 ) : java.io.Serializable {
     /**
      * 本次构建共用的输出预算与进程监管，不接手结果目录：停进程、清理与场景后钩子这类收尾用它。
@@ -166,6 +166,9 @@ internal class TaskExecutionContext(
         service.attach(layout.resultsDir)
         service.checkHealthy()
     }
+
+    /** [pid] 是否是本次构建起的、仍在进程监管下的 bot / 钩子进程；停止任务把它们留给监管，不按台账另杀一遍。 */
+    fun ownsProcess(pid: Long): Boolean = runBudget().supervisor.owns(pid)
 
     /** 任务执行期按名读环境变量（不捕获任何 Gradle 对象，兼容配置缓存序列化）。 */
     fun readEnv(name: String): String? = System.getenv(name)
@@ -732,7 +735,8 @@ object McTestkitTasks {
                 task.description = "停止代理 ${proxy.name}（按 pid 收尾）"
                 task.doLast {
                     // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
-                    val summary = stopTrackedProcesses(ctx.layout.resultsDir, listOf(proxyPidFile), ctx::info)
+                    val summary =
+                        stopTrackedProcesses(ctx.layout.resultsDir, listOf(proxyPidFile), ctx::info, owned = ctx::ownsProcess)
                     reportStopOutcome(
                         ctx,
                         summary,
@@ -821,21 +825,21 @@ object McTestkitTasks {
     ) {
         val layout = ctx.layout
         val stopName = McTestkitTaskNames.stopCluster(scenario.name)
-        // 全部 bot 的 pid key（多 bot 各一支；停任务据此按 pid 收尾，防 straggler 残留）
+        // 全部 bot 的 key（多 bot 各一支）：停任务据此停掉本次构建起的 bot，之前的构建留下的按进程台账收尾
         val botKeys = BotProcessPlanner.expand(scenario.name, scenario.botSpecs).map { it.key }
 
-        // 停集群任务：按 pid 收尾全部后端 + 代理 + 全部 bot（单独可调；集群任务 finalizedBy 它）
+        // 停集群任务：收尾全部后端 + 代理 + 全部 bot（单独可调；集群任务 finalizedBy 它）
         registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = TASK_GROUP
             task.description = "停止集群场景 ${scenario.name} 的全部后端、代理与机器人（按 pid 收尾）"
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容配置缓存
+                stopOwnedBots(ctx, botKeys)
                 val summary = stopTrackedProcesses(
                     layout.resultsDir,
-                    clusterBackends.map { layout.clusterBackendPidFile(it.name) } +
-                        layout.proxyPidFile(proxy.name) +
-                        stopOwnedBotFiles(ctx, botKeys),
+                    clusterBackends.map { layout.clusterBackendPidFile(it.name) } + layout.proxyPidFile(proxy.name),
                     ctx::info,
+                    owned = ctx::ownsProcess,
                 )
                 reportStopOutcome(
                     ctx,
@@ -1201,23 +1205,24 @@ object McTestkitTasks {
         val stopName = McTestkitTaskNames.stopStress(scenario.name)
         val action = scenario.botSpec?.action ?: scenario.name
 
-        // 全部 bot 的 log/pid key（停任务据此按 pid 收尾，防 straggler 残留）
+        // 全部 bot 的 key：停任务据此停掉本次构建起的 bot，之前的构建留下的按进程台账收尾
         val botKeys = stressBackends.indices.flatMap { idx ->
             (1..stress.botsPerServer).map { i -> stressBotKey(action, idx + 1, i) }
         }
 
-        // 停压测任务：按 pid 收尾全部后端 + 代理 + 全部 bot（单独可调；压测任务 finalizedBy 它）
+        // 停压测任务：收尾全部后端 + 代理 + 全部 bot（单独可调；压测任务 finalizedBy 它）
         registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = TASK_GROUP
             task.description = "停止压测场景 ${scenario.name} 的全部后端、代理与机器人（按 pid 收尾）"
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
+                stopOwnedBots(ctx, botKeys)
                 val summary = stopTrackedProcesses(
                     layout.resultsDir,
                     stressBackends.map { layout.clusterBackendPidFile(it.name) } +
-                        (proxy?.let { listOf(layout.proxyPidFile(it.name)) } ?: emptyList()) +
-                        stopOwnedBotFiles(ctx, botKeys),
+                        (proxy?.let { listOf(layout.proxyPidFile(it.name)) } ?: emptyList()),
                     ctx::info,
+                    owned = ctx::ownsProcess,
                 )
                 val stressPorts = stressBackends.map { it.port } +
                     (proxy?.let { p -> stressBackends.indices.map { index -> p.port + index } } ?: emptyList())
@@ -1514,7 +1519,6 @@ object McTestkitTasks {
     private fun stressResultFile(layout: RunLayout, scenario: String, backendName: String): File =
         File(layout.resultsDir, McTestkitResultFile.fileName("$scenario-$backendName"))
 
-    /** 温和销毁一个进程（压测 bot 收尾双保险；pid 文件由停任务按 pid 清理，这里只灭进程）。 */
     /**
      * 打印一次停任务收尾的结果，并在「声明过的端口仍被占用」时给出可操作提示。
      *
@@ -1539,6 +1543,12 @@ object McTestkitTasks {
             ctx.info(
                 "注意：本次收尾了 ${summary.ledgerStopped} 个**上一轮**残留的进程——" +
                     "前一次构建应是被强制中断、未走到收尾（否则不会留到本轮）。",
+            )
+        }
+        if (summary.survivorsStopped > 0) {
+            ctx.info(
+                "其中 ${summary.survivorsStopped} 个是上一次构建收尾时没停下、记在 ${RunOutputState.FILE_NAME} 里的进程；" +
+                    "记录里的进程都结束后，下一次构建会自己接手结果目录。",
             )
         }
         if (summary.ledgerSkipped > 0) {
@@ -1639,10 +1649,10 @@ object McTestkitTasks {
         val backend = resolveServeBackend(topology, serve)
         val proxy = serve.via?.let { via -> topology.proxies.first { it.name == via } } // 已由 TopologyResolver 校验存在 + 路由
         val stopName = McTestkitTaskNames.stopServe(serve.name)
-        // 可选 bot（serve 人机混场）的 pid key（停任务据此按 pid 收尾，防 straggler 残留）
+        // 可选 bot（serve 人机混场）的 key：停任务据此停掉本次构建起的 bot，之前的构建留下的按进程台账收尾
         val botKeys = BotProcessPlanner.expand(serve.name, serve.botSpecs).map { it.key }
 
-        // 停 serve 任务：按 pid 收尾后端（+ 代理 + 全部 bot）的兜底（另一终端停 / Ctrl+C 没清干净时用）
+        // 停 serve 任务：收尾后端（+ 代理 + 全部 bot）的兜底（另一终端停 / Ctrl+C 没清干净时用）
         registerTask(project, stopName, ownsRunOutput = false) { task ->
             task.group = SERVE_TASK_GROUP
             task.description =
@@ -1650,12 +1660,13 @@ object McTestkitTasks {
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val layout = ctx.layout
+                stopOwnedBots(ctx, botKeys)
                 val summary = stopTrackedProcesses(
                     layout.resultsDir,
                     listOf(provisionPidFile(layout.backendRunDir(backend.name), backend.name)) +
-                        (proxy?.let { listOf(layout.proxyPidFile(it.name)) } ?: emptyList()) +
-                        stopOwnedBotFiles(ctx, botKeys),
+                        (proxy?.let { listOf(layout.proxyPidFile(it.name)) } ?: emptyList()),
                     ctx::info,
+                    owned = ctx::ownsProcess,
                 )
                 reportStopOutcome(
                     ctx,
@@ -2063,7 +2074,7 @@ object McTestkitTasks {
         val clusterBackends = serve.backendRefs.map { name -> topology.backends.first { it.name == name } } // 已校验存在
         val proxy = topology.proxies.first { it.name == serve.via } // 集群 serve 必有 via 且已校验路由覆盖
         val stopName = McTestkitTaskNames.stopServe(serve.name)
-        // 可选 bot（serve 人机混场）的 pid key（停任务据此按 pid 收尾，防 straggler 残留）
+        // 可选 bot（serve 人机混场）的 key：停任务据此停掉本次构建起的 bot，之前的构建留下的按进程台账收尾
         val botKeys = BotProcessPlanner.expand(serve.name, serve.botSpecs).map { it.key }
 
         registerTask(project, stopName, ownsRunOutput = false) { task ->
@@ -2073,12 +2084,12 @@ object McTestkitTasks {
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 val layout = ctx.layout
+                stopOwnedBots(ctx, botKeys)
                 val summary = stopTrackedProcesses(
                     layout.resultsDir,
-                    clusterBackends.map { layout.clusterBackendPidFile(it.name) } +
-                        layout.proxyPidFile(proxy.name) +
-                        stopOwnedBotFiles(ctx, botKeys),
+                    clusterBackends.map { layout.clusterBackendPidFile(it.name) } + layout.proxyPidFile(proxy.name),
                     ctx::info,
+                    owned = ctx::ownsProcess,
                 )
                 reportStopOutcome(
                     ctx,
@@ -2425,7 +2436,7 @@ object McTestkitTasks {
      * **版本范围校验（多版本服务端拉起）**：[backendVersion] < 1.8（即 1.7.10）时跳过 bot 启动 + 日志告警，
      * 场景仍继续（不因无 bot 判 FAIL）。
      *
-     * @return 全部已起进程（供调用方按需收尾；亦各自写了 `bot-<key>.pid` 供按 pid 收尾）。
+     * @return 全部已起进程（供调用方按需收尾；各自写了 `bot-<key>.pid` 并登记进程台账）。
      */
     private fun launchScenarioBots(
         ctx: TaskExecutionContext,
@@ -2506,27 +2517,23 @@ object McTestkitTasks {
         }
     }
 
-    /** 停掉本次构建登记的这些 bot；bot 的 pid 文件不交给只认 pid 的收尾路径。 */
-    private fun stopOwnedBotFiles(ctx: TaskExecutionContext, keys: List<String>): List<File> {
-        keys.forEach { key ->
-            ctx.runBudget().supervisor.stopLog(top.wcpe.mc.testkit.bot.botLogFile(ctx.layout.resultsDir, key))
-        }
-        return emptyList()
+    /**
+     * 停掉本次构建起的这些 bot（交给进程监管，先温和后强杀）。没起过或已自停的是安全 no-op；之前的构建留下的 bot
+     * 由 stop 任务按进程台账核对身份后收尾（[stopTrackedProcesses]），bot 的 pid 文件只供排查，不交给只认 pid 的收尾路径。
+     */
+    private fun stopOwnedBots(ctx: TaskExecutionContext, keys: List<String>) {
+        if (keys.isEmpty()) return
+        val supervisor = ctx.runBudget().supervisor
+        keys.forEach { supervisor.stopLog(botLogFile(ctx.layout.resultsDir, it)) }
     }
 
-    /** 按 plan key 收尾场景全部 bot 的 pid 文件（单 bot / 已自停为安全 no-op，[stopProcessByPidFile]）。 */
+    /** 停掉场景的全部 bot，见 [stopOwnedBots]。 */
     private fun stopScenarioBots(ctx: TaskExecutionContext, scenario: ScenarioSpec) =
         stopBots(ctx, scenario.name, scenario.botSpecs)
 
-    /** 按 plan key 收尾一组 bot 的 pid 文件（**场景与 serve 共用**，serve 人机混场；单 bot / 已自停为安全 no-op）。 */
-    private fun stopBots(ctx: TaskExecutionContext, name: String, botSpecs: List<BotSpec>) {
-        val resultsDir = ctx.layout.resultsDir
-        BotProcessPlanner.expand(name, botSpecs).forEach { plan ->
-            if (!ctx.runBudget().supervisor.stopLog(top.wcpe.mc.testkit.bot.botLogFile(resultsDir, plan.key))) {
-                ctx.runBudget().fail("RUN_FAIL bot-not-owned-in-this-build")
-            }
-        }
-    }
+    /** 按 plan key 停掉一组 bot（**场景与 serve 共用**，serve 人机混场），见 [stopOwnedBots]。 */
+    private fun stopBots(ctx: TaskExecutionContext, name: String, botSpecs: List<BotSpec>) =
+        stopOwnedBots(ctx, BotProcessPlanner.expand(name, botSpecs).map { it.key })
 
     /**
      * 起一个 bot 进程：env 由 [BotConnection] 建（含协议版本固定），[BotLauncher] 后台拉起。

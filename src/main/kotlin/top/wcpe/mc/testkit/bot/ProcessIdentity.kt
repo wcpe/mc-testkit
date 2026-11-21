@@ -9,9 +9,12 @@ import java.time.Instant
  */
 internal data class ProcessIdentity(val pid: Long, val startMillis: Long) {
     /** 仍是同一个进程且仍存活。 */
-    fun isAlive(): Boolean = ProcessHandle.of(pid).map { handle ->
+    fun isAlive(): Boolean = handle() != null
+
+    /** 仍是同一个进程且仍存活时返回它的句柄。句柄绑着启动时刻，之后 destroy 不会误杀复用了这个 pid 的进程。 */
+    fun handle(): ProcessHandle? = ProcessHandle.of(pid).orElse(null)?.takeIf { handle ->
         handle.isAlive && handle.info().startInstant().map(Instant::toEpochMilli).orElse(null) == startMillis
-    }.orElse(false)
+    }
 
     override fun toString(): String = "$pid@$startMillis"
 

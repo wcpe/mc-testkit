@@ -6,12 +6,16 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.io.TempDir
 import top.wcpe.mc.testkit.bot.GuardChild
+import top.wcpe.mc.testkit.bot.ProcessIdentity
+import top.wcpe.mc.testkit.bot.ProcessLedger
 import top.wcpe.mc.testkit.bot.fixtureClasspath
 import top.wcpe.mc.testkit.bot.javaCommand
 import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /** 不起 Minecraft、网络、Node 或服务端任务，只跑真实生成的场景钩子任务。 */
@@ -168,6 +172,40 @@ class RunOutputServiceFunctionalTest {
         )
         assertEquals(interrupted, state.readText(), "停止任务不接手结果目录，记录必须保持原样")
     }
+
+    @Test
+    @DisplayName("上一次构建留下的 bot 与收尾没停下的进程：stop 任务按台账与状态记录收掉，下一次构建自己接手")
+    fun stopTaskReapsEarlierBuildProcessesAndNextBuildTakesOver() {
+        consumer(1024)
+        val results = File(dir, "build/mc-testkit/results").apply { mkdirs() }
+        val bot = sleeper()
+        val survivor = sleeper()
+        try {
+            ProcessLedger.record(results, "bot/full", bot.pid(), 0)
+            val identity = assertNotNull(ProcessIdentity.of(survivor.toHandle()), "前提：取得到启动时刻")
+            val state = File(results, RunOutputState.FILE_NAME)
+            state.writeText(RunOutputState.closed("00000000-0000-0000-0000-000000000001", 1024, "TIMEOUT log=bot-full.log", listOf(identity)))
+
+            val stop = GradleRunner.create().withProjectDir(dir).withPluginClasspath()
+                .withArguments("stopFullCluster", "--offline", "--configuration-cache", "--console=plain")
+                .build()
+
+            assertTrue(bot.waitFor(20, TimeUnit.SECONDS), "台账里上一次构建的 bot 应被 stop 任务收掉：${stop.output.takeLast(2000)}")
+            assertTrue(survivor.waitFor(20, TimeUnit.SECONDS), "状态记录里没停下的进程应被 stop 任务收掉：${stop.output.takeLast(2000)}")
+            assertTrue(ProcessLedger.records(results).isEmpty(), "收掉后台账记录应注销")
+            runner().build()
+            assertTrue(state.readText().startsWith("CLOSED_OK"), "下一次构建应接手并成功收尾：${state.readText()}")
+        } finally {
+            bot.destroyForcibly()
+            survivor.destroyForcibly()
+        }
+    }
+
+    private fun sleeper(): Process =
+        ProcessBuilder(javaCommand(), "-cp", fixtureClasspath(), GuardChild::class.java.name, "long-sleep")
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+            .start()
 
     private fun save(name: String, text: String) {
         System.getProperty("guard.evidence")?.let { File(it).apply { mkdirs() }.resolve("$name.txt").writeText(text) }

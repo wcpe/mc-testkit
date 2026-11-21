@@ -78,6 +78,15 @@ internal object RunOutputState {
         }
     }
 
+    /** RUN_FAIL 记录里收尾期限到时仍存活的进程（不管现在是否还活着）；其它记录、`live=unknown` 或读不出时为空。 */
+    fun survivors(file: File): List<ProcessIdentity> {
+        if (!file.isFile || file.length() > MAX_BYTES) return emptyList()
+        val lines = runCatching { file.readText(Charsets.UTF_8) }.getOrDefault("").lines()
+        if (lines[0] != "RUN_FAIL") return emptyList()
+        val live = lines.getOrNull(4)?.takeIf { it.startsWith("live=") }?.removePrefix("live=") ?: return emptyList()
+        return parseLive(live).orEmpty()
+    }
+
     private fun parseLive(text: String): List<ProcessIdentity>? = when (text) {
         "" -> emptyList()
         UNKNOWN -> null

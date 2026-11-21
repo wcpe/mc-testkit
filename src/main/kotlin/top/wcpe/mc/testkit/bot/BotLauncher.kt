@@ -15,7 +15,10 @@ data class BotProcessContext(
 /** 某机器人 key 的日志文件：`bot-<key>.log`。 */
 fun botLogFile(resultsDir: File, key: String): File = File(resultsDir, "bot-$key.log")
 
-/** 某机器人 key 的 pid 文件：`bot-<key>.pid`（供 [stopProcessByPidFile] 收尾）。 */
+/**
+ * 某机器人 key 的 pid 文件：`bot-<key>.pid`，只供排查。收尾不认它：本次构建的 bot 由进程监管停，
+ * 之前的构建留下的按进程台账（[ProcessLedger]）核对身份后停，只认 pid 会在 pid 复用时误杀。
+ */
 fun botPidFile(resultsDir: File, key: String): File = File(resultsDir, "bot-$key.pid")
 
 /**
@@ -86,7 +89,8 @@ class BotProcessHandle(
  * 机器人子进程启动器（机器人驱动与结果判定，编排模型见 ADR-0004）。
  *
  * 把 mineflayer 机器人作为**后台进程**拉起：`node <脚本>` 在机器人工作目录运行、合并 stderr、
- * 日志写 `bot-<key>.log`、pid 写 `bot-<key>.pid` 供收尾按 pid 杀（保证不残留占端口）。
+ * 日志写 `bot-<key>.log`、pid 写 `bot-<key>.pid`，并登记进程台账 `bot/<key>`：构建被强杀时，
+ * 之后的 stop 任务据此核对身份后收尾。
  *
  * ## 为什么不再用 `Redirect.appendTo(File)`
  *
@@ -153,6 +157,7 @@ object BotLauncher {
         val process = processBuilder.start()
         try {
             pidFile.writeText(process.pid().toString())
+            ProcessLedger.record(context.resultsDir, "$LEDGER_KEY_BOT/$action", process.pid(), 0)
 
             val pump = BoundedProcessOutputPump(
                 label = action,

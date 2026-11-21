@@ -4,10 +4,14 @@ import java.io.File
 import java.time.Instant
 import java.util.Properties
 
-/** 台账里一类进程记录的路径 key（同一 key 重复登记视为「同一逻辑进程的新一轮」，覆盖旧记录）。 */
+/**
+ * 台账里一类进程记录的路径 key（同一 key 重复登记视为「同一逻辑进程的新一轮」，覆盖旧记录）：
+ * `backend/<名>`、`proxy/<名>`、`bot/<日志 key>`、`hook/<pid 文件相对结果目录的路径>`。
+ */
 internal const val LEDGER_KEY_BACKEND = "backend"
 internal const val LEDGER_KEY_PROXY = "proxy"
 internal const val LEDGER_KEY_BOT = "bot"
+internal const val LEDGER_KEY_HOOK = "hook"
 
 /**
  * 进程台账（进程生命周期与收尾 高风险区）：把「本工具起过哪些进程」记到**不被运行目录清理触及**的文件，
@@ -23,11 +27,11 @@ internal const val LEDGER_KEY_BOT = "bot"
  * `clean` 清掉（与「运行目录可清理重建」的既有语义一致，不引入新的持久化面）。
  *
  * **安全边界**：收尾前核对候选进程的命令行与启动时刻是否都与登记时一致（见
- * [ProcessRecord.matchesLiveProcess]），确认确实是本工具起的那个服务端 / 代理，
+ * [ProcessRecord.matchesLiveProcess]），确认确实是本工具起的那个服务端 / 代理 / 机器人 / 钩子进程，
  * pid 复用（旧 pid 被无关进程占用）时**拒绝杀**并清理陈旧记录——收尾不得误伤用户自己的进程。
  *
  * 用 `java.util.Properties` 存（JDK 原生、无第三方依赖、人可读可手工删）而非 JSON：字段少且扁平，
- * 引 JSON 解析属镀金。
+ * 引 JSON 解析属镀金。读改写整个文件，故各方法在本 JVM 内互斥。
  */
 internal object ProcessLedger {
 
@@ -55,10 +59,11 @@ internal object ProcessLedger {
      * shutdown hook 仍在，收尾不受影响）。
      *
      * @param resultsDir 结果目录。
-     * @param key 逻辑进程标识（如 `backend/paper1201`、`proxy/wf`、`bot/idle`）。
+     * @param key 逻辑进程标识（如 `backend/paper1201`、`proxy/wf`、`bot/idle`、`hook/hook-full.pid`）。
      * @param pid 进程号。
      * @param port 监听端口（0 表示无端口，如机器人）。
      */
+    @Synchronized
     fun record(resultsDir: File, key: String, pid: Long, port: Int) {
         runCatching {
             val handle = ProcessHandle.of(pid).orElse(null)
@@ -86,6 +91,7 @@ internal object ProcessLedger {
      *
      * 与 [record] 同款：失败不抛。
      */
+    @Synchronized
     fun unrecord(resultsDir: File, key: String) {
         runCatching {
             val file = file(resultsDir)
@@ -104,6 +110,7 @@ internal object ProcessLedger {
      *
      * 文件缺失 / 内容损坏时返回空表（台账是兜底增强，不该因它读不出来而让收尾失败）。
      */
+    @Synchronized
     fun records(resultsDir: File): List<ProcessRecord> {
         val file = file(resultsDir)
         if (!file.isFile) {
@@ -154,7 +161,7 @@ internal object ProcessLedger {
 
     /** 台账文件头（人看：说明这文件是什么、能不能手工删）。 */
     private val LEDGER_HEADER = """
-        mc-testkit 进程台账：记录本工具起过的服务端 / 代理 / 机器人进程，供停任务跨轮次兜底收尾。
+        mc-testkit 进程台账：记录本工具起过的服务端 / 代理 / 机器人 / 钩子进程，供停任务跨轮次兜底收尾。
         可安全手工删除：删除后仅失去「收尾上一轮逃逸进程」的能力，不影响后续起服。
     """.trimIndent()
 }

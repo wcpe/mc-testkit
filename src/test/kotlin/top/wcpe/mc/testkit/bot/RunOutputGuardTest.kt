@@ -478,6 +478,13 @@ object GuardChild {
                 kotlin.system.exitProcess(0)
             }
             "sleep" -> Thread.sleep(5000)
+            "long-sleep" -> Thread.sleep(60000)
+            "tree" -> {
+                ProcessBuilder(javaCommand(), "-cp", fixtureClasspath(), GuardChild::class.java.name, "long-sleep")
+                    .inheritIO()
+                    .start()
+                Thread.sleep(60000)
+            }
             "fail" -> kotlin.system.exitProcess(7)
             "descendant" -> {
                 ProcessBuilder(

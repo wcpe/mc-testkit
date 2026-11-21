@@ -88,6 +88,19 @@ class ProcessLedgerTest {
     }
 
     @Test
+    @DisplayName("多个线程同时登记 bot 与钩子进程时记录不丢")
+    fun concurrentRecordsAreNotLost() {
+        val threads = (0 until 8).map { t ->
+            Thread {
+                repeat(20) { i -> ProcessLedger.record(resultsDir, "bot/t$t-$i", 1_000_000L + t * 100 + i, 0) }
+            }.apply { start() }
+        }
+        threads.forEach { it.join(TimeUnit.SECONDS.toMillis(30)) }
+
+        assertEquals(160, ProcessLedger.records(resultsDir).size, "并发登记的每条记录都应当保留")
+    }
+
+    @Test
     @DisplayName("注销后该 key 不应再出现在台账里且不影响其它记录")
     fun unrecordRemovesOnlyThatKey() {
         ProcessLedger.record(resultsDir, "backend/s1", 1L, 25565)

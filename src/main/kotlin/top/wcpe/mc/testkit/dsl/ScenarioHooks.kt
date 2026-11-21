@@ -1,6 +1,7 @@
 package top.wcpe.mc.testkit.dsl
 
 import top.wcpe.mc.testkit.bot.OutputBudget
+import top.wcpe.mc.testkit.bot.ProcessLedger
 import java.io.File
 
 /**
@@ -91,7 +92,8 @@ fun interface ScenarioHook : java.io.Serializable {
 /**
  * 执行一条外部命令的钩子（起控制面、清理等）。
  *
- * 进程以**后台**方式启动并立即返回（不阻塞场景），pid 落盘以便 `afterScenario` 经 [StopPidHook] 收尾。
+ * 进程以**后台**方式启动并立即返回（不阻塞场景），pid 落盘以便 `afterScenario` 经 [StopPidHook] 收尾；
+ * 同时登记进程台账 `hook/<pid 文件相对结果目录的路径>`，构建被强杀时之后的 stop 任务与 [StopPidHook] 据此核对身份后收尾。
  *
  * @property command 命令行（首元素为可执行文件；经 shell 包装以兼容 Windows 的 `.bat` / `.exe`）。
  * @property env 追加给子进程的环境变量（覆盖同名宿主变量）。
@@ -139,6 +141,7 @@ class ExecHook(
             context.outputBudget().fail("IOFAIL hook-pid ${ex.javaClass.simpleName}")
             throw ex
         }
+        ProcessLedger.record(context.resultsDir, ScenarioHookRuntime.ledgerKey(context.resultsDir, pidFile), process.pid(), readyPort)
 
         if (readyPort > 0) {
             ScenarioHookRuntime.awaitPort(context, readyPort, readyTimeoutMs, "钩子端口 $readyPort")
@@ -153,6 +156,7 @@ class ExecHook(
  * 按 pid 文件收尾进程的钩子（`afterScenario` 清理控制面等）。
  *
  * 复用编排既有的按 pid 收尾语义：进程已退出则静默跳过，避免「清理时报错盖住真正失败」。
+ * 本次构建起的交给进程监管停；之前的构建留下的按进程台账核对身份后停；对不上的不碰。
  *
  * @property pidFileName pid 文件名（落在 [HookContext.resultsDir] 下）。
  */

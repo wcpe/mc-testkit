@@ -1,7 +1,10 @@
 package top.wcpe.mc.testkit.dsl
 
 import top.wcpe.mc.testkit.bot.BoundedProcessOutputPump
+import top.wcpe.mc.testkit.bot.LEDGER_KEY_HOOK
 import top.wcpe.mc.testkit.bot.OutputBudget
+import top.wcpe.mc.testkit.bot.ProcessLedger
+import top.wcpe.mc.testkit.bot.stopProcessTree
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -106,11 +109,16 @@ internal object ScenarioHookRuntime {
             false
         }
 
+    /** 钩子进程在进程台账里的 key：`hook/<pid 文件相对结果目录的路径>`。 */
+    fun ledgerKey(resultsDir: File, pidFile: File): String =
+        "$LEDGER_KEY_HOOK/" + (pidFile.relativeToOrNull(resultsDir)?.invariantSeparatorsPath ?: pidFile.absolutePath)
+
     /**
      * 按 pid 文件收尾进程：进程已退出则静默跳过。
      *
      * 与既有按 pid 收尾语义一致——清理阶段不因「本来就没起来」而报错盖住真正的失败原因。
-     * 子进程树用 [ProcessHandle.descendants] 一并回收（控制面可能再拉起子进程）。
+     * 本次构建起的交给进程监管停（连同观察到的子孙进程）；之前的构建留下的按进程台账核对身份后连同子孙进程一起停；
+     * 对不上的（pid 已被别的进程复用，或台账里没有）不碰，只记一行日志。
      */
     fun stopByPidFile(context: HookContext, pidFile: File) {
         if (!pidFile.isFile) {
@@ -119,10 +127,17 @@ internal object ScenarioHookRuntime {
         }
         val pid =
             pidFile.inputStream().use { String(it.readNBytes(32), Charsets.UTF_8) }.trim().toLongOrNull() ?: return
-        if (ProcessHandle.of(pid).isEmpty) return
-        check(context.outputBudget().supervisor.stopPidFile(pidFile)) {
-            "pid 文件 ${pidFile.name} 对应的进程不是本次构建启动的，拒绝按 pid 收尾"
+        val handle = ProcessHandle.of(pid).orElse(null) ?: return
+        if (context.outputBudget().supervisor.stopPidFile(pidFile)) return
+        val key = ledgerKey(context.resultsDir, pidFile)
+        val record = ProcessLedger.records(context.resultsDir).firstOrNull { it.key == key && it.pid == pid }
+        if (record == null || !record.matchesLiveProcess()) {
+            context.info("pid 文件 ${pidFile.name} 里的进程（pid=$pid）对不上本工具登记的钩子进程（pid 可能已被复用），不按 pid 收尾")
+            return
         }
+        stopProcessTree(pid, handle, context::info)
+        ProcessLedger.unrecord(context.resultsDir, key)
+        context.info("已按进程台账收掉之前的构建留下的钩子进程（${pidFile.name}，pid=$pid）")
     }
 
     /**

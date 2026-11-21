@@ -87,3 +87,15 @@ fun stopProcessByPid(pid: Long, handle: ProcessHandle, logger: (String) -> Unit 
     }
     logger("已结束进程 pid=$pid")
 }
+
+/**
+ * 连同子孙进程一起结束（钩子在 Windows 上经 `cmd /c` 起，只杀根进程会留下真正干活的子进程）。
+ *
+ * 子孙进程必须在根进程退出前记下：根进程一退，它们就不再算根进程的子孙。记下的句柄带启动时刻，
+ * 之后强杀时 pid 已被复用也不会误杀。
+ */
+fun stopProcessTree(pid: Long, handle: ProcessHandle, logger: (String) -> Unit = {}) {
+    val descendants = handle.descendants().use { it.toList() }
+    stopProcessByPid(pid, handle, logger)
+    descendants.forEach { if (it.isAlive) it.destroyForcibly() }
+}

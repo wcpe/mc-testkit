@@ -31,6 +31,7 @@
 | [0026](0026-plugin-artifact-source-and-shared-backend-serial.md) | 依赖插件产物来源 `plugin(from = …)`（扩展 0015）+ 共用同一后端的场景自动串行（补齐 FR-04 的多场景并行缺口） | 已接受 |
 | [0027](0027-bot-command-channels.md) | bot 命令执行通道：原版 OP 提权（`bot { op = true }`）+ 插件消息 console 通道（`E2E_CMD` 协议）+ 机器人侧 `execCommand` 封装 | 已接受 |
 | [0028](0028-pr-gating-by-change-nature.md) | PR 门禁按变更性质分级：发版提交与纯文档更新可直推 `master`，代码修复 / 功能 / 重构仍必须走 PR（取代 0018 决策 1） | 已接受 |
+| [0029](0029-bot-output-budget-and-run-ownership.md) | bot 与钩子进程的输出走管道 + 构建级字节预算；结果目录记录输出所有权，只在上一次构建可能仍有进程在写时拒绝接手 | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

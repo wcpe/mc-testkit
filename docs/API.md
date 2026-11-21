@@ -349,6 +349,7 @@ dependencies {
 - 压测（FR-11）：`…STRESS_DURATION_SECONDS`（施压秒数，编排→bot 与桩）、`…BOT_INDEX`（每 bot 进程序号；FR-16 同质批量复制亦复用）、`…STRESS_RANDOM_SEED`（共享随机种子；bot 用 `seed xor botIndex` 播种 RNG 使各 bot 可复现且互异）。规模（服数 / 每服 bot 数）由 DSL `backends(...)` + `stress { botsPerServer }` 表达，不走 env。经代理时机器人协议版本仍由编排固定为后端版本（环境契约，FR-05）。
 - 单场景多 bot（FR-16）：**不新增 env**，复用 `…BOT_USERNAME`（多进程时编排强制下发**唯一**名，盖过消费方单值 override）、`…BOT_ACTION`（各 bot 各自的分发动作）、`…BOT_INDEX`（同质 `count = N` 复制时下发 1..N，桩据此按 index 聚合）；集群下每个 bot 仍各自收到 `…CLUSTER_BACKENDS` 以经代理 `/server` 切换。规模（份数 / 角色）由 DSL `bot { count }` + 多个 `bot("角色")` 表达，不走 env（ADR-0009）。
 - 机器人协议版本（`…BOT_VERSION`）经代理时由编排自动固定为后端版本（环境契约，FR-05）。
+- 输出预算（FR-34）：`…BOT_LOG_LIMIT_BYTES` / `…BOT_LOG_RUN_LIMIT_BYTES`（单个日志文件 / 整个构建的字节上限，由插件自身读取，不属于编排与 bot / 桩之间的契约；对应的系统属性优先，见 §3.7）。
 - 代理下载版本缺省取**后端版本**（与 `…BOT_VERSION` 同源）；Waterfall 在 PaperMC 仅按 major.minor 发布，故其缺省与 `…WATERFALL_VERSION` 覆盖均解析为 major.minor（后端 `1.20.1` → Waterfall `1.20`），传完整补丁号版本会 404。
 
 发布由 CI 完成（打 `vX.Y.Z` tag 触发 `release.yml`，见 `docs/CONTRIBUTING.md` §8 / `docs/OPERATIONS.md` §1.2）；发布凭据仅存 GitHub 仓库的 `release` environment secrets，不入库。本地仅在需要手工试验 `./gradlew publish` 时才提供同名的 `WCPE_MAVEN_USERNAME` / `WCPE_MAVEN_PASSWORD`（Gradle 属性或环境变量）。
@@ -535,6 +536,59 @@ bot 先起、后端后起，不存在「全部节点已就绪」的时刻。在�
 > 因此取证必须走 `registerProbe`：结果只经 `E2E_PROBE_RESULT:<name>:<text>` 回显给触发者，**不写结果文件、不关服**，判定权完全留在机器人/编排那一侧。
 
 > **须原子落盘**：桩写结果文件必须**原子**完成（写同目录临时文件 + 原子 rename 替换），避免编排 verify 读到「写了一半」的结果文件而误判。单后端前台路径靠「后端进程退出后才 verify」时序天然隔离，但集群/压测轮询结果文件、以及消费方桩异步写时存在并发窗口，故约定为契约。共享库 `harness-core` 的 `McTestkitResultWriter` 已按此实现；`template/harness` 继承 `McTestkitHarnessPlugin` 即获得该保证（消费方自写桩须照此保证，见 §4）。
+
+### 3.7 机器人与钩子进程的输出预算（FR-34，[ADR-0029](adr/0029-bot-output-budget-and-run-ownership.md)）
+
+bot 进程与场景钩子后台进程（`ExecHook`）的 stdout / stderr 合流写入各自的日志文件（bot 为结果目录下的 `bot-<key>.log`，钩子为其声明的日志文件），按字节计入预算。服务端日志不计入。
+
+| 上限 | 默认 | 调整（系统属性优先，其次环境变量） |
+|---|---|---|
+| 单个日志文件 | 8 MiB | `mc.testkit.bot.log.limit.bytes` / `MC_TESTKIT_E2E_BOT_LOG_LIMIT_BYTES` |
+| 整个构建合计 | 128 MiB | `mc.testkit.bot.log.runLimit.bytes` / `MC_TESTKIT_E2E_BOT_LOG_RUN_LIMIT_BYTES` |
+
+- 取值为字节数（十进制正整数），不超过 1 GiB；单文件上限不得大于构建上限，构建上限至少 32 KiB。非法值使任务失败，不退回默认。系统属性须落在执行构建的 JVM 上：命令行 `-Dmc.testkit.bot.log.limit.bytes=…`，或 `gradle.properties` 里的 `systemProp.mc.testkit.bot.log.limit.bytes=…`。
+- 一次构建最多 128 个日志文件。
+- 越限：日志末尾写一行 `[OUTPUT_LIMIT] limit=per-sink|run sink=<文件名>`，结束本次构建监管的全部 bot 与钩子进程，任务以 `RUN_FAIL: OUTPUT_LIMIT …` 失败——桩或导演已写出 PASS 也一样。
+- 钩子拿不到预算时拒绝启动外部命令，不退回无上限写盘。
+
+判失败的全部情形（原因为有界 ASCII 文本，先到先得，任务报错为 `RUN_FAIL: <原因>`）：
+
+| 原因 | 含义 |
+|---|---|
+| `OUTPUT_LIMIT limit=per-sink\|run sink=<文件名>` / `OUTPUT_LIMIT sink-count` | 越过单文件或构建上限 / 日志文件超过 128 个 |
+| `CHILD_EXIT code=<n>` | 受监管进程非零退出 |
+| `TIMEOUT log=<日志文件名>` | 超过监管期限：场景 `resultTimeoutSeconds` + 600 秒宽限，压测另加 `stress.durationSeconds`（见 FR-32）；serve 的 bot 不设期限 |
+| `RUN_FAIL inherited-pipe-or-descendant` | 根进程已退出，子孙进程仍在或仍握着输出管道 |
+| `RUN_FAIL descendant-count` | 单个进程的子孙超过 128 个 |
+| `RUN_FAIL detached-child-at-build-end` | 构建结束时仍有既没停止、也没退出的受监管进程（随即被杀掉） |
+| `RUN_FAIL stop-deadline` / `RUN_FAIL cleanup-deadline` | 停止 / 收尾期限内无法确认进程已退出 |
+| `IOFAIL sink=<文件名> <异常>` | 写日志失败 |
+| `RUN_FAIL prior-output-owner-not-successful <说明>` | 结果目录的上一次构建可能仍有进程在写（见下） |
+
+**结果目录的输出所有权 `output-run.state`**：每个结果目录一份，记录最近一次构建对该目录输出的所有权（UTF-8，按行）。
+
+```text
+RUNNING                     构建进行中
+<runId>
+```
+
+```text
+CLOSED_OK 或 RUN_FAIL        构建已收尾
+<runId>
+bytes=<计入预算的字节数>
+<失败原因，成功时为空行>
+live=<pid>@<启动毫秒>,…    收尾期限到时仍存活的受监管进程；正常为空，无法确认时为 unknown
+```
+
+下一次构建接手该目录时：
+
+| 上一次的记录 | 本次 |
+|---|---|
+| 没有、空文件或 `CLOSED_OK` | 接手 |
+| `RUN_FAIL`，且 `live=` 为空或所列进程都已结束 | 告警后接手。上一次的失败已由那次构建报告；场景结果文件开跑前会清掉，不会沿用 |
+| `RUNNING`（被中断）、`live=unknown`、没有 `live=` 行（旧格式）、所列进程仍存活、读不懂或超过 4 KiB | 拒绝：`RUN_FAIL prior-output-owner-not-successful state=… run=…`（仍存活时带 `live=` 列表），并保留原记录 |
+
+被拒时，先确认上一次构建起的 bot 与钩子进程都已结束，再删除该文件重跑；报错日志给出文件路径。被拒的构建不改写记录，所以隐患未消除前会一直拒绝。
 
 ## 4. 共享构件（FR-09，ADR-0014）
 

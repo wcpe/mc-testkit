@@ -263,6 +263,7 @@ dependencies {
 | `npmInstallE2eBot` | 安装机器人 mineflayer 依赖（固定名） |
 | `syncE2eRuntimeCache` | 运行库/下载缓存回写到持久缓存（固定名）。**由各终态任务（`e2e<Key>` / `e2e<Key>Via<Proxy>` / `e2e<Key>Cluster` / `e2e<Key>Stress` / `serve<Key>`）经 `finalizedBy` 自动执行**，通常无需手工调用；按后端分别回写 `server-base/<backendName>/` |
 | `purgeE2eRuntimeCache` | 清空持久缓存（固定名） |
+| `stopE2eProcesses` | 收掉之前的构建留下的全部后端、代理、机器人与钩子进程（固定名，不论声明了哪些拓扑都注册，只有直连场景的工程靠它收尾）：只认进程台账与 `output-run.state` 里身份核对得上的进程，连同子孙进程一起收；不按 pid 文件停（之前的构建留下的 pid 文件可能已指向复用了该 pid 的无关进程），本次构建仍在监管的进程留给监管，不接手结果目录（见 §3.7）。同一条命令里的场景、钩子与 serve 任务都排在它之后：`./gradlew stopE2eProcesses e2e<Key>` 先收尾再开跑。直连场景端口被占、结果目录拒绝接手时的报错都指向它 |
 | `stopProxy<Proxy>` | 停止某代理（按 pid 文件与进程台账收尾）；由 `e2e<Key>Via<Proxy>` 经 `finalizedBy` 触发，亦可单独调用 |
 | `e2e<Key>Cluster` | 集群跑某场景：N 后端全后台 + 代理（单 listener + N 具名 server）+ bot 经代理 `/server` 切换，读结果判 PASS/FAIL（FR-10） |
 | `stop<Key>Cluster` | 停止某集群场景的全部后端、代理与机器人（本次构建起的 bot 交给进程监管停，服务端与代理按 pid 文件收，之前的构建留下的按进程台账核对身份后收，见 §3.7）；由 `e2e<Key>Cluster` 经 `finalizedBy` 触发，亦可单独调用 |
@@ -569,11 +570,12 @@ bot 进程与场景钩子后台进程（`ExecHook`）的 stdout / stderr 合流�
 | `RUN_FAIL supervisor <异常>` | 进程监管线程自身出错 |
 | `RUN_FAIL prior-output-owner-not-successful <说明>` | 结果目录的上一次构建可能仍有进程在写（见下） |
 
-**结果目录的输出所有权 `output-run.state`**：每个结果目录一份，记录最近一次构建对该目录输出的所有权（UTF-8，按行）。只有起进程、读判定的任务（`e2e*`、`serve*` 等）接手结果目录；`stop<Key>Cluster`、`stop<Key>Stress`、`stop<Key>Serve`、`stopProxy<Proxy>`、`after<Key>Scenario` 与运行库缓存任务（`syncE2eRuntimeCache` / `purgeE2eRuntimeCache`）不接手、不写记录，也不受下表的拒绝影响。
+**结果目录的输出所有权 `output-run.state`**：每个结果目录一份，记录最近一次构建对该目录输出的所有权（UTF-8，按行）。只有起进程、读判定的任务（`e2e*`、`serve*` 等）接手结果目录；`stopE2eProcesses`、`stop<Key>Cluster`、`stop<Key>Stress`、`stop<Key>Serve`、`stopProxy<Proxy>`、`after<Key>Scenario` 与运行库缓存任务（`syncE2eRuntimeCache` / `purgeE2eRuntimeCache`）不接手、不写记录，也不受下表的拒绝影响。
 
 ```text
 RUNNING                     构建进行中
 <runId>
+owner=<pid>@<启动毫秒>      跑这次构建的 JVM；取不到启动时刻时为空
 ```
 
 ```text
@@ -590,9 +592,19 @@ live=<pid>@<启动毫秒>,…    收尾期限到时仍存活的受监管进程�
 |---|---|
 | 没有、空文件或 `CLOSED_OK` | 接手 |
 | `RUN_FAIL`，且 `live=` 为空或所列进程都已结束 | 告警后接手。上一次的失败已由那次构建报告；场景结果文件开跑前会清掉，不会沿用 |
-| `RUNNING`（被中断）、`live=unknown`、没有 `live=` 行（旧格式）、所列进程仍存活、读不懂或超过 4 KiB | 拒绝：`RUN_FAIL prior-output-owner-not-successful state=… run=…`（仍存活时带 `live=` 列表），并保留原记录 |
+| `RUNNING`，`owner=` 已结束或就是当前 JVM，且进程台账里没有仍在写日志的 bot 与钩子进程 | 告警后接手。那次构建没收尾就结束了（被强杀、断电或收尾前出错）；一个 Gradle 守护进程同时只跑一个构建，持有者就是当前 JVM 时那次构建必定已经结束。「仍在写日志」指台账里身份核对得上、仍存活、又不归本次构建监管的 `bot/…` 与 `hook/…` 记录 |
+| 其余情形（见下表） | 拒绝：`RUN_FAIL prior-output-owner-not-successful <说明>`，并保留原记录 |
 
-被拒时先跑对应的 stop 任务：它们按进程台账收掉之前的构建留下的服务端、代理、bot 与钩子进程（台账记着命令与启动时刻，对不上的不杀；对得上的连同子孙进程一起收），也收掉 `RUN_FAIL` 记录里 `live=` 列出、pid 与启动时刻都对得上的进程。记录里的进程都结束后，下一次构建自己接手，记录本身不用动。记录停在 `RUNNING`（构建被强杀或断电）或 `live=unknown` 时无法确认，跑完 stop 任务、确认没有进程还在写这个目录后，删除该文件重跑；报错日志给出文件路径与这些步骤。被拒的构建不改写记录，所以隐患未消除前会一直拒绝。
+拒绝时的说明与恢复办法（报错日志给出状态文件路径与对应步骤）：
+
+| 说明 | 含义 | 恢复 |
+|---|---|---|
+| `state=RUNNING run=… owner=ended ledger-live=<个数>` | 持有者已结束，台账里还有它留下的、仍在写日志的 bot 或钩子进程（报错列出它们的台账 key） | 跑 `stopE2eProcesses`（或对应的 stop 任务），之后的构建自己接手 |
+| `state=RUN_FAIL run=… live=<pid>@<启动毫秒>,…` | 上一次失败，收尾时没停下的进程仍存活（只列仍存活的） | 同上 |
+| `state=RUNNING run=… owner=<pid>@<启动毫秒>` | 持有记录的构建 JVM 仍存活且不是当前 JVM，多为同一工程的另一个构建正在用这个目录 | 等它结束后重跑；确认没有构建在跑、只是 Gradle 守护进程卡住时，先 `./gradlew --stop` |
+| `state=RUNNING run=… owner=unrecorded`、`state=RUN_FAIL run=… live=unknown`、`state=RUN_FAIL run=… live=unrecorded`、`state=unreadable`、`state=oversized` | 无法确认：旧版本写下的 `RUNNING`（没有持有者）、持有者为空（取不到启动时刻）或读不懂、收尾时无法确认进程是否都已结束、没有 `live=` 行的旧格式、读不懂或超过 4 KiB | 跑 `stopE2eProcesses` 收掉台账里能找到的进程，确认没有进程还在写这个目录后，删除该文件重跑 |
+
+stop 任务不受这道检查拦截：它们按进程台账收掉之前的构建留下的服务端、代理、bot 与钩子进程（台账记着命令与启动时刻，对不上的不杀；对得上的连同子孙进程一起收），也收掉 `RUN_FAIL` 记录里 `live=` 列出、pid 与启动时刻都对得上的进程。记录本身不用动，下一次构建按上表重新判定后自己接手。被拒的构建不改写记录，所以隐患未消除前会一直拒绝。
 
 ## 4. 共享构件（FR-09，ADR-0014）
 

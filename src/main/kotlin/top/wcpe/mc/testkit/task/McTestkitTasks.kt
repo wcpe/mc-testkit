@@ -114,8 +114,21 @@ private fun recordProcessedPid(
     process: Process,
     port: Int,
 ) {
-    pidFile.apply { parentFile?.mkdirs() }.writeText(process.pid().toString())
-    ProcessLedger.record(ctx.layout.resultsDir, ledgerKey, process.pid(), port)
+    // 登记失败必须强杀刚起的进程再抛。
+    //
+    // 调用方是 `proxyProcess = startProxyBackground(...)` / `backendProcesses[name] = startBackendBackground(...)`
+    // —— 赋值发生在函数正常返回之后。这里一旦抛异常，finally 的收尾列表里**没有**这个进程，
+    // 它就成了孤儿：活着、占着端口、台账里也没有记录，之后的 stop 任务同样找不到它。
+    // ServerLauncher.launch 对同款情形有「强杀刚起的进程」的保护，这里对齐。
+    try {
+        // 带身份写入 pid（pid + 启动时刻）：停任务按 pid 文件收尾前会核对，防 pid 复用误杀
+        top.wcpe.mc.testkit.bot.writePidFile(pidFile, process.pid())
+        ProcessLedger.record(ctx.layout.resultsDir, ledgerKey, process.pid(), port)
+    } catch (ex: Exception) {
+        ctx.warn("登记进程 $ledgerKey（pid=${process.pid()}）失败，已强杀该进程：${ex.message}")
+        runCatching { process.destroyForcibly() }
+        throw ex
+    }
 }
 
 /**
@@ -1491,27 +1504,36 @@ object McTestkitTasks {
         // 派生规则统一走 BotProcessPlanner，保证与写进 ops.json 的 OP 名字同源（ADR-0027）
         val baseName = BotProcessPlanner.stressUsernameBase(action, bot)
         val processes = mutableListOf<BotProcessHandle>()
-        for (i in 1..stress.botsPerServer) {
-            val key = stressBotKey(action, serverIndex, i)
-            val username = BotProcessPlanner.stressUsername(baseName, serverIndex, i)
-            val connection = BotConnection(action = action, username = username, port = botPort, version = protocolVersion)
-            // 强制唯一名（经 extraEnv 末位合入，覆盖消费方单值 BOT_USERNAME override）+ 压测维度 env
-            val extraEnv = bot.env + mapOf(
-                McTestkitEnv.BOT_USERNAME to username,
-                McTestkitEnv.BOT_INDEX to i.toString(),
-                McTestkitEnv.STRESS_RANDOM_SEED to stress.randomSeed.toString(),
-                McTestkitEnv.STRESS_DURATION_SECONDS to stress.durationSeconds.toString(),
-            )
-            val environment = connection.toEnvironment(extraEnv, ctx::readEnv)
-            processes += BotLauncher.launch(
-                context = BotProcessContext(botDir = botDir, botScript = botScript, resultsDir = layout.resultsDir),
-                action = key,
-                environment = environment,
-                // 同一 run 的所有 bot 共享同一份预算：不因再次 launch 而重置
-                budget = ctx.outputBudget(),
-                lifetimeMs = lifetimeMs,
-                logger = { ctx.info(it) },
-            )
+        try {
+            for (i in 1..stress.botsPerServer) {
+                val key = stressBotKey(action, serverIndex, i)
+                val username = BotProcessPlanner.stressUsername(baseName, serverIndex, i)
+                val connection = BotConnection(action = action, username = username, port = botPort, version = protocolVersion)
+                // 强制唯一名（经 extraEnv 末位合入，覆盖消费方单值 BOT_USERNAME override）+ 压测维度 env
+                val extraEnv = bot.env + mapOf(
+                    McTestkitEnv.BOT_USERNAME to username,
+                    McTestkitEnv.BOT_INDEX to i.toString(),
+                    McTestkitEnv.STRESS_RANDOM_SEED to stress.randomSeed.toString(),
+                    McTestkitEnv.STRESS_DURATION_SECONDS to stress.durationSeconds.toString(),
+                )
+                val environment = connection.toEnvironment(extraEnv, ctx::readEnv)
+                processes += BotLauncher.launch(
+                    context = BotProcessContext(botDir = botDir, botScript = botScript, resultsDir = layout.resultsDir),
+                    action = key,
+                    environment = environment,
+                    // 同一 run 的所有 bot 共享同一份预算：不因再次 launch 而重置
+                    budget = ctx.outputBudget(),
+                    lifetimeMs = lifetimeMs,
+                    logger = { ctx.info(it) },
+                )
+            }
+        } catch (ex: Exception) {
+            // 第 N 个起失败时，前面已起的必须先收掉：调用侧的列表接收不到，finally 里也就没有它们
+            if (processes.isNotEmpty()) {
+                ctx.warn("服 s$serverIndex 有 ${processes.size} 个压测 bot 已启动但后续启动失败，先收掉这些再报错")
+                processes.forEach { handle -> runCatching { handle.stop { ctx.info(it) } } }
+            }
+            throw ex
         }
         ctx.info("已为服 s$serverIndex 启动 ${stress.botsPerServer} 个压测 bot（连端口=$botPort）")
         return processes
@@ -2486,7 +2508,13 @@ object McTestkitTasks {
             javaPath = resolveProxyJava(ctx, proxy),
             logger = { ctx.info(it) },
         )
-        layout.proxyPidFile(proxy.name).apply { parentFile?.mkdirs() }.writeText(process.pid().toString())
+        // 代理同样登记进程台账（此前只写 pid 文件）。
+        //
+        // 少了台账这一路，e2e<Key>Via<Proxy> / 单 serve 经代理起的代理进程在 Gradle daemon 被强杀后
+        // 会存活；而下一轮 stageProxyRuntime 会 deleteRecursively() 整个代理运行目录（pid 文件随之消失），
+        // 台账里又没有记录 —— 代理永久占着代理端口，之后每轮都以 bind failed 失败。
+        // 集群与压压测的代理早已走 recordProcessedPid，这里是同一件事漏了一处。
+        recordProcessedPid(ctx, layout.proxyPidFile(proxy.name), "$LEDGER_KEY_PROXY/${proxy.name}", process, proxy.port)
         ctx.info("已启动代理 ${proxy.name} pid=${process.pid()} 监听端口=${proxy.port}（转发到后端 ${backend.name}:${backend.port}）")
         return process
     }
@@ -2568,18 +2596,35 @@ object McTestkitTasks {
         val plans = BotProcessPlanner.expand(name, botSpecs)
         // 每进程「追加 env」（唯一名 / 序号 / 共享 env）由纯函数装配，便于穷举单测
         val environments = BotProcessPlanner.extraEnvironments(plans, sharedExtraEnv)
-        return plans.zip(environments).map { (plan, extraEnv) ->
-            launchBotProcess(
-                ctx,
-                action = plan.action,
-                username = plan.username,
-                key = plan.key,
-                backendPort = backendPort,
-                protocolVersion = protocolVersion,
-                lifetimeMs = lifetimeMs,
-                extraEnv = extraEnv,
-            )
+        // 先累积到本地列表再返回：中途某个 bot 起失败时，已起的那些必须当场收掉。
+        //
+        // 原来直接 `map { launchBotProcess(...) }`：第 N 个抛异常时，前 N-1 个句柄随异常一起丢掉，
+        // 而调用侧的 `botProcesses += launchBots(...)` 根本没执行到，finally 里的列表是空的
+        // → 残留 node 进程继续重连服务端，干扰后续场景判定。压测的 launchStressBotsForServer 同型。
+        val started = mutableListOf<BotProcessHandle>()
+        try {
+            plans.zip(environments).forEach { (plan, extraEnv) ->
+                started += launchBotProcess(
+                    ctx,
+                    action = plan.action,
+                    username = plan.username,
+                    key = plan.key,
+                    backendPort = backendPort,
+                    protocolVersion = protocolVersion,
+                    lifetimeMs = lifetimeMs,
+                    extraEnv = extraEnv,
+                )
+            }
+        } catch (ex: Exception) {
+            if (started.isNotEmpty()) {
+                ctx.warn("有 ${started.size} 个 bot 已启动但后续 bot 启动失败，先收掉这些再报错")
+                started.forEach { handle ->
+                    runCatching { handle.stop { ctx.info(it) } }
+                }
+            }
+            throw ex
         }
+        return started
     }
 
     /**
@@ -3008,7 +3053,7 @@ internal fun clearPreviousScenarioResult(resultsDir: File, scenario: String) {
 internal fun deleteStaleResult(resultFile: File, description: String) {
     if (resultFile.exists() && !resultFile.delete()) {
         throw GradleException(
-            "无法删除上轮结果文件：${resultFile.absolutePath}（${description}）。" +
+            "无法删除上轮结果文件：${resultFile.absolutePath}（$description）。" +
                 "该文件若被占用 / 只读，轮询会把它当成本轮结果而误判通过；" +
                 "请关闭占用它的进程或手工删除后重试。",
         )

@@ -71,6 +71,12 @@ mcTestkit {
         stress { botsPerServer = 100; durationSeconds = 300 } // botsPerServer/durationSeconds 必填 >0
         bot { username = "Stress"; action = "continuous-stress" }
     }
+    // 长时间场景（FR-32）：按场景放宽等桩写出结果文件的上限（秒，默认 600，须 >0）；各类场景通用
+    scenario("long-load") {
+        backend = "s1"
+        resultTimeoutSeconds = 1500 // 要给足「起服 + 场景全程 + 收尾」
+        bot { username = "Load"; action = "long-load" }
+    }
     // 单场景多 bot（FR-16，ADR-0009）·异质双角色（单后端直连）：多个具名 bot("角色")，各自 username/action/env
     scenario("gui-edit") {
         backend = "s1"
@@ -113,6 +119,8 @@ mcTestkit {
     }
 }
 ```
+
+**结果等待上限（`resultTimeoutSeconds`，FR-32）**：编排以「桩写出结果文件」为场景完成信号，等它的上限默认 600 秒（`McTestkitDefaults.RESULT_TIMEOUT_SECONDS`），可按场景声明 `resultTimeoutSeconds` 覆盖，须 >0（否则配置期中文报错）。直连、经代理与集群场景到点仍无结果即强制结束节点并判失败，报错带出实际上限；压测场景先等 `stress.durationSeconds`，再额外等 `resultTimeoutSeconds`。场景自身要跑很久（长时间负载、长观测窗口）时，上限要给足「起服 + 场景全程 + 收尾」，否则未跑完的场景会被当作桩未收尾而截断。
 
 **版本矩阵展开规则**：每个条目生成
 - 后端 `backendNamePrefix + key`（默认 `v` + key，如 `v1201`）

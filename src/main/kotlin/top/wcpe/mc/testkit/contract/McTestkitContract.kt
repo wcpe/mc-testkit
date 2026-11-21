@@ -34,6 +34,12 @@ object McTestkitDefaults {
     const val STRESS_RANDOM_SEED = 20260622L
 
     /**
+     * 编排等桩写出结果文件的默认上限（秒）：超时仍无结果即视为桩未正常收尾 / 启动失败。
+     * 可经 `scenario { resultTimeoutSeconds }` 按场景覆盖；压测场景在 `stress.durationSeconds` 之外再等这么久。
+     */
+    const val RESULT_TIMEOUT_SECONDS = 600L
+
+    /**
      * 代理 Velocity 缺省版本（Velocity 自有版本号、非 MC 版本；官方当前可下载的最新 3.x，需 Java 21，见 ADR-0010）。
      * 可经环境变量 [McTestkitEnv.VELOCITY_VERSION] 覆盖。
      */

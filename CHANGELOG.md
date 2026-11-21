@@ -4,6 +4,13 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 新增
+
+- **场景级结果等待上限 `resultTimeoutSeconds`（FR-32）**：编排等桩写出结果文件的上限此前写死为 600 秒（`McTestkitTasks` 里的私有常量，直连 / 经代理 / 集群共用，压测在 `durationSeconds` 之外再加它），消费方没有任何办法调整。场景本身就要跑 10 分钟以上时（如长时间性能窗口），任务会在场景跑完前被强制结束，报「桩可能未正常收尾 / 启动失败」，报错与真实原因对不上。现可用 `scenario { resultTimeoutSeconds = N }` 按场景声明，默认仍是 600 秒（`McTestkitDefaults.RESULT_TIMEOUT_SECONDS`），未声明的场景行为不变；配置期校验须 >0。超时报错带出实际上限，并提示场景本身要跑更久时调大该值。压测场景的语义不变：先等 `stress.durationSeconds`，再额外等 `resultTimeoutSeconds`。
+  回归锚点：新增 TestKit 用例用一个只占端口、不写结果的探针后端跑直连 `e2e<Key>`，场景声明 3 秒上限，断言任务很快失败且报出「在 3s 内未写出结果文件」——编排若仍按 600 秒等，该用例会因耗时断言与超时而失败；另有配置期校验用例覆盖单后端 / 集群 / 压测三类场景的非正数拒绝。
+
 ## [0.17.2] - 2026-11-08
 
 ### 修复

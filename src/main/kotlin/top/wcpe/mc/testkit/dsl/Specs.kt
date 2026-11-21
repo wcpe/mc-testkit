@@ -265,6 +265,14 @@ class ScenarioSpec(val name: String) : java.io.Serializable {
     /** 经哪个代理（按名称引用；null 表示直连后端）。 */
     var via: String? = null
 
+    /**
+     * 编排等桩写出结果文件的上限（秒），默认 [McTestkitDefaults.RESULT_TIMEOUT_SECONDS]；须 >0（配置期校验）。
+     *
+     * 到点仍无结果即强制结束节点并判失败。场景自身就要跑很久（长时间负载、长观测窗口）时按需调大，
+     * 上限比场景自身还短会把未跑完的场景判成「桩未收尾」。压测场景在 `stress.durationSeconds` 之外再等这么久。
+     */
+    var resultTimeoutSeconds: Long = McTestkitDefaults.RESULT_TIMEOUT_SECONDS
+
     private val mutableBackends = mutableListOf<String>()
 
     /**

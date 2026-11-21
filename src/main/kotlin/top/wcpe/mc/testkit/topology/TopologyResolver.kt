@@ -191,6 +191,7 @@ object TopologyResolver {
      * （集群编排/压测编排，ADR-0008）：① 集群（声明 backends、无 stress）须有 via 且代理路由覆盖全部后端；
      * ② 压测（声明 stress）须有 ≥1 backends、botsPerServer / durationSeconds 为正，via 可选（设了则
      * 须路由覆盖）。单后端 backend 与多后端 backends 互斥。多 bot 声明（单场景多 bot）由 [validateScenarioBots] 校验。
+     * 各类场景的 resultTimeoutSeconds 均须为正。
      */
     private fun validateScenarioRefs(
         backends: List<BackendSpec>,
@@ -206,6 +207,12 @@ object TopologyResolver {
 
             // 多 bot / 复制份数声明合法性（单场景多 bot，ADR-0009）
             validateScenarioBots(scenario, isStress)
+
+            if (scenario.resultTimeoutSeconds <= 0) {
+                throw GradleException(
+                    "mcTestkit 场景「${scenario.name}」的 resultTimeoutSeconds 必须 >0（等桩写出结果文件的上限秒数）。",
+                )
+            }
 
             // 单后端 backend 与多后端 backends 互斥（集群 / 压测都用 backends）
             if (hasBackends && scenario.backend != null) {

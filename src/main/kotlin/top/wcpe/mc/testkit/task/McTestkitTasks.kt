@@ -74,9 +74,6 @@ private const val SERVE_TASK_GROUP = "mc-testkit serve"
 /** Gradle 属性名：覆盖机器人目录（缺省 [RunLayout.DEFAULT_BOT_DIR]）。 */
 private const val BOT_DIR_PROPERTY = "mcTestkit.botDir"
 
-/** 等结果文件写出的上限（秒）：超时仍无结果即视为桩未正常收尾 / 启动失败。 */
-private const val BACKEND_WAIT_TIMEOUT_SECONDS = 600L
-
 /** 结果文件写出后，给后端 JVM 优雅自停的窗口（秒）；到时仍未退则强杀（不空等到上限）。 */
 private const val BACKEND_SELF_STOP_GRACE_SECONDS = 30L
 
@@ -635,7 +632,7 @@ object McTestkitTasks {
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 try {
-                    runBackendForeground(ctx, backend, scenario.name, mavenSources)
+                    runBackendForeground(ctx, backend, scenario.name, scenario.resultTimeoutSeconds, mavenSources)
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
                     // 成功 / 失败都收尾全部 bot（多 bot 防残留；单 bot 已自停为安全 no-op）
@@ -777,7 +774,7 @@ object McTestkitTasks {
                         protocolVersion = ProxyProtocolVersion.forBackend(backend.version),
                     )
                     // ④ 前台起后端（自停 waitFor）
-                    runBackendForeground(ctx, backend, scenario.name, mavenSources)
+                    runBackendForeground(ctx, backend, scenario.name, scenario.resultTimeoutSeconds, mavenSources)
                     // ⑤ 只认结果文件判定
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
@@ -926,7 +923,7 @@ object McTestkitTasks {
                         ),
                     )
                     // ④ 轮询结果文件（任一桩写出即完成）
-                    awaitClusterResult(ctx, resultFile, scenario.name)
+                    awaitClusterResult(ctx, resultFile, scenario.name, scenario.resultTimeoutSeconds)
                     // ⑤ 只认结果文件判定
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
@@ -1135,17 +1132,21 @@ object McTestkitTasks {
         )
     }
 
-    /** 轮询等集群结果文件写出（任一桩写出即完成）；超时仍无即抛中文错误（收尾由 finally / finalizedBy 兜）。 */
-    private fun awaitClusterResult(ctx: TaskExecutionContext, resultFile: File, scenario: String) {
-        ctx.info("集群场景 $scenario 已全部起服，等待桩写出结果文件…")
-        val deadlineMs = System.currentTimeMillis() + BACKEND_WAIT_TIMEOUT_SECONDS * 1000L
+    /**
+     * 轮询等集群结果文件写出（任一桩写出即完成）；超时仍无即抛中文错误（收尾由 finally / finalizedBy 兜）。
+     *
+     * @param timeoutSeconds 等待上限（场景的 `resultTimeoutSeconds`）。
+     */
+    private fun awaitClusterResult(ctx: TaskExecutionContext, resultFile: File, scenario: String, timeoutSeconds: Long) {
+        ctx.info("集群场景 $scenario 已全部起服，等待桩写出结果文件（上限 ${timeoutSeconds}s）…")
+        val deadlineMs = System.currentTimeMillis() + timeoutSeconds * 1000L
         while (!resultFile.exists() && System.currentTimeMillis() < deadlineMs) {
             Thread.sleep(2000)
         }
         if (!resultFile.exists()) {
             throw GradleException(
-                "集群场景 $scenario 在 ${BACKEND_WAIT_TIMEOUT_SECONDS}s 内未写出结果文件" +
-                    "（桩可能未正常收尾 / 后端启动失败 / bot 切换未触达）；将收尾全部进程。",
+                "集群场景 $scenario 在 ${timeoutSeconds}s 内未写出结果文件" +
+                    "（桩可能未正常收尾 / 后端启动失败 / bot 切换未触达；场景本身要跑更久时调大 resultTimeoutSeconds）；将收尾全部进程。",
             )
         }
     }
@@ -1311,7 +1312,14 @@ object McTestkitTasks {
                     }
 
                     // ④ 等全部 per-server 结果文件写出（桩到 duration 末聚合写出）
-                    awaitAllStressResults(ctx, layout, scenario.name, stressBackends, stress.durationSeconds)
+                    awaitAllStressResults(
+                        ctx,
+                        layout,
+                        scenario.name,
+                        stressBackends,
+                        stress.durationSeconds,
+                        scenario.resultTimeoutSeconds,
+                    )
 
                     // ⑤ 聚合判定：每服结果文件都须 PASS（只认结果文件，业务不变量由消费方桩在其中体现）
                     verifyStressResults(ctx, layout, scenario.name, stressBackends)
@@ -1419,17 +1427,22 @@ object McTestkitTasks {
         return processes
     }
 
-    /** 轮询等全部 per-server 结果文件写出（桩到 duration 末聚合写出）；超时仍缺则抛中文错误并报哪服。 */
+    /**
+     * 轮询等全部 per-server 结果文件写出（桩到 duration 末聚合写出）；超时仍缺则抛中文错误并报哪服。
+     *
+     * @param graceSeconds 压测时长之外的宽限（场景的 `resultTimeoutSeconds`）。
+     */
     private fun awaitAllStressResults(
         ctx: TaskExecutionContext,
         layout: RunLayout,
         scenario: String,
         backends: List<ResolvedBackend>,
         durationSeconds: Long,
+        graceSeconds: Long,
     ) {
-        ctx.info("压测场景 $scenario 已全部起服，持续 ${durationSeconds}s，等待各服桩写出结果文件…")
+        ctx.info("压测场景 $scenario 已全部起服，持续 ${durationSeconds}s，等待各服桩写出结果文件（另有宽限 ${graceSeconds}s）…")
         // 等待上限 = 压测时长 + 宽限（桩在 duration 末才聚合写出）
-        val deadlineMs = System.currentTimeMillis() + (durationSeconds + BACKEND_WAIT_TIMEOUT_SECONDS) * 1000L
+        val deadlineMs = System.currentTimeMillis() + (durationSeconds + graceSeconds) * 1000L
         while (backends.any { !stressResultFile(layout, scenario, it.name).exists() } &&
             System.currentTimeMillis() < deadlineMs
         ) {
@@ -2254,12 +2267,14 @@ object McTestkitTasks {
      * 起服前做端口预检（见 [requirePortsAvailable]）：本函数是「前台起后端」的唯一入口，在此设闸可让
      * 所有调用方（直连 e2e / 经代理）自动获得保护，不必各自复制。
      *
+     * @param resultTimeoutSeconds 等桩写出结果文件的上限（场景的 `resultTimeoutSeconds`）。
      * @param stopTaskName 报错文案里建议执行的收尾任务名；直连 e2e 无配套停任务故为 null。
      */
     private fun runBackendForeground(
         ctx: TaskExecutionContext,
         backend: ResolvedBackend,
         scenario: String,
+        resultTimeoutSeconds: Long,
         sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
         stopTaskName: String? = null,
     ) {
@@ -2290,7 +2305,7 @@ object McTestkitTasks {
         // 而非死等 JVM 退出——真实后端的依赖（数据源 / Redis 连接池等非守护线程）常使 JVM 在
         // Bukkit.shutdown 后仍不退出。结果出现后给一小段优雅自停窗口，仍不退则强杀，避免空等到超时。
         val resultFile = File(layout.resultsDir, McTestkitResultFile.fileName(scenario))
-        val deadlineMs = System.currentTimeMillis() + BACKEND_WAIT_TIMEOUT_SECONDS * 1000L
+        val deadlineMs = System.currentTimeMillis() + resultTimeoutSeconds * 1000L
         while (process.isAlive && !resultFile.exists() && System.currentTimeMillis() < deadlineMs) {
             Thread.sleep(2000)
         }
@@ -2308,7 +2323,8 @@ object McTestkitTasks {
         if (!resultFile.exists()) {
             if (process.isAlive) process.destroyForcibly()
             throw GradleException(
-                "后端 ${backend.name} 在 ${BACKEND_WAIT_TIMEOUT_SECONDS}s 内未写出结果文件（桩可能未正常收尾 / 启动失败）；已强制结束。",
+                "后端 ${backend.name} 在 ${resultTimeoutSeconds}s 内未写出结果文件" +
+                    "（桩可能未正常收尾 / 启动失败；场景本身要跑更久时调大 resultTimeoutSeconds）；已强制结束。",
             )
         }
     }

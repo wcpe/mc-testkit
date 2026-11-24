@@ -98,4 +98,38 @@ class ResultReaderTest {
 
         assertTrue(!File(dir, McTestkitResultFile.fileName("repeat")).exists())
     }
+
+    @Test
+    @DisplayName("结果文件不是合法 UTF-8 时按宽容方式解码，status 仍可判定且构建不崩")
+    fun lenientlyDecodesNonUtf8ResultFile() {
+        // 用 GBK 写「失败原因」——消费方桩在 Windows 上用平台默认编码时就是这个形态。
+        // status 是 ASCII，任何单字节编码解码出来都一样，故判定必须仍然可靠。
+        val dir = tempResultsDir()
+        val gbkMessage = "世界未加载".toByteArray(charset("GBK"))
+        val content = "status=PASS\nmessage=".toByteArray(Charsets.US_ASCII) + gbkMessage
+        File(dir, McTestkitResultFile.fileName("gbk")).writeBytes(content)
+
+        val result = ResultReader.read(dir, "gbk")
+
+        assertEquals(McTestkitResultFile.PASS, result.status, "status 是 ASCII，宽容解码后仍应判定为 PASS")
+        assertTrue(
+            result.message.any { it == '\uFFFD' },
+            "非 UTF-8 字节应被替换成替换符，而不是让读取崩掉；实际 message=${result.message}",
+        )
+    }
+
+    @Test
+    @DisplayName("非 UTF-8 的 FAIL 结果仍按失败处理，不让编码问题把失败洗成通过")
+    fun lenientDecodingDoesNotTurnFailIntoPass() {
+        val dir = tempResultsDir()
+        val content = "status=FAIL\nmessage=".toByteArray(Charsets.US_ASCII) +
+            "挂了".toByteArray(charset("GBK"))
+        File(dir, McTestkitResultFile.fileName("gbkfail")).writeBytes(content)
+
+        val exception = assertFailsWith<IllegalStateException> {
+            ResultReader.read(dir, "gbkfail")
+        }
+
+        assertTrue("gbkfail" in exception.message!!, "报错应指出场景名：${exception.message}")
+    }
 }

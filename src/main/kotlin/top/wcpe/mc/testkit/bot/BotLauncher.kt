@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.bot
 
+import top.wcpe.mc.testkit.contract.McTestkitPidFile
 import java.io.File
 
 /** 机器人进程启动所需的固定路径上下文（哪儿启、启哪个脚本、日志 / pid 落哪儿）。 */
@@ -156,7 +157,8 @@ object BotLauncher {
 
         val process = processBuilder.start()
         try {
-            pidFile.writeText(process.pid().toString())
+            // 带身份写入 pid（pid + 启动时刻），供排查与任何按 pid 的收尾路径核对
+            McTestkitPidFile.write(pidFile, process.pid())
             ProcessLedger.record(context.resultsDir, "$LEDGER_KEY_BOT/$action", process.pid(), 0)
 
             val pump = BoundedProcessOutputPump(

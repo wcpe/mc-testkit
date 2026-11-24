@@ -11,14 +11,22 @@ import top.wcpe.mc.testkit.topology.Topology
  * 会并发往同一目录复制服务端运行库（实测 `FileAlreadyExistsException`）、在对方服务端运行期间清空
  * 该目录，或争同一端口。**不同后端之间不加任何约束**——它们有独立目录与端口，可以安全并行。
  *
- * 返回「任务名 → 它必须排在其后的任务名」，调用侧逐条挂 `mustRunAfter` 即可。
+ * ## 为什么还要按代理名分组
  *
- * 规则只有一条：**组内相邻两个场景，后一个场景的全部运行期任务排在前一个场景的全部运行期任务之后**
- * （见 [scenarioRuntimeTaskNames]）。取全组合而非只牵 `prepare`，是因为踩踏不止发生在两个 prepare 之间：
- * 只按 `prepare → prepare` 串行时，`e2eA prepareE2eB` 这条命令里 B 的 prepare 仍会在 A 的服务端
- * 运行期间清空同一运行目录。全组合让「B 的任何一步都不与 A 的任何一步重叠」，是唯一没有缝隙的规则。
- * 机器人（`launch<Key>Bot`）也在运行期任务集内，故「后一个场景的机器人要等前一个场景跑完」由同一条
- * 规则覆盖——否则它会提前启动、就绪超时先于自己的服务端到来而退出。
+ * 只按后端名分组会漏掉一类真实踩踏：**代理的运行目录是全局唯一的 `run-proxy`**（不像后端按名分目录），
+ * `stageProxyRuntime` 每轮整删该目录，且所有代理共用同一个 `proxy.port`。
+ *
+ * 反例（未修前会并行）：
+ * ```
+ * scenario("a") { backend = "s1"; via = "wf" }
+ * scenario("b") { backend = "s2"; via = "wf" }
+ * ```
+ * 两者后端名不同 → 分组不同 → 无边 → `./gradlew e2eA e2eB` 并行执行：A 的 `stageProxyRuntime`
+ * 删掉 B 刚铺好的 `config.yml`（两者的路由目标还不同），两者同时 bind 同一端口 →
+ * 随机 `bind failed`，或请求被转发到错误的后端。
+ *
+ * 因此再加一组「共用同一代理名的场景必须串行」。两组边取并集（`mustRunAfter` 只保证顺序，
+ * 多一条约束只会更慢，不会改变执行内容）。
  *
  * @param topology 已解析的拓扑（后端名、代理路由）
  * @param scenarios 按**声明顺序**排列的场景
@@ -29,19 +37,39 @@ fun sharedBackendOrderEdges(
 ): Map<String, List<String>> {
     val edges = LinkedHashMap<String, MutableList<String>>()
 
-    scenariosByBackend(topology, scenarios).values.forEach { group ->
-        if (group.size < 2) return@forEach
-        group.zipWithNext { previous, next ->
-            val previousTasks = scenarioRuntimeTaskNames(previous)
-            if (previousTasks.isEmpty()) return@zipWithNext
-            scenarioRuntimeTaskNames(next).forEach { nextTask ->
-                edges.getOrPut(nextTask) { mutableListOf() } += previousTasks
+    fun addChain(groups: Collection<List<ScenarioSpec>>) {
+        groups.forEach { group ->
+            if (group.size < 2) return@forEach
+            group.zipWithNext { previous, next ->
+                val previousTasks = scenarioRuntimeTaskNames(previous)
+                if (previousTasks.isEmpty()) return@zipWithNext
+                scenarioRuntimeTaskNames(next).forEach { nextTask ->
+                    edges.getOrPut(nextTask) { mutableListOf() } += previousTasks
+                }
             }
         }
     }
 
+    addChain(scenariosByBackend(topology, scenarios).values)
+    // 代理运行目录全局唯一：任意两个经代理的场景同样不能并发（见上方反例）
+    addChain(listOf(scenariosViaProxy(scenarios)))
+
     return edges
 }
+
+/**
+ * 声明了 `via` 的场景（保持声明顺序）。
+ *
+ * **不按代理名分组**：代理运行目录恒为 `run-proxy`（见 `McTestkitRunDirectories.PROXY_RUN_DIR_NAME`），
+ * 与代理名无关——`proxy("wf1")` 与 `proxy("wf2")` 写的是**同一个**目录，`stageProxyRuntime` 每轮
+ * 都会把它整删重建。按名字分组只能覆盖「共用同一个代理」那一种，而「代理名不同、后端名也不同」的
+ * 两个场景仍会落进不同组、无边、并行，然后互相删掉对方刚铺好的配置。
+ *
+ * 因此这里直接把全部经代理场景归入同一组：既然目录只有一份，就得整体串行。
+ * 不设 `via` 的场景不碰该目录，故不列入。
+ */
+private fun scenariosViaProxy(scenarios: List<ScenarioSpec>): List<ScenarioSpec> =
+    scenarios.filter { it.via != null }
 
 /** 后端名 → 该后端上的场景（保持声明顺序）。 */
 private fun scenariosByBackend(

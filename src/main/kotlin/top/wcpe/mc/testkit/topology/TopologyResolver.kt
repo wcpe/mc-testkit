@@ -48,6 +48,7 @@ object TopologyResolver {
         validateNodeEnvironments(backends, proxies)
         validateNodeRuntimeDeclarations(proxies, backends)
         validateRoutes(backends, proxies)
+        validateScenarioNames(scenarios)
         validateScenarioRefs(backends, proxies, scenarios)
         validateServeRefs(backends, proxies, serves)
 
@@ -136,13 +137,20 @@ object TopologyResolver {
             }
         }
 
-        val duplicateBackend = firstDuplicate(backends.map { it.name })
+        // 大小写不敏感：run-S1 与 run-s1 在 macOS / Windows 上指向同一目录，会互相清空对方的
+        // 模板 / 配置 / 注入插件。保留字 proxy 的判定已用 ignoreCase，这里跟上同一口径。
+        val duplicateBackend = firstDuplicateIgnoringCase(backends.map { it.name })
         if (duplicateBackend != null) {
-            throw GradleException("mcTestkit 后端名重复：「$duplicateBackend」声明了多次，后端名必须唯一。")
+            throw GradleException(
+                "mcTestkit 后端名重复（大小写不敏感）：「$duplicateBackend」与另一个后端折成同一个名字，" +
+                    "它们的运行目录会落在同一处并互相清空。后端名必须唯一。",
+            )
         }
-        val duplicateProxy = firstDuplicate(proxies.map { it.name })
+        val duplicateProxy = firstDuplicateIgnoringCase(proxies.map { it.name })
         if (duplicateProxy != null) {
-            throw GradleException("mcTestkit 代理名重复：「$duplicateProxy」声明了多次，代理名必须唯一。")
+            throw GradleException(
+                "mcTestkit 代理名重复（大小写不敏感）：「$duplicateProxy」与另一个代理折成同一个名字，代理名必须唯一。",
+            )
         }
 
         val backendNames = backends.map { it.name }.toSet()
@@ -194,6 +202,50 @@ object TopologyResolver {
                         "请检查 routesTo(...) 的名称或先用 backend(\"$missing\") 声明该后端。",
                 )
             }
+        }
+    }
+
+    /**
+     * 校验：场景名本身合法且互不冲突。
+     *
+     * 后端名、代理名、serve 名都有完整的配置期校验（空白 / 唯一 / 折成任务名后冲突），
+     * 唯独场景名此前完全没有——于是三种声明错误都在远离根因的地方炸开：
+     *
+     * 1. **重名**：不报中文错，而是在 `tasks.register("prepareE2eXxx")` 时抛英文
+     *    `Cannot add task '...' as a task with that name already exists`；
+     * 2. **折叠冲突**：`scenario("a-b")` 与 `scenario("aB")` 经 `toTaskKey()` 都折成 `AB`，同样撞任务名；
+     * 3. **空名 / 含路径分隔符**：`scenario("")` 让任务名退化成 `e2e`、结果文件名退化成 `.properties`；
+     *    `scenario("a/b")` 会让桩把结果写到不存在的子目录（写失败 → 只报「未写出结果」）。
+     *
+     * 另外同名场景共用 `<场景>.properties`，会互相覆盖判定——所以重名必须在配置期拦住。
+     * 大小写不敏感：macOS / Windows 的文件系统对 `A.properties` 与 `a.properties` 视作同一个。
+     */
+    private fun validateScenarioNames(scenarios: List<ScenarioSpec>) {
+        scenarios.forEach { scenario ->
+            val name = scenario.name
+            if (name.isBlank()) {
+                throw GradleException(
+                    "mcTestkit 场景名不能为空白：它会被折成任务名与结果文件名，空名会让两者都退化成无意义的形态。",
+                )
+            }
+            if (name.contains('/') || name.contains('\\')) {
+                throw GradleException(
+                    "mcTestkit 场景「$name」含路径分隔符：它会被用作结果文件名，含分隔符会让桩写到不存在的子目录。" +
+                        "请改用 kebab-case（如 buy-success）。",
+                )
+            }
+        }
+        firstDuplicateIgnoringCase(scenarios.map { it.name })?.let { name ->
+            throw GradleException(
+                "mcTestkit 场景名「$name」重复（大小写不敏感）：同名场景共用同一个结果文件，会互相覆盖判定。",
+            )
+        }
+        firstDuplicate(scenarios.map { it.name.toTaskKey() })?.let { key ->
+            val colliding = scenarios.filter { it.name.toTaskKey() == key }.map { it.name }
+            throw GradleException(
+                "mcTestkit 场景名 $colliding 折成任务名后都是「${scenarioTaskKeyPrefix(key)}」，会撞任务名。" +
+                    "请改用折名后仍互不相同的名字（避免只靠大小写或分隔符区分）。",
+            )
         }
     }
 
@@ -281,6 +333,27 @@ object TopologyResolver {
                     "mcTestkit 场景「${scenario.name}」引用的代理「$viaRef」不存在；" +
                         "请检查 via = 的名称或先声明该代理。",
                 )
+            }
+
+            // 单后端场景设了 via，则该代理须路由到这个后端。
+            //
+            // 此前这条只在校验集群（backends 覆盖全部）与单后端 serve 时做，单后端场景完全没查：
+            // proxy("wf") { routesTo("s2") } + backend("s1") + scenario { backend = "s1"; via = "wf" }
+            // 配置期静默通过，运行期 bot 被代理以
+            // 「Could not connect to a default or fallback server」反复踢掉直到超时——
+            // 报错与真实原因（路由没配）毫无关系，只能靠人对着两份声明比对。
+            if (!hasBackends && viaRef != null) {
+                val target = scenario.backend ?: backends.firstOrNull()?.name
+                if (target != null) {
+                    val proxy = proxies.first { it.name == viaRef }
+                    if (target !in proxy.routes) {
+                        throw GradleException(
+                            "mcTestkit 场景「${scenario.name}」的代理「$viaRef」未路由到后端「$target」；" +
+                                "该后端起服后 bot 会被代理以「找不到可用的默认服 / 回退服」踢掉。" +
+                                "请让 proxy(\"$viaRef\") routesTo(\"$target\")，或去掉本场景的 via。",
+                        )
+                    }
+                }
             }
 
             // 集群必须经代理（压测的 via 可选）
@@ -493,6 +566,18 @@ object TopologyResolver {
 
     /** 校验：所有已解析端口（后端 + 代理）全局不冲突（含显式与推导相撞的情形）。 */
     private fun validatePorts(backends: List<ResolvedBackend>, proxies: List<ResolvedProxy>) {
+        // 先查范围：不查的话 port = 70000 / 0 / -1 配置期全部放行，直到起服时 bind 失败——
+        // 而 PortGuard 的 canBind 会吞掉 IllegalArgumentException，最终被翻译成
+        // 「端口 70000 已被占用」，给用户完全错误的排查方向。
+        (backends.map { "后端「${it.name}」" to it.port } + proxies.map { "代理「${it.name}」" to it.port })
+            .forEach { (node, port) ->
+                if (port !in VALID_PORT_RANGE) {
+                    throw GradleException(
+                        "mcTestkit $node 的 port=$port 不在合法范围 ${VALID_PORT_RANGE.first}..${VALID_PORT_RANGE.last}。" +
+                            "端口须为 1..65535 的整数；0 与负数无法 bind，超出 65535 同样无效。",
+                    )
+                }
+            }
         // 端口 → 占用它的节点名（便于在冲突消息里指出是谁撞谁）
         val owners = LinkedHashMap<Int, String>()
         (backends.map { it.name to it.port } + proxies.map { it.name to it.port }).forEach { (node, port) ->
@@ -507,6 +592,9 @@ object TopologyResolver {
         }
     }
 
+    /** 合法 TCP 端口范围（1..65535）；0 与负数无法 bind，超出 65535 无效。 */
+    private val VALID_PORT_RANGE = 1..65535
+
     /** 返回首个重复出现的元素（保持首次重复的发现顺序），无重复返回 null。 */
     private fun firstDuplicate(values: List<String>): String? {
         val seen = HashSet<String>()
@@ -517,4 +605,26 @@ object TopologyResolver {
         }
         return null
     }
+
+    /**
+     * 大小写不敏感版的 [firstDuplicate]。
+     *
+     * 后端 / 代理名与场景名都要用它：macOS 与 Windows 的文件系统对 `A` 与 `a` 视作同一个，
+     * 而 `run-A` / `run-a`（或 `A.properties` / `a.properties`）在那些平台上会指向同一份文件，
+     * 随后互相清空模板 / 配置 / 写坏判定。保留字 `proxy` 的判定已用 `trim()+ignoreCase`，此处跟上。
+     */
+    private fun firstDuplicateIgnoringCase(values: List<String>): String? {
+        val seen = HashMap<String, String>()
+        values.forEach { value ->
+            val normalized = value.trim().lowercase()
+            val previous = seen.putIfAbsent(normalized, value)
+            if (previous != null) {
+                return value
+            }
+        }
+        return null
+    }
+
+    /** 场景折名在任务名里的实际形态（`prepareE2e` + key），用于报错时说清会撞哪个名字。 */
+    private fun scenarioTaskKeyPrefix(key: String): String = "prepareE2e$key"
 }

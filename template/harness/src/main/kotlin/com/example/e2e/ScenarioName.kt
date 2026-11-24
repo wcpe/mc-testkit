@@ -6,6 +6,16 @@ package com.example.e2e
  * 消费方按真实用例在此追加自己的场景（如 BUY_SUCCESS、QUIT_DURING_PURCHASE 等），
  * 并在桩主体的派发表、机器人侧 action 分发、编排 DSL 三处同步登记同一个 id。
  *
+ * ## 机器人侧登记了、本枚举却没有的场景
+ *
+ * `template/bot/src/connectAndWait.js` 里登记了但本枚举**刻意不含**的两个 action：
+ * `network-forensics`（只发 Plugin Message 做协议取证，不需要桩判定）与
+ * `exec-command-demo`（照抄用的最薄示例，见 `template/README.md` 第 3 节）。
+ *
+ * 它们若被直接用进 DSL 的 `scenario("...")`，会因 id 对不上而在启动期判 FAIL——报错会同时
+ * 列出「DSL 传了什么」与「本桩认识哪些」，不会退化成等 600 秒的静默超时。要用这两个 action
+ * 就按上面三处同步登记（`template/README.md` 有步骤）。
+ *
  * @property id 场景字符串 id，须与机器人 action、编排声明的场景名完全一致（kebab-case）。
  */
 enum class ScenarioName(val id: String) {

@@ -1,5 +1,6 @@
 package top.wcpe.mc.testkit.bot
 
+import top.wcpe.mc.testkit.contract.McTestkitPidFile
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -33,6 +34,13 @@ enum class PidFileStopResult {
  * **安全 no-op**：pid 文件缺失 / 内容非法 / 进程已退出都不报错（用于 finalizer/`finally` 收尾，
  * 不应因「本就没起来 / 已自停」而让收尾失败）。跨平台依赖 JDK [ProcessHandle]，不分平台写不同逻辑。
  *
+ * **身份校验**：pid 文件带启动时刻（见 [McTestkitPidFile.write]）时，杀之前核对活进程的启动时刻是否一致；
+ * 不一致或拿不到活进程的启动时刻 → **拒杀**并清理记录。这与进程台账路径的口径一致，
+ * 防的是「陈旧 pid 文件恰好命中被回收复用的 pid」这种误杀。
+ *
+ * 校验与收尾**共用同一个句柄**（[McTestkitPidFile.verify] 一并返回），不再二次解析 pid：
+ * 两次解析之间原进程可能退出、pid 被无关进程占用，那正是本校验要防的情形。
+ *
  * 返回值区分「是否真收尾了东西」：调用方（停任务）据此给出可操作提示，但**不得**因返回
  * [PidFileStopResult.NO_PID_FILE] 而让收尾失败——收尾路径本身必须幂等无副作用。
  *
@@ -45,19 +53,62 @@ fun stopProcessByPidFile(pidFile: File, logger: (String) -> Unit = {}): PidFileS
         // 进程本就没起来（或已被收尾）：no-op
         return PidFileStopResult.NO_PID_FILE
     }
-    val pid = pidFile.readText().trim().toLongOrNull()
+    val pid = McTestkitPidFile.readPid(pidFile)
     if (pid == null) {
         // 内容非法：清理脏 pid 文件后 no-op
         pidFile.delete()
         return PidFileStopResult.INVALID_PID_FILE
     }
 
-    val handle = ProcessHandle.of(pid).orElse(null)
-    if (handle == null) {
-        // 进程已退出：删除陈旧 pid 文件
-        pidFile.delete()
-        return PidFileStopResult.PROCESS_GONE
+    // 身份校验：recording 里有启动时刻就必须一致，否则这个 pid 已被别的进程复用。
+    // 校验结果带着已解析的句柄，下面直接复用它收尾——不再 ProcessHandle.of(pid) 解析第二遍，
+    // 否则两次解析之间原进程可能退出、pid 被无关进程占用，等于把刚排除的误杀风险放回来。
+    val handle = when (val verdict = McTestkitPidFile.verify(pidFile, pid)) {
+        McTestkitPidFile.Verdict.Gone -> {
+            pidFile.delete()
+            return PidFileStopResult.PROCESS_GONE
+        }
+
+        is McTestkitPidFile.Verdict.Reused -> {
+            logger(
+                "pid 文件 ${pidFile.name} 里的进程（pid=$pid）启动时刻与记录不符" +
+                    "（记录=${verdict.expected}，实际=${verdict.actual}），该 pid 已被复用，" +
+                    "不按它收尾以免误杀无关进程；已清理这条陈旧记录",
+            )
+            pidFile.delete()
+            return PidFileStopResult.INVALID_PID_FILE
+        }
+
+        // 旧格式（只有 pid、没有启动时刻）或平台取不到启动时刻：无法核对身份。
+        //
+        // 这里选择**放行并告警**而不是拒杀，理由有两条，方向相反但结论一致：
+        // ① 兼容：升级前写下的所有 pid 文件都是单行，拒杀会让它们全部失效——而它们正是
+        //    「上一轮被强杀、进程还在跑」的唯一凭证，等于把最需要收尾的场景全废掉；
+        // ② 收益有限：pid 复用误杀要求「旧进程已退出 + pid 恰好被无关进程占用 + 那个 pid
+        //    仍是本工具写的那个文件」三个条件同时成立，概率远低于残留进程占着端口不让跑。
+        // 新格式（两行）已经能精确核对，这条路只会走到旧文件上。
+        is McTestkitPidFile.Verdict.Unverifiable -> {
+            if (verdict.collectionFailed) {
+                // 与「旧文件遗留」不同：新写法明确记了「想记但取不到」，说明这台机器上身份校验
+                // 从来没生效过。要说出这一层，否则用户会以为自己一直有保护。
+                logger(
+                    "pid 文件 ${pidFile.name} 记录了「启动时刻取不到」标记：本平台上 JDK 拿不到" +
+                        "进程启动时刻，身份校验无法生效（这是采集失败，不是旧文件遗留）。" +
+                        "仍按兼容口径收尾 pid=$pid；如需可靠身份核对，请改用台账（stop 任务）",
+                )
+            } else {
+                logger(
+                    "pid 文件 ${pidFile.name} 没有可核对的启动时刻（旧格式或平台不支持），" +
+                        "无法确认 pid=$pid 是否仍是本工具起的那个进程；按兼容口径继续收尾。" +
+                        "若该 pid 已被无关进程占用，请改用台账（stop 任务）或按端口手工排查",
+                )
+            }
+            verdict.handle
+        }
+
+        is McTestkitPidFile.Verdict.Same -> verdict.handle
     }
+
     stopProcessByPid(pid, handle, logger)
     pidFile.delete()
     return PidFileStopResult.STOPPED

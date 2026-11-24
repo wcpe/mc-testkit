@@ -195,11 +195,16 @@ function buildGameModeProbe(bot, config, deps) {
     const probe = await execCommand(bot, 'data get entity ' + bot.username + ' playerGameType')
     if (probe.ok) {
       // 期望读到 1（creative）。读不到数字说明取证本身没成立，不能当通过。
-      const matched = /(-?\d+)/.exec(probe.output)
-      if (!matched) {
+      //
+      // 取输出中**最后一个**数字而不是第一个：回显是「<玩家名> has the following entity
+      // data: N」，数据值恒在句尾；玩家名里也可能含数字（如 Buyer1、压测 bot 名），
+      // 取第一个会把用户名里的数字当成游戏模式，把成功的场景误判 FAIL。
+      const numbers = probe.output.match(/-?\d+/g)
+      const matched = numbers == null ? null : numbers[numbers.length - 1]
+      if (matched == null) {
         return { ok: false, output: `取证输出里没有游戏模式数值：${probe.output}` }
       }
-      const mode = Number(matched[1])
+      const mode = Number(matched)
       if (mode !== 1) {
         return { ok: false, output: `玩家游戏模式仍为 ${mode}（期望 1=creative），命令未生效` }
       }

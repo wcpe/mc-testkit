@@ -136,6 +136,25 @@ test('1.20.1 读到 0 时判失败，不因命令执行成功就算通过', asyn
   assert.match(result.output, /仍为 0/)
 })
 
+test('玩家名含数字时仍以句尾的数据值判定，不误判失败', async () => {
+  // 回显格式「<玩家名> has the following entity data: N」：玩家名里的数字也在输出中。
+  // 取第一个数字会先命中名字（如 Buyer1 → 1 → 误判 creative；Buyer0 → 0 → 误伤成功场景），
+  // 必须取句尾的数据值。
+  const { waitForMessage } = makeWaitForMessage()
+  const { execCommand } = makeExecCommand({
+    ok: true,
+    output: 'Buyer0 has the following entity data: 1'
+  })
+
+  const probe = buildGameModeProbe(makeBot({ version: '1.20.1', username: 'Buyer0' }), CONFIG, {
+    waitForMessage,
+    execCommand
+  })
+  const result = await probe()
+
+  assert.equal(result.ok, true, result.output)
+})
+
 test('1.13 也开始走 /data（版本边界）', async () => {
   const { waitForMessage } = makeWaitForMessage()
   const { execCommand, calls } = makeExecCommand({

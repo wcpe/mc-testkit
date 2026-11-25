@@ -110,8 +110,11 @@ object BotProcessPlanner {
         return plans.map { plan ->
             // 空白覆盖同样按未覆盖处理：bot 进程对空白 BOT_USERNAME 按未设置理解、
             // 仍以 plan.username 登录（找不到 env 里的有效名才退回声明名）。
-            if (single) plan.env[McTestkitEnv.BOT_USERNAME]?.takeIf { it.isNotBlank() } ?: plan.username
-            else plan.username
+            if (single) {
+                plan.env[McTestkitEnv.BOT_USERNAME]?.takeIf { it.isNotBlank() } ?: plan.username
+            } else {
+                plan.username
+            }
         }.distinct()
     }
 

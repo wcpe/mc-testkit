@@ -394,7 +394,10 @@ class BotProcessPlannerTest {
             "smoke",
             listOf(
                 bot { username = "worker" },
-                bot { username = "admin"; op = true },
+                bot {
+                    username = "admin"
+                    op = true
+                },
             ),
         )
         assertEquals(
@@ -403,7 +406,10 @@ class BotProcessPlannerTest {
             "许可发送者是本轮全部 bot 用户名，不过滤 op（execCommand 走服务端权限、bot 不需 OP）",
         )
 
-        val overridden = bot { username = "declared"; env(McTestkitEnv.BOT_USERNAME, "  ") }
+        val overridden = bot {
+            username = "declared"
+            env(McTestkitEnv.BOT_USERNAME, "  ")
+        }
         assertEquals(
             listOf("declared"),
             BotProcessPlanner.commandSenders("smoke", listOf(overridden)),

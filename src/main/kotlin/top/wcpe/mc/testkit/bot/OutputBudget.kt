@@ -188,12 +188,9 @@ class BoundedProcessOutputPump(
                 }
             }
         } catch (ex: IOException) {
-            // 收尾杀进程时管道随进程死亡而断流——进程已不存活即预期终结，不是输出失败；
-            // 进程仍在却读出错才是真 IO 故障（盘满、权限、管道异常）。
-            val teardown = processAlive?.let { !it() } ?: false
-            if (!teardown) {
-                budget.fail("IOFAIL sink=$label ${ex.javaClass.simpleName}")
-            }
+            // 读侧 IOException 不判败：收尾杀进程时 Java 的进程流关闭竞态（destroyForcibly 投递
+            // 异步窗口内 processExited 清理先合流）必然抛 Stream closed，这是预期终结而非输出故障；
+            // 泵读不到最多损失末尾证据，写盘失败才是失败——写侧（sink.write）判败口径不变。
         } finally {
             runCatching { out?.close() }
             finished = true

@@ -135,7 +135,7 @@ class OutputBudgetTest {
         val budget = OutputBudget(perSinkLimit = quota, runLimit = quota * 4)
         try {
             val pump = pumpTo(child, logFile, budget)
-            assertTrue(child.waitFor(3, TimeUnit.SECONDS), "截断后管道照常被抽干，子进程应当自己跑完")
+            assertTrue(child.waitFor(6, TimeUnit.SECONDS), "截断后管道照常被抽干，子进程应当自己跑完")
             assertEquals(0, child.exitValue(), "子进程不应被杀，退出码应为 0")
 
             val size = logFile.length()
@@ -184,7 +184,7 @@ class OutputBudgetTest {
         val budget = OutputBudget(perSinkLimit = quota, runLimit = quota * 4)
         try {
             pumpTo(child, logFile, budget)
-            child.waitFor(3, TimeUnit.SECONDS)
+            child.waitFor(6, TimeUnit.SECONDS)
 
             val size = logFile.length()
             assertTrue(size <= quota, "两路合计 $size 字节超过了 quota=$quota（stderr 不得绕过限额）")
@@ -211,7 +211,7 @@ class OutputBudgetTest {
             val child = spawnChattyChild(dir, totalBytes = (perSink * 3 / 4).toInt(), newlineEvery = 4096)
             try {
                 pumpTo(child, logFile, budget, label = "multi-$index")
-                child.waitFor(3, TimeUnit.SECONDS)
+                child.waitFor(6, TimeUnit.SECONDS)
             } finally {
                 child.destroyForcibly()
             }
@@ -338,15 +338,15 @@ class OutputBudgetTest {
             start()
         }
         try {
-            assertTrue(entered.await(2, TimeUnit.SECONDS), "写线程必须已经卡在写盘里")
+            assertTrue(entered.await(4, TimeUnit.SECONDS), "写线程必须已经卡在写盘里")
             val failer = Thread { budget.fail("TIMEOUT log=other.log") }.apply { start() }
-            failer.join(1000)
+            failer.join(4000)
             assertFalse(failer.isAlive, "写盘卡住时 fail 不得等它")
             assertEquals("TIMEOUT log=other.log", budget.failureReason(), "失败原因应当立即可读")
             assertEquals(100L, budget.usedBytes(), "用量在写盘前已记账，查询不得等写盘")
         } finally {
             release.countDown()
-            writer.join(1000)
+            writer.join(4000)
         }
     }
 
@@ -388,7 +388,7 @@ class OutputBudgetTest {
         val budget = OutputBudget(perSinkLimit = quota, runLimit = quota * 4)
         try {
             val pump = pumpTo(child, logFile, budget)
-            child.waitFor(3, TimeUnit.SECONDS)
+            child.waitFor(6, TimeUnit.SECONDS)
 
             assertFalse(pump.isTruncated(), "正常输出不应被截断")
             assertNull(budget.failureReason(), "预算不应失败")

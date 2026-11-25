@@ -50,14 +50,6 @@ jobs:
       - name: 校验模板桩骨架可独立编译
         run: ./gradlew -p template/harness compileKotlin --no-daemon --stacktrace
 
-      - name: 归档测试报告（失败时便于排查）
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v5
-        with:
-          name: test-reports
-          path: build/reports/tests/
-          if-no-files-found: ignore
-
   # Windows PTY：验证 pty4j 的 ConPTY/WinPty 加载、JLine 依赖与 Windows 下全量构建。
   # 真实 Paper attach 仍留在手动 E2E，避免 CI 受服务端下载与桌面终端环境影响；桩服务端的 PTY 冒烟
   # （PtyAttachConsoleSmokeTest）随全量测试在 Windows 上跑，覆盖 ConPTY 真终端与端点桥接。
@@ -79,16 +71,6 @@ jobs:
 
       - name: 构建与测试（Windows）
         run: .\gradlew.bat build --no-daemon --stacktrace --console=plain
-
-      - name: 归档 Windows 测试报告
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v5
-        with:
-          name: windows-test-reports
-          path: |
-            build/test-results/test/
-            build/reports/tests/
-          if-no-files-found: ignore
 
   # 模板机器人：prettier + eslint + 依赖漏洞扫描（见 .claude/rules/static-analysis.md）
   # 注意：任务名是分支保护的必需检查名（CONTRIBUTING §8），改名须同步更新仓库分支保护规则。

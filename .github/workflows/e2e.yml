@@ -146,16 +146,6 @@ jobs:
       - name: E2E · Paper ${{ matrix.version }} 烟雾（e2eSmoke）
         run: ./gradlew -p "$CONSUMER" e2eSmoke -Pe2e.backendVersion="${{ matrix.version }}" -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
 
-      - name: 归档运行日志与结果（失败排查）
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v5
-        with:
-          name: e2e-version-smoke-${{ matrix.version }}
-          path: |
-            ${{ env.CONSUMER }}/build/mc-testkit/**/*.log
-            ${{ env.CONSUMER }}/build/mc-testkit/results/**
-          if-no-files-found: ignore
-
   # ── 代理×场景矩阵（默认 Paper 1.20.1；Folia 仅烟雾）──
   scenario:
     name: 场景 ${{ matrix.suite }}
@@ -365,13 +355,3 @@ jobs:
       - name: E2E · 经 Velocity 代理集群跨服（e2eCrossServerCluster）
         if: ${{ matrix.suite == 'velocity-proxy' }}
         run: ./gradlew -p "$CONSUMER" e2eCrossServerCluster -Pe2e.proxy=velocity -PmcTestkit.botDir="$GITHUB_WORKSPACE/template/bot" --no-daemon --stacktrace
-
-      - name: 归档运行日志与结果（失败排查）
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v5
-        with:
-          name: e2e-scenario-${{ matrix.suite }}
-          path: |
-            ${{ env.CONSUMER }}/build/mc-testkit/**/*.log
-            ${{ env.CONSUMER }}/build/mc-testkit/results/**
-          if-no-files-found: ignore

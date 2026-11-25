@@ -5,6 +5,7 @@ const mineflayer = require('mineflayer')
 const { envValue, envInt, optionalEnv } = require('./lib/env')
 const { extractMessageText } = require('./lib/messages')
 const { normalizeText, formatReason } = require('./lib/normalize')
+const { openBus } = require('./lib/actionBus')
 
 // mc-testkit E2E 机器人公共内核（共享胶水构件 共享机器人包 @wcpe/mc-testkit-bot）。
 //
@@ -14,7 +15,9 @@ const { normalizeText, formatReason } = require('./lib/normalize')
 // 3. 连接失败按重试间隔重连直到总超时；崩溃接管场景支持「断线后经代理重连到存活后端」；
 // 4. 优雅收尾（SIGINT / SIGTERM），不残留连接。
 //
-// 场景驱动函数签名：async ({ bot, config, log, reconnectOnDisconnect }) => {}
+// 场景驱动函数签名：async ({ bot, config, log, reconnectOnDisconnect, bus }) => {}
+// bus 是语义动作总线写入器（lib/actionBus），未配置 MC_TESTKIT_ACTION_BUS_FILE 时为 null——
+// 场景必须判空使用，证据链缺席不影响测试本体。
 // 消费方把自己的 action → 驱动函数表传进来，业务场景留在消费方项目。
 
 // 压测 bot 比桩计时早停的秒数（留出向桩上报的窗口后再被关服）
@@ -141,8 +144,16 @@ function runBot({ scenarios }) {
       return
     }
     scenarioStarted = true
+    // 套件与场景名取自环境契约：suite 用 action 所属套件变量（缺省回退 action 本身），
+    // 场景名即 action——编译器与结果文件同名对齐，排查时一眼对上。
+    const bus = openBus(
+      process.env.MC_TESTKIT_ACTION_BUS_SUITE || config.action,
+      config.action,
+    )
     try {
-      await scenarioRunner()({ bot, config, log, reconnectOnDisconnect })
+      if (bus) bus.suiteStart(`host=${config.host}:${config.port} user=${config.username}`)
+      await scenarioRunner()({ bot, config, log, reconnectOnDisconnect, bus })
+      if (bus) bus.close()
       log('场景驱动步骤执行完成，继续等待服务器侧结果')
     } catch (error) {
       log(`场景驱动失败: ${error?.stack || error?.message || String(error)}`)

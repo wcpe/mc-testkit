@@ -269,7 +269,8 @@ public final class EvidenceCompiler {
             if (path == null || kind == null) {
                 continue;
             }
-            File f = new File(artifactsDir, path);
+            File direct = new File(path);
+            File f = direct.isAbsolute() ? direct : new File(artifactsDir, path);
             if (!f.isFile()) {
                 continue;
             }

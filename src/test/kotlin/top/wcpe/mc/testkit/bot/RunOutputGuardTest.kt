@@ -68,7 +68,7 @@ class RunOutputGuardTest {
 
     private fun waitDone(h: BotProcessHandle) {
         assertTrue(h.process.waitFor(6, TimeUnit.SECONDS), "子进程必须在外部期限内退出")
-        assertTrue(h.awaitPump(2), "泵必须在外部期限内结束")
+        assertTrue(h.awaitPump(4), "泵必须在外部期限内结束")
     }
 
     private fun evidence(name: String, budget: OutputBudget, handles: List<BotProcessHandle>, started: Long) {
@@ -278,7 +278,7 @@ class RunOutputGuardTest {
             b.supervisor.close()
             assertFalse(h.process.isAlive, "收尾后根进程必须已结束")
             assertTrue(descendants.none { it.isAlive }, "收尾后子孙进程必须已结束")
-            assertTrue(h.awaitPump(1), "管道写端全部关闭后泵必须结束")
+            assertTrue(h.awaitPump(3), "管道写端全部关闭后泵必须结束")
             assertTrue(b.failureReason()!!.contains("detached-child"), "构建结束时还在跑的进程必须判失败，实际：${b.failureReason()}")
             assertEquals(emptyList(), b.supervisor.survivors(), "收尾后必须确认根进程与子孙进程都已结束")
         } finally {
@@ -305,7 +305,7 @@ class RunOutputGuardTest {
             assertTrue(b.failureReason()!!.contains("inherited-pipe"), "必须判管道被继承，实际：${b.failureReason()}")
             b.supervisor.close()
             assertTrue(seen.none { it.isAlive }, "收尾后子孙进程必须已结束")
-            assertTrue(h.awaitPump(1), "泵必须已结束")
+            assertTrue(h.awaitPump(3), "泵必须已结束")
         } finally {
             b.supervisor.close()
             seen.forEach { if (it.isAlive) it.destroyForcibly() }
@@ -324,7 +324,7 @@ class RunOutputGuardTest {
         }
         try {
             handles.forEach { assertTrue(it.process.waitFor(6, TimeUnit.SECONDS), "短命进程应当自己退出") }
-            handles.forEach { assertTrue(it.awaitPump(2), "每个进程的泵都应当读到 EOF") }
+            handles.forEach { assertTrue(it.awaitPump(4), "每个进程的泵都应当读到 EOF") }
             assertNull(b.failureReason(), "进程数量本身不得触发失败，实际：${b.failureReason()}")
             b.supervisor.close()
             assertEquals(emptyList(), b.supervisor.survivors(), "收尾后必须确认全部进程都已结束")

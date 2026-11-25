@@ -175,8 +175,14 @@ class DriverValidationTest {
     @Test
     @DisplayName("driverKey 必带场景名——两个场景同名角色不会撞产物文件名")
     fun driverKeyCarriesScenarioName() {
-        val scenarioA = ScenarioSpec("alpha").apply { backend = "s1"; driver { command = "node" } }
-        val scenarioB = ScenarioSpec("beta").apply { backend = "s1"; driver { command = "node" } }
+        val scenarioA = ScenarioSpec("alpha").apply {
+            backend = "s1"
+            driver { command = "node" }
+        }
+        val scenarioB = ScenarioSpec("beta").apply {
+            backend = "s1"
+            driver { command = "node" }
+        }
         val keyA = driverKey(scenarioA, scenarioA.driverSpecs[0], 0)
         val keyB = driverKey(scenarioB, scenarioB.driverSpecs[0], 0)
         assertEquals("alpha", keyA)

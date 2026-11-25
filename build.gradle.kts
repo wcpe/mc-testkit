@@ -93,9 +93,12 @@ tasks.withType<Test>().configureEach {
     // 测试会派生 JVM 子进程并按字节断言其输出落盘量；宿主 JDK_* / JAVA_TOOL_OPTIONS
     // 一旦存在，子 JVM 会先打一行「Picked up ...」横幅注记，把日志字节数抬高导致断言
     // 失真。这类变量是给宿主 JVM 用的，测试 fork 与子进程都不应继承。
-    environment.remove("JDK_JAVA_OPTIONS")
-    environment.remove("JAVA_TOOL_OPTIONS")
-    environment.remove("_JAVA_OPTIONS")
+    // Windows 环境变量名大小写不敏感（小写 jdk_java_options 同样生效），
+    // 而 Test.environment 的 remove 按字面匹配，故大小写形态都要剔除。
+    listOf("JDK_JAVA_OPTIONS", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS").forEach { name ->
+        environment.remove(name)
+        environment.remove(name.lowercase())
+    }
 
     // TestKit 默认的 Gradle 用户主目录会在 build/tmp/test/work/.gradle-test-kit 下再造一份
     // 约 206M 的 Gradle 缓存（与 test-kit-home 内容相同）。把默认目录也指到共享位置，

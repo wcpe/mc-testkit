@@ -184,13 +184,14 @@ scenario("batch-admin") {
 
 > 经 **Velocity 代理**走 modern forwarding（代理 `velocity.toml` + 后端 `paper-global proxies.velocity`，共享 forwarding secret，见 ADR-0010）：支持单后端经代理 / 集群 `/server` 切换 / 崩溃接管 fallback；**不支持压测钉服**（Velocity 单端口无「一端口对一后端」，`stress + via=velocity` 配置期中文报错）。Velocity 用自有版本号（env `…VELOCITY_VERSION` 缺省 `3.5.1`，即受控的最新 3.x，非后端 MC 版本）；Waterfall/BungeeCord 经代理写 `config.yml`、Velocity 写 `velocity.toml` + `forwarding.secret`。
 
-**driver 车道（通用进程驱动，`scenario { driver { } }`，加法扩展）**：`DriverSpec` 声明消费方自带的任意可执行命令——`command`（必填）+ `args(...)` + `argsFromFile(path)`（每行一个参数，空行与 `#` 注释忽略；读在拉起时刻，供消费方构建期冻结的启动模板）+ `env(name, value)` + `workDir`（相对工程根，缺省工程根）+ `killTimeoutSeconds`（默认 15）+ `launchAfterReady`（默认 false；true 时该 driver 不在 `launch<Key>Driver` 里起，改由 verify 在后端端口就绪后体内拉起，用于 LAN Host→Join 等分阶段拓扑——编排只保证后起于端口开放，应用级就绪回执仍由 driver 脚本自重试）。calcite 真客户端、自研压测器、外部探针都走这条车道，替代消费方自己写 Gradle 任务拉进程（A 方案）。编排像管 bot 一样管它的生命周期：
+**driver 车道（通用进程驱动，`scenario { driver { } }`，加法扩展）**：`DriverSpec` 声明消费方自带的任意可执行命令——`command`（必填）+ `args(...)` + `argsFromFile(path)`（每行一个参数，空行与 `#` 注释忽略；读在拉起时刻，供消费方构建期冻结的启动模板）+ `env(name, value)` + `workDir`（相对工程根，缺省工程根）+ `killTimeoutSeconds`（默认 15）+ `launchAfterReady`（默认 false；true 时该 driver 不在 `launch<Key>Driver` 里起，改由 verify 在后端端口就绪后体内拉起，用于 LAN Host→Join 等分阶段拓扑——编排只保证后起于端口开放，应用级就绪回执仍由 driver 脚本自重试）+ `recordEvidence`（默认 false；true 注入 `…RECORD=1` + `…RECORD_DIR`，见「录屏 / 截图证据」）。calcite 真客户端、自研压测器、外部探针都走这条车道，替代消费方自己写 Gradle 任务拉进程（A 方案）。编排像管 bot 一样管它的生命周期：
 
 - **启动**：`launch<Key>Driver` 任务在 prepare 之后、服务端就绪门**之前**拉起（先于 verify 起服——真客户端 / 外部驱动自行重试等端口开放，与 A 方案实证的时序一致）；聚合任务 `e2e<Key>WithDriver` = launch + verify。
 - **收尾（不议价）**：场景结束（PASS / FAIL / 中断）必收尾——先温和 `destroy`，`killTimeoutSeconds` 内未退升级 `destroyForcibly`；杀不净由进程监管把本次执行判不可信（即便结果文件写的是 PASS）。中途某个 driver 起失败时，已起的先收掉再抛错，不留残留。
 - **「完成即退出」由 driver 自己兑现**：真客户端类驱动观测「端口由开转关」后退 0 即为完成退出（A 方案实证语义，端口语义在 driver 脚本侧，框架不解析协议）；driver 提前退出只记日志，判定权仍在结果文件。
 - **产物同 bot 口径**：`driver-<key>.log` / `driver-<key>.pid`（pid 带启动时刻）落结果目录，台账登记 `driver/<key>`，跨轮残留由 `stopE2eProcesses` 按台账核对身份后收尾；输出经同一输出预算计限额。
 - **契约 env**（下发给 driver，见 §3.3）：`…DRIVER_HOST` / `…DRIVER_PORT` / `…DRIVER_SCENARIO` / `…DRIVER_BACKEND_NAME` / `…DRIVER_ROLE` / `…DRIVER_RESULTS_DIR`；业务 env 经 `env(name, value)` 原样透传。
+- **录屏 / 截图证据（可选降级，永不改判定）**：`driver { recordEvidence = true }` 注入 `…RECORD=1` 与 `…RECORD_DIR`（默认 `<结果目录>/recordings/`）。driver 用自己的捕获能力落证据——calcite 真客户端截图走 calcite 自身能力；JVM 侧套件（harness-core 消费方、外部 JVM 驱动）可调 `McTestkitRecorder`：`available()` 探测、`screenshot(name)` 截一帧、`start(name)`/`Recording.stop()` 录一段 mp4，服务端侧走 ffmpeg 屏幕捕获（Linux x11grab 须 DISPLAY、Windows gdigrab、macOS avfoundation）。**降级硬规则**：ffmpeg 缺失、无显示环境、未声明录制或开录失败时全部只打中文告警并返回 null——测试照常 PASS，只是没有人工验收的截图 / 视频证据，无头环境必须正确跑。
 - **范围**：当前只支持**直连单后端**场景；经代理 / 集群 / 压测声明 driver 在配置期中文报错（另行扩展，不静默忽略）。`command` 空白、`killTimeoutSeconds <= 0`、多 driver 角色名重复同样配置期中文报错。
 - driver 与 bot 可同时声明（bot 连真服驱动游戏内行为，driver 跑场景外进程），两者独立起名、独立收尾。
 
@@ -372,7 +373,7 @@ dependencies {
 - 节点 Java（FR-22）：`MC_TESTKIT_JAVA_HOME_<主版本>`，如 `MC_TESTKIT_JAVA_HOME_25`。显式声明的 proxy `javaVersion` 缺失时启动前中文失败；backend 继续沿用 MC 版本段选择并可通过 `jvmArg`/`javaAgent` 注入诊断参数。
 - 机器人：`…BOT_ACTION`（场景 action / 场景 id，机器人内核据此分发）、`…BOT_HOST`/`…BOT_PORT`/`…BOT_USERNAME`/`…BOT_AUTH`/`…BOT_VERSION`、`…BOT_CONNECT_TIMEOUT_MS`/`…BOT_RETRY_DELAY_MS`/`…BOT_READY_TIMEOUT_MS`、`…BOT_RECEIPT_FILE`（机器人**就绪回执文件**的绝对路径，位于结果目录 `bot-<key>.receipt.jsonl`；机器人就绪/超时状态落此文件，供编排判机器人是否入服，属框架 ↔ 机器人契约，消费方一般不需改动）。
 - 集群（FR-10）：`…CLUSTER_BACKENDS`（集群场景的**有序后端名**，逗号分隔；编排起 bot 时下发，bot 据此经代理 `/server <name>` 逐个切换到后续后端）。
-- driver 车道：`…DRIVER_HOST`/`…DRIVER_PORT`（连接目标，经代理时为代理地址）、`…DRIVER_SCENARIO`（本次场景 id，与桩 / bot 同源）、`…DRIVER_BACKEND_NAME`（所连后端声明名）、`…DRIVER_ROLE`（`driver("<角色>")` 的角色名，匿名 driver 为空串）、`…DRIVER_RESULTS_DIR`（结果目录绝对路径——driver 要落证据文件就写这里，随场景归档）；`driver { env(name, value) }` 声明的业务 env 原样透传（契约项在先，业务项可覆盖同名片段）。
+- driver 车道：`…DRIVER_HOST`/`…DRIVER_PORT`（连接目标，经代理时为代理地址）、`…DRIVER_SCENARIO`（本次场景 id，与桩 / bot 同源）、`…DRIVER_BACKEND_NAME`（所连后端声明名）、`…DRIVER_ROLE`（`driver("<角色>")` 的角色名，匿名 driver 为空串）、`…DRIVER_RESULTS_DIR`（结果目录绝对路径——driver 要落证据文件就写这里，随场景归档）；`driver { env(name, value) }` 声明的业务 env 原样透传（契约项在先，业务项可覆盖同名片段）。`driver { recordEvidence = true }` 额外注入 `…RECORD=1` 与 `…RECORD_DIR`（视觉证据输出目录，默认 `<结果目录>/recordings/`；见 §3.2 driver 车道「录屏 / 截图证据」）。
 - 压测（FR-11）：`…STRESS_DURATION_SECONDS`（施压秒数，编排→bot 与桩）、`…BOT_INDEX`（每 bot 进程序号；FR-16 同质批量复制亦复用）、`…STRESS_RANDOM_SEED`（共享随机种子；bot 用 `seed xor botIndex` 播种 RNG 使各 bot 可复现且互异）。规模（服数 / 每服 bot 数）由 DSL `backends(...)` + `stress { botsPerServer }` 表达，不走 env。经代理时机器人协议版本仍由编排固定为后端版本（环境契约，FR-05）。
 - 单场景多 bot（FR-16）：**不新增 env**，复用 `…BOT_USERNAME`（多进程时编排强制下发**唯一**名，盖过消费方单值 override）、`…BOT_ACTION`（各 bot 各自的分发动作）、`…BOT_INDEX`（同质 `count = N` 复制时下发 1..N，桩据此按 index 聚合）；集群下每个 bot 仍各自收到 `…CLUSTER_BACKENDS` 以经代理 `/server` 切换。规模（份数 / 角色）由 DSL `bot { count }` + 多个 `bot("角色")` 表达，不走 env（ADR-0009）。
 - 机器人协议版本（`…BOT_VERSION`）经代理时由编排自动固定为后端版本（环境契约，FR-05）。

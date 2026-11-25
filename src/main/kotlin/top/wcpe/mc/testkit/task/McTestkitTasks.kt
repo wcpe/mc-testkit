@@ -2697,7 +2697,15 @@ object McTestkitTasks {
                     McTestkitEnv.DRIVER_BACKEND_NAME to backendName,
                     McTestkitEnv.DRIVER_ROLE to (spec.role ?: ""),
                     McTestkitEnv.DRIVER_RESULTS_DIR to ctx.layout.resultsDir.absolutePath,
-                ) + spec.env
+                ) + spec.env + if (spec.recordEvidence) {
+                    val recordDir = File(ctx.layout.resultsDir, "recordings")
+                    mapOf(
+                        McTestkitEnv.RECORD to "1",
+                        McTestkitEnv.RECORD_DIR to recordDir.absolutePath,
+                    )
+                } else {
+                    emptyMap()
+                }
                 val resolvedArgs = spec.args + spec.argsFiles.flatMap { argsFile ->
                     val file = File(ctx.projectDir, argsFile)
                     require(file.isFile) {

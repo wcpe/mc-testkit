@@ -312,6 +312,17 @@ class DriverSpec(val role: String? = null) : java.io.Serializable {
      */
     var launchAfterReady: Boolean = false
 
+    /**
+     * 声明本 driver 要录屏 / 截图证据：编排注入 `…RECORD=1` 与 `…RECORD_DIR`
+     * （默认 `<结果目录>/recordings/`），driver 进程用自己的捕获能力（calcite 截图、
+     * xvfb/ffmpeg 等可选链）读 env 落证据；JVM 侧套件可读
+     * `top.wcpe.mc.testkit.harness.McTestkitRecorder` 走同一契约。
+     *
+     * 可选降级：录制依赖（ffmpeg / 显示环境）缺失时测试照常 PASS，只是没有视觉证据——
+     * 无头环境必须正确跑，本开关永不改变判定语义。
+     */
+    var recordEvidence: Boolean = false
+
     /** 温和收尾等待上限（秒），超时升级强杀；默认 15（与收尾原语口径一致）。 */
     var killTimeoutSeconds: Long = 15L
 

@@ -23,6 +23,12 @@ public final class McTestkitEnv {
     /** 持续压测施压秒数（与机器人同源，压测编排）。 */
     public static final String STRESS_DURATION_SECONDS = PREFIX + "STRESS_DURATION_SECONDS";
 
+    /** 录制证据开关：`1` 表示本进程声明要录屏 / 截图证据（`driver { recordEvidence = true }`）。 */
+    public static final String RECORD = PREFIX + "RECORD";
+
+    /** 视觉证据输出目录绝对路径（编排默认指向结果目录下 `recordings/`）。 */
+    public static final String RECORD_DIR = PREFIX + "RECORD_DIR";
+
     /** 持久手测（serve）保留场景 id（对齐插件侧契约常量 McTestkitContract.SERVE_SCENARIO_ID，持久手测 serve）。 */
     public static final String SERVE_SCENARIO_ID = "__mc_testkit_serve__";
 
@@ -47,5 +53,15 @@ public final class McTestkitEnv {
     /** 当前是否为持久手测（serve）空闲模式：桩不驱动、不判定、不关服。 */
     public static boolean isServeIdle() {
         return SERVE_SCENARIO_ID.equals(scenarioIdOrNull());
+    }
+
+    /** 录制证据是否被声明（[RECORD] == "1"）。 */
+    public static boolean recordRequested() {
+        return "1".equals(envOrNull(RECORD));
+    }
+
+    /** 视觉证据输出目录（未下发返回 null）。 */
+    public static String recordDirOrNull() {
+        return envOrNull(RECORD_DIR);
     }
 }

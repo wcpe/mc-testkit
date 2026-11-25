@@ -95,6 +95,13 @@ object McTestkitEnv {
     /** 本场景的结果目录绝对路径（driver 如需落证据文件，写这里使产物随场景归档）。 */
     const val DRIVER_RESULTS_DIR = PREFIX + "DRIVER_RESULTS_DIR"
 
+    // ── 录屏 / 截图证据（可选降级能力；编排→driver 下发，套件内 JVM 侧读取亦可）──
+    /** 录制证据开关：`1` 表示本 driver 声明要录屏 / 截图证据（`driver { recordEvidence = true }`）。 */
+    const val RECORD = PREFIX + "RECORD"
+
+    /** 视觉证据输出目录绝对路径（编排默认指向结果目录下 `recordings/`；录屏 / 截图落这里随场景归档）。 */
+    const val RECORD_DIR = PREFIX + "RECORD_DIR"
+
     // ── 集群（集群编排）/ 压测（压测编排）──
     /** 集群场景的有序后端名（逗号分隔；编排→机器人下发，bot 据此 `/server <name>` 切换目标，集群编排）。 */
     const val CLUSTER_BACKENDS = PREFIX + "CLUSTER_BACKENDS"

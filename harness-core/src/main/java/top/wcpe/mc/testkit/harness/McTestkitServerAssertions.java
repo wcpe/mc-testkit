@@ -52,9 +52,18 @@ public final class McTestkitServerAssertions {
         /** 给人读的说明；失败时是原因，成功时是证据摘要。 */
         public final String message;
 
-        private Outcome(boolean passed, String message) {
+        /**
+         * 场景明细键（失败现场的排障读数：期望值、观测值、计数等）。
+         *
+         * <p>随 FAIL 结论一并落结果文件成独立键——消费方断言 / 人工排查直接读字段，
+         * 不必从 {@link #message} 文本里抠数字。无明细时为空 map。
+         */
+        public final java.util.Map<String, String> facts;
+
+        private Outcome(boolean passed, String message, java.util.Map<String, String> facts) {
             this.passed = passed;
             this.message = message;
+            this.facts = facts == null ? java.util.Collections.emptyMap() : facts;
         }
 
         /**
@@ -64,7 +73,7 @@ public final class McTestkitServerAssertions {
          * @return 结果
          */
         public static Outcome pass(String evidence) {
-            return new Outcome(true, evidence);
+            return new Outcome(true, evidence, null);
         }
 
         /**
@@ -74,7 +83,18 @@ public final class McTestkitServerAssertions {
          * @return 结果
          */
         public static Outcome fail(String reason) {
-            return new Outcome(false, reason);
+            return new Outcome(false, reason, null);
+        }
+
+        /**
+         * 构造一条带排障读数的失败断言结果。
+         *
+         * @param reason 具体原因（直接进结果文件的 message，会被人读到）
+         * @param facts  场景明细键（如 expected / observed / worldCount），独立落盘成字段
+         * @return 结果
+         */
+        public static Outcome fail(String reason, java.util.Map<String, String> facts) {
+            return new Outcome(false, reason, facts);
         }
     }
 

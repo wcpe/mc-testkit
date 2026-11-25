@@ -55,6 +55,22 @@ class McTestkitResultWriterTest {
     }
 
     @Test
+    void failDetailsWrittenAsIndependentKeys() throws Exception {
+        File target = new File(tempDir, "failed.properties");
+        Map<String, String> details = new LinkedHashMap<>();
+        details.put("expected", "3");
+        details.put("observed", "0");
+        details.put("status", "被打明细键污染的 status"); // 不应覆盖契约 status
+        new McTestkitResultWriter(target).fail("世界实体数不符", details);
+
+        Properties props = load(target);
+        assertEquals("3", props.getProperty("expected"));
+        assertEquals("0", props.getProperty("observed"));
+        assertEquals(McTestkitResultWriter.STATUS_FAIL, props.getProperty("status"), "契约 status 键不得被明细覆盖");
+        assertEquals("世界实体数不符", props.getProperty("message"));
+    }
+
+    @Test
     void writeCreatesMissingParentDirectories() {
         File target = new File(tempDir, "deep/nested/result.properties");
         new McTestkitResultWriter(target).pass("通过");

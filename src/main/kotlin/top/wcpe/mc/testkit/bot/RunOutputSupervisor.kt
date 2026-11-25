@@ -20,6 +20,9 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
         var stopping = false
         var stoppedAt = 0L
         var escalated = false
+
+        /** 温和收尾的升级阈值（毫秒）；默认 [ESCALATE_AFTER_MS]，可按进程声明放宽（如 driver 的 killTimeoutSeconds）。 */
+        var escalateAfterMs: Long = ESCALATE_AFTER_MS
         var exitedAt = 0L
         var pidFile: File? = null
         var retired = false
@@ -99,7 +102,7 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
         val tree = synchronized(this) { child(process).tree.toList() }
         val start = System.nanoTime()
         val deadline = start + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
-        awaitGone(process, tree, minOf(deadline, start + TimeUnit.MILLISECONDS.toNanos(ESCALATE_AFTER_MS)))
+        awaitGone(process, tree, minOf(deadline, start + TimeUnit.MILLISECONDS.toNanos(child(process).escalateAfterMs)))
         tree.forEach { it.destroyForcibly() }
         process.destroyForcibly()
         awaitGone(process, tree, deadline)
@@ -136,6 +139,21 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
         refresh(scan())
         requestStop(c)
         return true
+    }
+
+    /**
+     * 按日志文件找受监管进程、先把该进程的温和收尾窗口放宽到 [escalateAfterMs] 再请求停止，
+     * 返回该进程供调用方 [awaitStopped] 等净——driver 的 `killTimeoutSeconds` 语义走这条路
+     * （默认阈值是快照级场景优化，不适合还在落证据的进程）。未登记返回 null。
+     */
+    @Synchronized
+    fun stopLogWithGrace(logFile: File, escalateAfterMs: Long): Process? {
+        val log = logFile.canonicalFile
+        val c = children.lastOrNull { it.log == log } ?: return null
+        c.escalateAfterMs = escalateAfterMs
+        refresh(scan())
+        requestStop(c)
+        return c.process
     }
 
     /** [pid] 是否是本次构建登记且仍在运行的进程。它活着，这个 pid 就不会被别的进程占用。 */
@@ -232,7 +250,7 @@ internal class RunOutputSupervisor(private val budget: OutputBudget) : AutoClose
             }
         }
         if (!c.stopping && c.deadline != null && now - c.deadline >= 0) budget.fail("TIMEOUT log=${c.log.name.take(100)}")
-        if (c.stopping && !c.escalated && now - c.stoppedAt >= TimeUnit.MILLISECONDS.toNanos(ESCALATE_AFTER_MS)) {
+        if (c.stopping && !c.escalated && now - c.stoppedAt >= TimeUnit.MILLISECONDS.toNanos(c.escalateAfterMs)) {
             c.escalated = true
             kill(c, force = true)
         }

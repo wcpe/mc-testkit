@@ -15,9 +15,9 @@ plugins {
 }
 
 group = "top.wcpe.mc"
-// 0.2.0：新增 McTestkitServerAssertions（服务端断言登记表）与桩基类的
-// registerServerAssertion / handleAssertionChat。属于**新增能力**，按语义化版本升 minor。
-version = "0.2.0"
+// 0.3.0：新增 McTestkitRecorder（录屏 / 截图证据，可选降级）与
+// McTestkitEnv 的 RECORD / RECORD_DIR 契约常量。属于**新增能力**，按语义化版本升 minor。
+version = "0.3.0"
 
 repositories {
     mavenCentral()

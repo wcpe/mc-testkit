@@ -763,6 +763,16 @@ object McTestkitTasks {
                         scenario.name,
                         scenario.resultTimeoutSeconds,
                         mavenSources,
+                        // 服务端侧录屏证据：场景有 driver 声明 recordEvidence 时桩 JVM 也拿到契约 env
+                        // （桩内套件可读 McTestkitRecorder 走同一组 env，无头环境照降级不误判）
+                        recordEnv = if (hasDrivers && scenario.driverSpecs.any { it.recordEvidence }) {
+                            mapOf(
+                                McTestkitEnv.RECORD to "1",
+                                McTestkitEnv.RECORD_DIR to File(ctx.layout.resultsDir, "recordings").absolutePath,
+                            )
+                        } else {
+                            emptyMap()
+                        },
                         onBackendReady = if (hasPostReadyDrivers) {
                             {
                                 ctx.info("后端端口已就绪，拉起 launchAfterReady 分阶段 driver")
@@ -806,16 +816,19 @@ object McTestkitTasks {
         // 依赖插件的产物来源（ADR-0026）：同样自动接线，保证注入前它已构建完成
         pluginSourceFiles.forEach { prepare.get().dependsOn(it) }
 
-        // 有 bot 的场景：一键「启动机器人 + 验证」
+        // 聚合入口 = 本场景声明的全部驱动 + 验证：bot 与 driver 同时声明时缺一方
+        // 会让场景等不到结果（复核发现的真实缺口），两侧各自带上对方已声明的 launch。
+        // 有 bot 的场景：一键「启动机器人（+ 已声明的进程驱动）+ 验证」
         if (launch != null) {
             registerTask(project, McTestkitTaskNames.withBot(scenario.name)) { task ->
                 task.group = TASK_GROUP
                 task.description = "一键运行场景 ${scenario.name}：启动机器人 + 验证"
                 task.dependsOn(launch, verify)
+                launchDriver?.let { task.dependsOn(it) }
             }
         }
 
-        // 有 driver 的场景：一键「启动进程驱动 + 验证」（全部 launchAfterReady 时无 launch 任务，直接挂 verify）
+        // 有 driver 的场景：一键「启动进程驱动（driver 车道）+ 验证」（全部 launchAfterReady 时无 launch 任务，直接挂 verify）
         if (hasDrivers) {
             registerTask(project, McTestkitTaskNames.withDriver(scenario.name)) { task ->
                 task.group = TASK_GROUP
@@ -825,6 +838,7 @@ object McTestkitTasks {
                 } else {
                     task.dependsOn(verify)
                 }
+                launch?.let { task.dependsOn(it) }
             }
         }
 
@@ -1287,9 +1301,16 @@ object McTestkitTasks {
         port: Int,
         label: String,
         timeoutSeconds: Long = PORT_READINESS_TIMEOUT_SECONDS,
+        process: Process? = null,
     ) {
         val deadlineMs = System.currentTimeMillis() + timeoutSeconds * 1000L
         while (System.currentTimeMillis() < deadlineMs) {
+            // 守着进程等：后端已退出时端口永远不会开，不必空等满上限
+            if (process != null && !process.isAlive) {
+                throw GradleException(
+                    "$label 在端口 $port 就绪前已退出（退出码 ${process.exitValue()}）；将收尾全部进程。",
+                )
+            }
             try {
                 java.net.Socket().use { socket ->
                     socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 2000)
@@ -2484,6 +2505,7 @@ object McTestkitTasks {
         sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
         stopTaskName: String? = McTestkitTaskNames.STOP_PROCESSES,
         onBackendReady: (() -> Unit)? = null,
+        recordEnv: Map<String, String> = emptyMap(),
     ) {
         val layout = ctx.layout
         val runDir = layout.backendRunDir(backend.name)
@@ -2506,7 +2528,7 @@ object McTestkitTasks {
                     McTestkitEnv.SCENARIO to scenario,
                     McTestkitEnv.RESULT_FILE to resultFilePath,
                     McTestkitEnv.BACKEND_NAME to backend.name,
-                ),
+                ) + recordEnv,
             ),
             javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
@@ -2517,7 +2539,7 @@ object McTestkitTasks {
             // 分阶段拉起点：后端端口可连（≈服务端就绪）后回调，供 launchAfterReady driver 此刻起跑。
             // 判据与集群路径就绪门同源（awaitPortOpen）：端口迟迟不开等满上限即中文失败收尾。
             if (onBackendReady != null) {
-                awaitPortOpen(ctx, backend.port, "后端 ${backend.name}")
+                awaitPortOpen(ctx, backend.port, "后端 ${backend.name}", process = process)
                 onBackendReady()
             }
             // 等被测后端跑完：以「桩写出结果文件」为权威完成信号（结果文件是真源，见 verify/），
@@ -2653,15 +2675,18 @@ object McTestkitTasks {
     internal const val PROCESS_LIFETIME_SLACK_SECONDS = 600L
 
     /**
-     * driver 进程的唯一 key（日志 / pid / 台账基名）：多 driver 时 `driver-<role>`，
-     * 单匿名 driver 时 `driver`（场景内唯一，无需再带场景名——日志已落该场景结果目录）。
+     * driver 进程的唯一 key（日志 / pid / 台账基名）：`driver-<场景>`、多 driver 时追加
+     * `-<role|index>`。场景名必带——结果目录一次构建可跑多场景，同名匿名 driver 会互相
+     * 覆盖日志 / pid / 台账（复核发现的真实缺口）。
      */
-    internal fun driverKey(scenario: ScenarioSpec, spec: DriverSpec, index: Int): String =
-        when {
-            spec.role != null -> "driver-${spec.role}"
-            scenario.driverSpecs.size == 1 -> "driver"
-            else -> "driver-${index + 1}"
+    internal fun driverKey(scenario: ScenarioSpec, spec: DriverSpec, index: Int): String {
+        val scenarioPart = scenario.name.replace(Regex("[^A-Za-z0-9_.-]"), "-")
+        return when {
+            spec.role != null -> "$scenarioPart-${spec.role}"
+            scenario.driverSpecs.size == 1 -> scenarioPart
+            else -> "$scenarioPart-${index + 1}"
         }
+    }
 
     /**
      * 起一个场景的 driver 进程（driver 车道：真客户端 / 外部驱动与 bot 同口径生命周期）。
@@ -2739,11 +2764,21 @@ object McTestkitTasks {
         return started
     }
 
-    /** 停掉场景的全部 driver：交给进程监管（温和→限时→强杀升级），没起过或已自停的是安全 no-op。 */
+    /**
+     * 停掉场景的全部 driver：先按该 driver 声明的 `killTimeoutSeconds` 给温和收尾窗口
+     * （覆盖监管默认的短升级阈值），限时未退升级强杀——driver 可能正在落视觉证据，
+     * 不打满窗口就强杀会截断证据文件。没起过或已自停的是安全 no-op。
+     */
     private fun stopScenarioDrivers(ctx: TaskExecutionContext, scenario: ScenarioSpec) {
         val supervisor = ctx.runBudget().supervisor
         scenario.driverSpecs.forEachIndexed { index, spec ->
-            supervisor.stopLog(driverLogFile(ctx.layout.resultsDir, driverKey(scenario, spec, index)))
+            val process = supervisor.stopLogWithGrace(
+                driverLogFile(ctx.layout.resultsDir, driverKey(scenario, spec, index)),
+                spec.killTimeoutSeconds * 1000,
+            )
+            if (process != null && !supervisor.awaitStopped(process, spec.killTimeoutSeconds * 1000)) {
+                ctx.warn("driver「${driverKey(scenario, spec, index)}」在 ${spec.killTimeoutSeconds}s 收尾窗口后仍未退净")
+            }
         }
     }
 

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName
 import top.wcpe.mc.testkit.dsl.BackendSpec
 import top.wcpe.mc.testkit.dsl.ProxySpec
 import top.wcpe.mc.testkit.dsl.ScenarioSpec
+import top.wcpe.mc.testkit.task.McTestkitTasks.driverKey
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -169,5 +170,31 @@ class DriverValidationTest {
             )
         }
         assertTrue(ex.message!!.contains("driver"), ex.message)
+    }
+
+    @Test
+    @DisplayName("driverKey 必带场景名——两个场景同名角色不会撞产物文件名")
+    fun driverKeyCarriesScenarioName() {
+        val scenarioA = ScenarioSpec("alpha").apply { backend = "s1"; driver { command = "node" } }
+        val scenarioB = ScenarioSpec("beta").apply { backend = "s1"; driver { command = "node" } }
+        val keyA = driverKey(scenarioA, scenarioA.driverSpecs[0], 0)
+        val keyB = driverKey(scenarioB, scenarioB.driverSpecs[0], 0)
+        assertEquals("alpha", keyA)
+        assertEquals("beta", keyB)
+        assertTrue(keyA != keyB, "两场景的 driver key 必须不同")
+    }
+
+    @Test
+    @DisplayName("driverKey 多 driver 未命角色时按序号区分")
+    fun driverKeyFallsBackToIndex() {
+        val scenario = ScenarioSpec("smoke").apply {
+            backend = "s1"
+            driver { command = "node" }
+            driver { command = "node" }
+        }
+        val first = driverKey(scenario, scenario.driverSpecs[0], 0)
+        val second = driverKey(scenario, scenario.driverSpecs[1], 1)
+        assertEquals("smoke-1", first)
+        assertEquals("smoke-2", second)
     }
 }

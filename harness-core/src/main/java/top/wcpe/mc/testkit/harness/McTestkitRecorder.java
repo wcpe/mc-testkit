@@ -110,6 +110,17 @@ public final class McTestkitRecorder {
             warn("开录失败（ffmpeg 未能启动）：" + ex.getMessage());
             return null;
         }
+        // 缺编码器 / 打不开显示源时 ffmpeg 在 spawn 后数毫秒退出——短窗探活，
+        // 不返回一个已经死掉的假句柄
+        try {
+            Thread.sleep(400);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+        if (!process.isAlive()) {
+            warn("开录失败（ffmpeg 启动后即刻退出，详见 " + ffmpegLogFile(out).getName() + "）");
+            return null;
+        }
         return new Recording(process, out);
     }
 

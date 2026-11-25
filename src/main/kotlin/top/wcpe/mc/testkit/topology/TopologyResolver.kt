@@ -3,6 +3,7 @@ package top.wcpe.mc.testkit.topology
 import org.gradle.api.GradleException
 import top.wcpe.mc.testkit.contract.McTestkitEnv
 import top.wcpe.mc.testkit.contract.McTestkitRunDirectories
+import top.wcpe.mc.testkit.contract.McTestkitTaskNames
 import top.wcpe.mc.testkit.contract.toTaskKey
 import top.wcpe.mc.testkit.dsl.BackendSpec
 import top.wcpe.mc.testkit.dsl.McTestkitExtension
@@ -246,6 +247,23 @@ object TopologyResolver {
                 "mcTestkit 场景名 $colliding 折成任务名后都是「${scenarioTaskKeyPrefix(key)}」，会撞任务名。" +
                     "请改用折名后仍互不相同的名字（避免只靠大小写或分隔符区分）。",
             )
+        }
+        // 聚合入口名也要查重：场景「login」声明 driver 生成 e2eLoginWithDriver，
+        // 与场景「loginWithDriver」的直连验证任务撞名——中缀不同也得拦下
+        val generated = mutableMapOf<String, String>()
+        scenarios.forEach { scenario ->
+            val names = mutableListOf(McTestkitTaskNames.verify(scenario.name))
+            if (scenario.botSpecs.isNotEmpty()) names += McTestkitTaskNames.withBot(scenario.name)
+            if (scenario.driverSpecs.isNotEmpty()) names += McTestkitTaskNames.withDriver(scenario.name)
+            names.forEach { taskName ->
+                val other = generated.putIfAbsent(taskName, scenario.name)
+                if (other != null && other != scenario.name) {
+                    throw GradleException(
+                        "mcTestkit 场景「$other」与「${scenario.name}」生成的任务名都是「$taskName」，会撞任务名。" +
+                            "请改用不会与聚合入口撞名的场景名。",
+                    )
+                }
+            }
         }
     }
 

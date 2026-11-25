@@ -95,7 +95,8 @@ mcTestkit {
         backend = "s1"
         driver {
             command = "node"
-            args("calcite/join.mjs", "127.0.0.1", "25599", "CalcitePilot", "build/calcite/evidence.json")
+            // workDir 已是 calcite：脚本路径相对它写，端口用后端 s1 实际监听的 25565
+            args("join.mjs", "127.0.0.1", "25565", "CalcitePilot", "../build/calcite/evidence.json")
             workDir = "calcite"             // 相对工程根；缺省 = 工程根
             env("CALCITE_MC_VERSION", "1.20.1")
             killTimeoutSeconds = 15         // 温和收尾上限，超时升级强杀（默认 15）

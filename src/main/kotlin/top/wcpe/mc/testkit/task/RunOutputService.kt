@@ -10,6 +10,7 @@ import top.wcpe.mc.testkit.bot.OutputBudget
 import top.wcpe.mc.testkit.bot.ProcessIdentity
 import top.wcpe.mc.testkit.bot.ProcessLedger
 import top.wcpe.mc.testkit.contract.McTestkitTaskNames
+import top.wcpe.mc.testkit.driver.LEDGER_KEY_DRIVER
 import java.io.File
 import java.util.*
 
@@ -67,7 +68,11 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
 
     /** 进程台账里身份核对得上、仍存活、又不归本次构建监管的 bot 与钩子进程：往结果目录写日志的只有它们。 */
     private fun liveWriters(resultsDir: File): List<String> = ProcessLedger.records(resultsDir)
-        .filter { it.key.startsWith("$LEDGER_KEY_BOT/") || it.key.startsWith("$LEDGER_KEY_HOOK/") }
+        .filter {
+            it.key.startsWith("$LEDGER_KEY_BOT/") ||
+                it.key.startsWith("$LEDGER_KEY_HOOK/") ||
+                it.key.startsWith("$LEDGER_KEY_DRIVER/")
+        }
         .filter { !budget.supervisor.owns(it.pid) && it.matchesLiveProcess() }
         .map { it.key }
 

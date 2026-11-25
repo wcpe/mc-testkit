@@ -4,6 +4,12 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+
+- **发布失败后重跑不可能变绿：三个构件的发布与建 Release 都不幂等**：`v0.18.1` 因发布凭据失效在「发布构件」一步 401 失败，凭据修好后重跑，却先后撞上两处「不可覆盖」——根构件已在别处补发成功、`gh release create` 与已存在的 Release 撞名（`Release.tag_name already exists`）。于是**一次实际成功的补发被拖成红色**，回查发布历史会误以为 0.18.1 没发出去。现四处（根插件、`harness-core`、`bot-core`、GitHub Release）统一按「远端已有该版本则跳过」处理：Maven / npm 构件查远端是否已存在该版本，Release 先 `gh release view` 探测。已存在时只打印核对信息、不再报错，因此**修好凭据后重跑即可收敛**，不必删 Release 或改版本号重来。根构件的幂等判断复用 `VERSION`（与 tag 校验同源），路径按真实 `groupId`（`top.wcpe.mc`）拼成 `top/wcpe/mc/mc-testkit/…`——漏掉 `mc` 段会永远查到 404、静默退化成「每次都重复发布」。已存在的 Release **不重写正文**：正文由 GitHub 从 PR 自动生成，重跑时区间内 PR 没有变化，重新生成收益为零，反而会覆盖人工在网页上补的说明。
+
 ## [0.18.1] - 2026-11-25
 
 ### 修复

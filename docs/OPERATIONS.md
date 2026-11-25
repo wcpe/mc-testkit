@@ -37,7 +37,7 @@
 | 工作流 | 触发 | 内容 |
 |---|---|---|
 | `ci.yml` | 每个 PR + `master` 推送 | 插件构建 + ktlint + 单元/TestKit；模板 bot 静态检查。**是合并门禁**（master 分支保护的必需检查）。**不**拉起真实服务端 |
-| `release.yml` | **推 `v*` tag** | 校验版本一致 → 重跑验证门 → 发布根插件与 `harness-core` 到 maven.wcpe.top，以及 `@wcpe/mc-testkit-bot` 到 npm 源 → 建 GitHub Release |
+| `release.yml` | **推 `v*` tag** | 校验版本一致 → 重跑验证门 → 发布根插件与 `harness-core` 到 maven.wcpe.top，以及 `@wcpe/mc-testkit-bot` 到 npm 源 → 建 GitHub Release。**三个构件的发布与建 Release 全部幂等**（远端已有该版本则跳过），故失败后修好凭据重跑不会因「重复发布 / Release 已存在」再次变红 |
 | `e2e.yml` | **仅手动**（Actions → E2E → Run workflow） | 并行矩阵：Paper 10 代表版本 `e2eSmoke` + Waterfall 全场景 / BungeeCord 集群 / Velocity 代理 / Folia 烟雾 |
 
 实机 E2E 会下载服务端/代理 jar；工作流用 `actions/cache` 复用 `~/.gradle/caches/mc-testkit-jars`。**发版前应手动跑一遍 E2E**（`testing-and-quality.md`）。矩阵与缓存设计见 `docs/specs/e2e-parallel-matrix.md`。

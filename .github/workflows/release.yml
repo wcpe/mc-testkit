@@ -85,7 +85,9 @@ jobs:
       - name: 验证门（构建 + 风格检查 + 全部测试）
         run: ./gradlew build --no-daemon --stacktrace
 
-      - name: 发布构件到 maven.wcpe.top
+      # 幂等：根构件可能已发布过。与下面两个共享构件同理——上次运行若在更晚的步骤失败（如建 Release），
+      # 修好后重跑时重复 publish 会收到 400（Maven 构件不可覆盖），把一次实际成功的补发拖成红色。
+      - name: 发布构件到 maven.wcpe.top（已发布则跳过）
         env:
           WCPE_MAVEN_USERNAME: ${{ secrets.WCPE_MAVEN_USERNAME }}
           WCPE_MAVEN_PASSWORD: ${{ secrets.WCPE_MAVEN_PASSWORD }}
@@ -95,7 +97,15 @@ jobs:
             echo "::error::缺少发布凭据：请在仓库 Settings → Environments → release 配置 secrets WCPE_MAVEN_USERNAME / WCPE_MAVEN_PASSWORD（见 docs/OPERATIONS.md §1）。"
             exit 1
           fi
-          ./gradlew publish --no-daemon --stacktrace
+          PLUGIN_VERSION="$(tr -d '[:space:]' < VERSION)"
+          # groupId 是 top.wcpe.mc（见 build.gradle.kts），故路径含单独的 `mc` 段，不可省
+          POM_URL="https://maven.wcpe.top/repository/maven-releases/top/wcpe/mc/mc-testkit/${PLUGIN_VERSION}/mc-testkit-${PLUGIN_VERSION}.pom"
+          if curl -fsS -u "${WCPE_MAVEN_USERNAME}:${WCPE_MAVEN_PASSWORD}" -o /dev/null "$POM_URL"; then
+            echo "mc-testkit $PLUGIN_VERSION 已存在于远端，跳过发布（Maven 构件不可覆盖）。"
+          else
+            echo "远端尚无 mc-testkit $PLUGIN_VERSION，开始发布。"
+            ./gradlew publish --no-daemon --stacktrace
+          fi
 
       # harness-core 是**独立版本**的共享胶水构件（`harness-core/build.gradle.kts` 里的 version），
       # 不在根工程（root settings 刻意不 include 它，它是仓库内独立工程），故 `./gradlew publish`
@@ -172,15 +182,29 @@ jobs:
             npm publish ./bot-core --userconfig "$TMP_NPMRC"
           fi
 
-      - name: 建 GitHub Release（正文由 PR 自动生成）
+      # 幂等：Release 可能已存在。典型场景是上一次运行在更早的步骤失败（如凭据失效导致构件没发出去），
+      # 之后修好凭据重跑——此时 Release 若已在别处建好，`gh release create` 会以
+      # `Release.tag_name already exists` 退出 1，把一次**实际成功**的补发拖成红色，回查历史时
+      # 会误以为发布失败了。故先探测、再决定建还是只更新。
+      #
+      # 不用 `gh release edit` 覆盖正文：正文由 GitHub 从 PR 自动生成，重跑时区间内的 PR 并没有变，
+      # 重新生成会得到同样内容、没有收益；而人工在网页上改过的说明会被覆盖掉。因此已存在时只做
+      # 「确认它指向本 tag」并保留原样，把版本号与链接打出来供核对。
+      - name: 建 GitHub Release（正文由 PR 自动生成，已存在则跳过）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # --generate-notes：GitHub 按 tag 区间汇总该区间内合并的 PR 与贡献者，
-          # 并自动识别上一个 tag 作比较基准；不再从 CHANGELOG 抄正文。
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
-            --verify-tag
-          echo "已建 Release（正文由 PR 自动生成）：$GITHUB_REF_NAME"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME 已存在，跳过创建（重跑不再视为失败）。"
+            gh release view "$GITHUB_REF_NAME" --json tagName,isDraft,isPrerelease,url \
+              --jq '"  已存在：tag=\(.tagName) 草稿=\(.isDraft) 预发布=\(.isPrerelease)\n  \(.url)"'
+          else
+            # --generate-notes：GitHub 按 tag 区间汇总该区间内合并的 PR 与贡献者，
+            # 并自动识别上一个 tag 作比较基准；不再从 CHANGELOG 抄正文。
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes \
+              --verify-tag
+            echo "已建 Release（正文由 PR 自动生成）：$GITHUB_REF_NAME"
+          fi

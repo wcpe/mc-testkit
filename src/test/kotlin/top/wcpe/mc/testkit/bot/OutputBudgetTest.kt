@@ -27,16 +27,25 @@ import kotlin.test.assertTrue
  * ## 不真吐大日志
  *
  * 每例用可注入的小 quota（KiB 量级）与**存活极短的子进程**，单例额外磁盘 < 2 MiB、
- * 单例耗时 < 10 s。否则守卫自己就成了再现事故的东西。
+ * 单例预期耗时 < 10 s（Windows 上 `java <单源文件>` 先编译再运行会拖长启动，
+ * 兜底时限按 [CHILD_DEADLINE_MS] 给余量）。否则守卫自己就成了再现事故的东西。
  *
  * ## 子进程用 JVM 自身
  *
  * 与 [ProcessReaperTest] 同口径：用 `java <单源文件>` 派生，不依赖 node，
  * 无 Node 的 CI 也能跑。
  */
-@org.junit.jupiter.api.Timeout(10)
+@org.junit.jupiter.api.Timeout(60)
 class OutputBudgetTest {
     private val supervisedBudgets = mutableSetOf<OutputBudget>()
+
+    private companion object {
+        /** 子进程存活/退出的兜底时限：Windows PTY 格下单源文件编译启动偶发超过 8s。 */
+        const val CHILD_DEADLINE_MS = 30_000L
+
+        /** 输出泵 EOF 读尽等待上限：BotLauncher.awaitPump 只接受 1..5 秒，取上限。 */
+        const val PUMP_EOF_SECONDS = 5L
+    }
 
     @org.junit.jupiter.api.AfterEach fun closeOwners() {
         supervisedBudgets.forEach { it.supervisor.close() }
@@ -95,7 +104,7 @@ class OutputBudgetTest {
         val pump = BoundedProcessOutputPump(label = label, input = process.inputStream, logFile = logFile, budget = budget)
         val handle = BotProcessHandle(process, pump, logFile)
         supervisedBudgets += budget
-        budget.supervisor.register(handle, 8000)
+        budget.supervisor.register(handle, CHILD_DEADLINE_MS)
         pump.run()
         return pump
     }
@@ -135,7 +144,7 @@ class OutputBudgetTest {
         val budget = OutputBudget(perSinkLimit = quota, runLimit = quota * 4)
         try {
             val pump = pumpTo(child, logFile, budget)
-            assertTrue(child.waitFor(6, TimeUnit.SECONDS), "截断后管道照常被抽干，子进程应当自己跑完")
+            assertTrue(child.waitFor(CHILD_DEADLINE_MS, TimeUnit.MILLISECONDS), "截断后管道照常被抽干，子进程应当自己跑完")
             assertEquals(0, child.exitValue(), "子进程不应被杀，退出码应为 0")
 
             val size = logFile.length()
@@ -184,7 +193,7 @@ class OutputBudgetTest {
         val budget = OutputBudget(perSinkLimit = quota, runLimit = quota * 4)
         try {
             pumpTo(child, logFile, budget)
-            child.waitFor(6, TimeUnit.SECONDS)
+            child.waitFor(CHILD_DEADLINE_MS, TimeUnit.MILLISECONDS)
 
             val size = logFile.length()
             assertTrue(size <= quota, "两路合计 $size 字节超过了 quota=$quota（stderr 不得绕过限额）")
@@ -211,7 +220,7 @@ class OutputBudgetTest {
             val child = spawnChattyChild(dir, totalBytes = (perSink * 3 / 4).toInt(), newlineEvery = 4096)
             try {
                 pumpTo(child, logFile, budget, label = "multi-$index")
-                child.waitFor(6, TimeUnit.SECONDS)
+                child.waitFor(CHILD_DEADLINE_MS, TimeUnit.MILLISECONDS)
             } finally {
                 child.destroyForcibly()
             }
@@ -262,12 +271,12 @@ class OutputBudgetTest {
         val pumpThread = Thread({ handle.pump.run() }, "test-pump-reap").apply { isDaemon = true }
         handle.pumpThread = pumpThread
         supervisedBudgets += budget
-        budget.supervisor.register(handle, 8000)
+        budget.supervisor.register(handle, CHILD_DEADLINE_MS)
         pumpThread.start()
         try {
-            assertTrue(child.waitFor(8, TimeUnit.SECONDS), "截断后管道照常被抽干，子进程应当自己跑完")
+            assertTrue(child.waitFor(CHILD_DEADLINE_MS, TimeUnit.MILLISECONDS), "截断后管道照常被抽干，子进程应当自己跑完")
             assertEquals(0, child.exitValue(), "子进程不应被杀，退出码应为 0")
-            assertTrue(handle.awaitPump(3), "子进程退出后泵应当读到 EOF 结束")
+            assertTrue(handle.awaitPump(PUMP_EOF_SECONDS), "子进程退出后泵应当读到 EOF 结束")
             assertTrue(handle.isTruncated(), "该日志应当已截断")
 
             handle.stop()
@@ -275,7 +284,7 @@ class OutputBudgetTest {
             assertTrue(logFile.length() <= quota, "文件仍应在单日志上限内（标记行也计入）")
         } finally {
             child.destroyForcibly()
-            child.waitFor(5, TimeUnit.SECONDS)
+            child.waitFor(CHILD_DEADLINE_MS, TimeUnit.MILLISECONDS)
         }
     }
 
@@ -388,7 +397,7 @@ class OutputBudgetTest {
         val budget = OutputBudget(perSinkLimit = quota, runLimit = quota * 4)
         try {
             val pump = pumpTo(child, logFile, budget)
-            child.waitFor(6, TimeUnit.SECONDS)
+            child.waitFor(CHILD_DEADLINE_MS, TimeUnit.MILLISECONDS)
 
             assertFalse(pump.isTruncated(), "正常输出不应被截断")
             assertNull(budget.failureReason(), "预算不应失败")

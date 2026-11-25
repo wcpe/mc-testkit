@@ -303,9 +303,17 @@ public final class EvidenceCompiler {
             if (i > 0) {
                 json.append(',');
             }
+            long endTs = t1;
+            for (Event later : steps) {
+                if (later.ts > s.ts) {
+                    endTs = later.ts;
+                    break;
+                }
+            }
             json.append("{\"seq\":").append(s.seq)
                     .append(",\"name\":").append(quote(s.step))
                     .append(",\"ts\":").append(s.ts)
+                    .append(",\"endTs\":").append(endTs)
                     .append(",\"status\":").append(quote(s.status == null ? "" : s.status))
                     .append(",\"assertions\":[");
             boolean first = true;
@@ -326,53 +334,30 @@ public final class EvidenceCompiler {
         }
         json.append("]}");
 
+        int passedCount = 0;
+        int failedCount = 0;
+        for (Event a : assertions) {
+            if (Boolean.TRUE.equals(a.bool("passed"))) {
+                passedCount++;
+            } else if (Boolean.FALSE.equals(a.bool("passed"))) {
+                failedCount++;
+            }
+        }
         boolean overallPass = suiteEnd != null && Boolean.TRUE.equals(suiteEnd.bool("passed"));
         String summary = suiteEnd == null ? "（套件未正常结束——报告来自残缺前缀）" : suiteEnd.str("message");
 
         String page = PAGE_TEMPLATE
                 .replace("__TITLE__", escHtml(suite + " / " + scenario))
-                .replace("__VERDICT_CLASS__", suiteEnd == null ? "unknown" : (overallPass ? "pass" : "fail"))
-                .replace("__VERDICT__", escHtml(suiteEnd == null ? "UNKNOWN" : (overallPass ? "PASS" : "FAIL")))
+                .replace("__PASSED_COUNT__", String.valueOf(passedCount))
+                .replace("__FAILED_COUNT__", String.valueOf(failedCount))
                 .replace("__SUMMARY__", escHtml(summary == null ? "" : summary))
-                .replace("__SUITE__", escHtml(suite))
-                .replace("__SCENARIO__", escHtml(scenario))
-                .replace("__WINDOW__", t0 + " → " + t1 + "（" + (t1 - t0) + "ms）")
                 .replace("__VIDEO_TAG__", videoDataUrl == null
                         ? "<div class=\"novideo\">本套件无视频证据（视觉依赖降级或车道不提供画面）——断言数据不受影响</div>"
-                        : "<video id=\"vid\" controls preload=\"auto\" src=\"" + videoDataUrl + "\"></video>")
-                .replace("__STEPS_HTML__", stepsHtml(steps, assertions))
-                .replace("__SHOTS_HTML__", shotEntries.isEmpty() ? "<div class=\"novideo\">无截图</div>" : join(shotEntries))
+                        : "<video id=\"vid\" preload=\"auto\" src=\"" + videoDataUrl + "\"></video>")
                 .replace("__DATA_JSON__", json.toString());
         return page;
     }
 
-    private static String stepsHtml(List<Event> steps, List<Event> assertions) {
-        if (steps.isEmpty()) {
-            return "<div class=\"novideo\">无步骤事件</div>";
-        }
-        StringBuilder sb = new StringBuilder();
-        for (Event s : steps) {
-            int count = 0;
-            int failed = 0;
-            for (Event a : assertions) {
-                if (a.step != null && a.step.equals(s.step)) {
-                    count++;
-                    if (Boolean.FALSE.equals(a.bool("passed"))) {
-                        failed++;
-                    }
-                }
-            }
-            String cls = failed > 0 ? "fail" : (count > 0 ? "pass" : "unknown");
-            sb.append("<li class=\"step ").append(cls).append("\" data-seq=\"").append(s.seq)
-                    .append("\" onclick=\"jumpStep(").append(s.ts).append(")\">")
-                    .append("<span class=\"step-name\">#").append(s.seq).append(' ')
-                    .append(escHtml(s.step == null ? "" : s.step)).append("</span>")
-                    .append("<span class=\"step-meta\">断言 ").append(count)
-                    .append(failed > 0 ? "（失败 " + failed + "）" : "")
-                    .append("</span></li>");
-        }
-        return sb.toString();
-    }
 
     private static String join(List<String> parts) {
         StringBuilder sb = new StringBuilder();
@@ -411,88 +396,190 @@ public final class EvidenceCompiler {
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
     }
 
-    /** 报告模板：所有交互在 vanilla JS 里，零外部依赖（自包含硬规格）。 */
+    /**
+     * 报告模板（v2 版式）：左右分栏桌面布局，对齐 Devin e2e 验收报告参考——
+     * 左侧视频+步骤着色分段时间轴（拖动播放头/点击跳转/Ctrl+click 循环当前步骤段）、
+     * 右侧步骤树（步骤标题+passed 计数徽章+逐条断言绿勾）与总览计数及诚实总结。
+     * 全部交互 vanilla JS 零外部依赖（自包含硬规格）。
+     */
     private static final String PAGE_TEMPLATE = "<!DOCTYPE html>\n"
             + "<html lang=\"zh-CN\"><head><meta charset=\"utf-8\"/>\n"
             + "<title>__TITLE__</title>\n"
             + "<style>\n"
-            + "body{font-family:-apple-system,'Noto Sans CJK SC',sans-serif;margin:0;background:#14161a;color:#dde1e6}\n"
-            + "header{padding:14px 20px;background:#1d2026;border-bottom:1px solid #2c313a}\n"
-            + "h1{font-size:18px;margin:0}\n"
-            + ".verdict{display:inline-block;padding:2px 12px;border-radius:10px;font-weight:700;margin-left:10px}\n"
-            + ".verdict.pass{background:#1e4620;color:#7ee787}.verdict.fail{background:#5a1d1d;color:#ff8a80}.verdict.unknown{background:#4a3d15;color:#ffd76e}\n"
-            + ".meta{color:#8b929c;font-size:12px;margin-top:6px}\n"
-            + "main{display:flex;gap:14px;padding:14px 20px;flex-wrap:wrap}\n"
-            + ".panel{background:#1d2026;border:1px solid #2c313a;border-radius:8px;padding:12px}\n"
-            + "#vid{width:100%;max-width:860px;background:#000}\n"
-            + ".videocol{flex:1 1 640px;min-width:480px}\n"
-            + ".sidecol{flex:1 1 320px;min-width:280px}\n"
-            + "canvas{width:100%;height:120px;background:#0c0e11;border-radius:6px;cursor:crosshair}\n"
-            + "ul.steps{list-style:none;padding:0;margin:0;max-height:420px;overflow:auto}\n"
-            + "li.step{padding:7px 10px;border-left:3px solid #555;margin:4px 0;cursor:pointer;background:#23262e;border-radius:4px}\n"
-            + "li.step.pass{border-left-color:#3fb950}li.step.fail{border-left-color:#f85149}\n"
-            + "li.step:hover{background:#2c313a}\n"
-            + ".step-name{font-weight:600}.step-meta{float:right;color:#8b929c;font-size:12px}\n"
-            + "#detail{white-space:pre-wrap;font-size:13px;max-height:300px;overflow:auto}\n"
-            + ".novideo{color:#8b929c;padding:18px;text-align:center}\n"
-            + ".shot{margin:8px 0}.shot img{max-width:100%;border-radius:6px}\n"
-            + ".shot-label{font-size:12px;color:#8b929c;margin-bottom:4px}\n"
-            + "h2{font-size:14px;margin:4px 0 10px}\n"
+            + "*{box-sizing:border-box}\n"
+            + "body{font-family:-apple-system,'Segoe UI','Noto Sans CJK SC',sans-serif;margin:0;background:#f3f4f6;color:#1f2328}\n"
+            + "header{padding:14px 22px;background:#fff;border-bottom:1px solid #e2e5e9;display:flex;align-items:center}\n"
+            + "h1{font-size:17px;margin:0;font-weight:600}\n"
+            + "main{display:flex;gap:0;height:calc(100vh - 54px)}\n"
+            + ".leftcol{flex:1 1 62%;background:#fff;display:flex;flex-direction:column;border-right:1px solid #e2e5e9;min-width:0}\n"
+            + ".rightcol{flex:0 0 38%;max-width:520px;background:#fff;overflow-y:auto;padding:18px 22px}\n"
+            + ".video-wrap{flex:1 1 auto;background:#000;position:relative;min-height:0;display:flex;align-items:center;justify-content:center}\n"
+            + "#vid{width:100%;height:100%;object-fit:contain;background:#000}\n"
+            + ".step-overlay{position:absolute;left:0;right:0;bottom:0;background:rgba(20,22,26,.82);color:#fff;padding:8px 14px;font-size:13px;display:flex;align-items:baseline;gap:14px}\n"
+            + ".step-overlay .so-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\n"
+            + ".step-overlay .so-range{color:#c9d1d9;font-variant-numeric:tabular-nums}\n"
+            + ".step-overlay .so-hint{margin-left:auto;color:#8b929c;font-size:12px}\n"
+            + ".tl-zone{padding:10px 16px 4px;background:#fff}\n"
+            + ".tl-track{position:relative;height:22px;background:#e5e7eb;border-radius:4px;cursor:pointer;overflow:hidden}\n"
+            + ".tl-seg{position:absolute;top:0;bottom:0}\n"
+            + ".tl-seg.pass{background:#34d399}.tl-seg.fail{background:#f87171}.tl-seg.unknown{background:#9ca3af}\n"
+            + ".tl-seg.active{outline:2px solid #1f2328;outline-offset:-2px;z-index:2}\n"
+            + ".tl-head{position:absolute;top:-2px;bottom:-2px;width:10px;margin-left:-5px;background:#fff;border:2px solid #1f2328;border-radius:50%;z-index:3;pointer-events:none}\n"
+            + ".tl-scale{display:flex;justify-content:space-between;font-size:11px;color:#6b7280;padding-top:3px;font-variant-numeric:tabular-nums}\n"
+            + ".controls{display:flex;align-items:center;gap:10px;padding:8px 16px 12px;background:#fff;font-size:13px}\n"
+            + ".controls button{background:none;border:none;cursor:pointer;font-size:15px;color:#374151;padding:2px 6px}\n"
+            + ".controls button:hover{color:#111}\n"
+            + ".ctrl-time{font-variant-numeric:tabular-nums;color:#374151}\n"
+            + ".ctrl-step{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6b7280;font-size:12px;flex:1 1 auto}\n"
+            + ".ctrl-right{margin-left:auto;display:flex;gap:8px;align-items:center;color:#6b7280;font-size:12px}\n"
+            + ".ovr{display:flex;gap:16px;align-items:center;font-size:15px;margin-bottom:10px}\n"
+            + ".ovr .p{color:#16a34a;font-weight:600}.ovr .f{color:#dc2626;font-weight:600}\n"
+            + ".dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}\n"
+            + ".dot.g{background:#22c55e}.dot.r{background:#ef4444}\n"
+            + ".summary{font-size:13.5px;line-height:1.65;color:#374151;margin-bottom:16px;white-space:pre-wrap}\n"
+            + ".step{border-top:1px solid #e5e7eb;padding:10px 0 6px}\n"
+            + ".step-head{display:flex;align-items:baseline;gap:8px;cursor:pointer}\n"
+            + ".step-head .pen{color:#6b7280;font-size:13px}\n"
+            + ".step-title{font-style:italic;font-size:14px;flex:1 1 auto}\n"
+            + ".step-badge{font-size:12px;color:#6b7280;font-variant-numeric:tabular-nums}\n"
+            + ".step-badge.ok{color:#16a34a}.step-badge.bad{color:#dc2626}\n"
+            + ".asserts{margin:6px 0 4px 22px;display:none}\n"
+            + ".step.open .asserts{display:block}\n"
+            + ".assert{display:flex;gap:8px;font-size:13px;line-height:1.5;margin:5px 0;color:#374151}\n"
+            + ".assert .ck{color:#16a34a;flex:0 0 auto}\n"
+            + ".assert.fail .ck{color:#dc2626}\n"
+            + ".novideo{color:#6b7280;padding:40px;text-align:center;font-size:13px}\n"
             + "</style></head><body>\n"
-            + "<header><h1>mc-testkit 验收证据报告<span class=\"verdict __VERDICT_CLASS__\">__VERDICT__</span></h1>\n"
-            + "<div class=\"meta\">套件 __SUITE__ / 场景 __SCENARIO__ · 窗口 __WINDOW__<br/>__SUMMARY__</div></header>\n"
+            + "<header><h1>mc-testkit 验收证据报告 · __TITLE__</h1></header>\n"
             + "<main>\n"
-            + "<div class=\"panel videocol\"><h2>录像与时间轴（拖动平移 · 滚轮缩放 · 点击跳转）</h2>\n"
-            + "__VIDEO_TAG__\n"
-            + "<canvas id=\"tl\" width=\"860\" height=\"120\"></canvas></div>\n"
-            + "<div class=\"sidecol\"><div class=\"panel\"><h2>操作步骤</h2><ul class=\"steps\">__STEPS_HTML__</ul></div>\n"
-            + "<div class=\"panel\" style=\"margin-top:14px\"><h2>断言明细（点步骤查看）</h2><div id=\"detail\">点击左侧步骤查看该步断言数据</div></div>\n"
-            + "<div class=\"panel\" style=\"margin-top:14px\"><h2>截图面板</h2>__SHOTS_HTML__</div></div>\n"
+            + "<div class=\"leftcol\">\n"
+            + "<div class=\"video-wrap\">__VIDEO_TAG__\n"
+            + "<div class=\"step-overlay\" id=\"sov\" style=\"display:none\">\n"
+            + "<span class=\"so-title\" id=\"so-title\"></span><span class=\"so-range\" id=\"so-range\"></span>\n"
+            + "<span class=\"so-hint\"><kbd>Ctrl</kbd> click to loop</span></div></div>\n"
+            + "<div class=\"tl-zone\">\n"
+            + "<div class=\"tl-track\" id=\"tl\"></div>\n"
+            + "<div class=\"tl-scale\" id=\"tlscale\"></div></div>\n"
+            + "<div class=\"controls\">\n"
+            + "<button id=\"b-prev\" title=\"上一断言/步骤\">⏮</button>\n"
+            + "<button id=\"b-play\" title=\"播放/暂停\">▶</button>\n"
+            + "<button id=\"b-next\" title=\"下一步骤\">⏭</button>\n"
+            + "<span class=\"ctrl-time\" id=\"ctime\">0:00 / 0:00</span>\n"
+            + "<span class=\"ctrl-step\" id=\"cstep\"></span>\n"
+            + "<span class=\"ctrl-right\"><span id=\"b-loop\" title=\"循环当前步骤\" style=\"cursor:pointer\">🔁</span><span>1x</span></span>\n"
+            + "</div></div>\n"
+            + "<div class=\"rightcol\">\n"
+            + "<div class=\"ovr\"><span class=\"p\"><span class=\"dot g\"></span>__PASSED_COUNT__ passed</span><span class=\"f\"><span class=\"dot r\"></span>__FAILED_COUNT__ failed</span></div>\n"
+            + "<div class=\"summary\">__SUMMARY__</div>\n"
+            + "<div id=\"steps\"></div>\n"
+            + "</div>\n"
             + "</main>\n"
             + "<script>\n"
             + "var DATA=__DATA_JSON__;\n"
             + "var vid=document.getElementById('vid');\n"
-            + "var cv=document.getElementById('tl');var cx=cv.getContext('2d');\n"
-            + "var viewStart=DATA.t0,viewEnd=Math.max(DATA.t1,DATA.t0+1);\n"
-            + "function ts2x(ts){return (ts-viewStart)/(viewEnd-viewStart)*cv.width}\n"
-            + "function x2ts(x){return viewStart+x/cv.width*(viewEnd-viewStart)}\n"
-            + "function draw(){cx.clearRect(0,0,cv.width,cv.height);\n"
-            + "cx.fillStyle='#0c0e11';cx.fillRect(0,0,cv.width,cv.height);\n"
-            + "cx.strokeStyle='#2c313a';cx.fillStyle='#8b929c';cx.font='10px sans-serif';\n"
-            + "var span=viewEnd-viewStart;var stepG=span/8;\n"
-            + "for(var t=viewStart-viewStart%stepG;t<=viewEnd;t+=stepG){var x=ts2x(t);\n"
-            + "cx.beginPath();cx.moveTo(x,100);cx.lineTo(x,120);cx.stroke();\n"
-            + "cx.fillText(((t-DATA.t0)/1000).toFixed(1)+'s',x+2,112)}\n"
-            + "if(vid&&DATA.videoStart>=0){var vt=DATA.videoStart+vid.currentTime*1000;var x=ts2x(vt);\n"
-            + "cx.strokeStyle='#ffd76e';cx.beginPath();cx.moveTo(x,0);cx.lineTo(x,120);cx.stroke()}\n"
-            + "DATA.steps.forEach(function(s){var x=ts2x(s.ts);if(x<-4||x>cv.width+4)return;\n"
-            + "var c=s.status==='pass'?'#3fb950':(s.status==='fail'?'#f85149':'#58a6ff');\n"
-            + "cx.fillStyle=c;cx.beginPath();cx.arc(x,50,6,0,7);cx.fill();\n"
-            + "cx.fillStyle='#dde1e6';cx.fillText('#'+s.seq,x-6,70)});\n"
-            + "cx.fillStyle='#8b929c';cx.fillText('点击圆点或步骤跳转 · 拖动平移 · 滚轮缩放',8,14)}\n"
-            + "function jumpStep(ts){if(!vid||DATA.videoStart<0)return;\n"
-            + "vid.currentTime=Math.max(0,(ts-DATA.videoStart)/1000);vid.play()}\n"
-            + "cv.addEventListener('click',function(e){var r=cv.getBoundingClientRect();\n"
-            + "var x=(e.clientX-r.left)*(cv.width/r.width);\n"
-            + "var best=null,bd=1e9;DATA.steps.forEach(function(s){var sx=ts2x(s.ts);var d=Math.abs(sx-x);if(d<bd){bd=d;best=s}});\n"
-            + "if(best&&bd<24){jumpStep(best.ts);showDetail(best)}else if(vid&&DATA.videoStart>=0){vid.currentTime=Math.max(0,(x2ts(x)-DATA.videoStart)/1000)}});\n"
-            + "var dragX=-1;\n"
-            + "cv.addEventListener('mousedown',function(e){dragX=e.clientX});\n"
-            + "window.addEventListener('mouseup',function(){dragX=-1});\n"
-            + "cv.addEventListener('mousemove',function(e){if(dragX<0)return;var dx=e.clientX-dragX;dragX=e.clientX;\n"
-            + "var span=viewEnd-viewStart;var dt=-dx/cv.width*span;viewStart+=dt;viewEnd+=dt;draw()});\n"
-            + "cv.addEventListener('wheel',function(e){e.preventDefault();\n"
-            + "var r=cv.getBoundingClientRect();var fx=(e.clientX-r.left)/r.width;var center=x2ts(fx*cv.width);\n"
-            + "var span=viewEnd-viewStart;var k=e.deltaY>0?1.25:0.8;var ns=Math.max(500,span*k);\n"
-            + "viewStart=center-ns*fx;viewEnd=center+ns*(1-fx);draw()},{passive:false});\n"
-            + "function showDetail(s){var el=document.getElementById('detail');var out='# '+s.seq+' '+s.name+'（'+s.status+'）\\n\\n';\n"
-            + "if(!s.assertions.length){out+='本步无断言事件'}else{s.assertions.forEach(function(a){\n"
-            + "out+=(a.passed?'✓':'✗')+' '+((a.ts-DATA.t0)/1000).toFixed(2)+'s '+(a.message||'')+'\\n'})}\n"
-            + "el.textContent=out}\n"
-            + "document.querySelectorAll('li.step').forEach(function(li){li.addEventListener('click',function(){\n"
-            + "var seq=+li.getAttribute('data-seq');var s=null;DATA.steps.forEach(function(x){if(x.seq===seq)s=x});\n"
-            + "if(s)showDetail(s)})});\n"
-            + "if(vid){vid.addEventListener('timeupdate',draw)}\n"
-            + "draw();\n"
-            + "</script></body></html>\n";
+            + "var dur=(DATA.videoEnd-DATA.videoStart)/1000;\n"
+            + "if(!vid||!(dur>0)){dur=(DATA.t1-DATA.t0)/1000}\n"
+            + "function ts2v(ts){return Math.max(0,(ts-DATA.videoStart)/1000)}\n"
+            + "function fmt(sec){sec=Math.max(0,sec);var m=Math.floor(sec/60),s=Math.floor(sec%60);return m+':'+(s<10?'0':'')+s}\n"
+            + "var steps=DATA.steps;\n"
+            + "var cur=-1,loopTs0=-1,loopTs1=-1;\n"
+            + "// 右侧步骤树\n"
+            + "var box=document.getElementById('steps');\n"
+            + "steps.forEach(function(s,i){\n"
+            + "  var passed=0,total=0;\n"
+            + "  s.assertions.forEach(function(a){total++;if(a.passed)passed++});\n"
+            + "  var div=document.createElement('div');div.className='step';\n"
+            + "  var badgeCls=(total>0&&passed===total)?'ok':(passed<total?'bad':'');\n"
+            + "  div.innerHTML='<div class=\"step-head\"><span class=\"pen\">✎</span><span class=\"step-title\">'+esc(s.name)+'</span><span class=\"step-badge '+badgeCls+'\">'+passed+'/'+total+' passed</span></div>';\n"
+            + "  var al=document.createElement('div');al.className='asserts';\n"
+            + "  s.assertions.forEach(function(a){\n"
+            + "    var d=document.createElement('div');d.className='assert'+(a.passed?'':' fail');\n"
+            + "    d.innerHTML='<span class=\"ck\">'+(a.passed?'✔':'✘')+'</span><span>'+esc(a.message||'')+'</span>';\n"
+            + "    al.appendChild(d);\n"
+            + "  });\n"
+            + "  div.appendChild(al);\n"
+            + "  div.querySelector('.step-head').addEventListener('click',function(){\n"
+            + "    div.classList.toggle('open');\n"
+            + "    jumpStep(i);\n"
+            + "  });\n"
+            + "  box.appendChild(div);\n"
+            + "});\n"
+            + "function esc(t){var d=document.createElement('div');d.textContent=t==null?'':t;return d.innerHTML}\n"
+            + "// 时间轴\n"
+            + "var tl=document.getElementById('tl');\n"
+            + "var scale=document.getElementById('tlscale');\n"
+            + "steps.forEach(function(s,i){\n"
+            + "  var l=ts2v(s.ts)/dur*100,r=ts2v(s.endTs)/dur*100;\n"
+            + "  var seg=document.createElement('div');\n"
+            + "  var st=s.status==='pass'?'pass':(s.status==='fail'?'fail':'unknown');\n"
+            + "  seg.className='tl-seg '+st;seg.id='seg'+i;\n"
+            + "  seg.style.left=l+'%';seg.style.width=Math.max(0.8,r-l)+'%';\n"
+            + "  seg.title=s.name;\n"
+            + "  tl.appendChild(seg);\n"
+            + "});\n"
+            + "var head=document.createElement('div');head.className='tl-head';tl.appendChild(head);\n"
+            + "var ticks=6,sc='';\n"
+            + "for(var i=0;i<=ticks;i++){sc+='<span>'+fmt(dur*i/ticks)+'</span>'}\n"
+            + "scale.innerHTML=sc;\n"
+            + "function stepIdxAt(vt){\n"
+            + "  for(var i=steps.length-1;i>=0;i--){if(vt>=ts2v(steps[i].ts)-0.001)return i}\n"
+            + "  return 0;\n"
+            + "}\n"
+            + "function refresh(){\n"
+            + "  if(!vid)return;\n"
+            + "  var vt=vid.currentTime;\n"
+            + "  var idx=stepIdxAt(vt);\n"
+            + "  if(idx!==cur){\n"
+            + "    cur=idx;\n"
+            + "    steps.forEach(function(s,i){var el=document.getElementById('seg'+i);if(el)el.classList.toggle('active',i===cur)});\n"
+            + "    var s=steps[cur];\n"
+            + "    document.getElementById('so-title').textContent=s.name;\n"
+            + "    document.getElementById('so-range').textContent=fmt(ts2v(s.ts))+' – '+fmt(ts2v(s.endTs));\n"
+            + "    document.getElementById('cstep').textContent=s.name;\n"
+            + "    document.getElementById('sov').style.display='flex';\n"
+            + "  }\n"
+            + "  head.style.left=(vt/dur*100)+'%';\n"
+            + "  document.getElementById('ctime').textContent=fmt(vt)+' / '+fmt(dur);\n"
+            + "  if(loopTs0>=0&&vt>=loopTs1){vid.currentTime=loopTs0}\n"
+            + "}\n"
+            + "function jumpStep(i){\n"
+            + "  if(!vid)return;\n"
+            + "  vid.currentTime=ts2v(steps[i].ts)+0.01;vid.play();\n"
+            + "  cur=i;refresh();\n"
+            + "}\n"
+            + "if(vid){\n"
+            + "  vid.addEventListener('timeupdate',refresh);\n"
+            + "  vid.addEventListener('loadedmetadata',refresh);\n"
+            + "}\n"
+            + "document.getElementById('b-play').addEventListener('click',function(){\n"
+            + "  if(!vid)return;vid.paused?vid.play():vid.pause()});\n"
+            + "document.getElementById('b-next').addEventListener('click',function(){jumpStep(Math.min(steps.length-1,cur+1))});\n"
+            + "document.getElementById('b-prev').addEventListener('click',function(){jumpStep(Math.max(0,cur-1))});\n"
+            + "document.getElementById('b-loop').addEventListener('click',function(){\n"
+            + "  if(cur<0)return;loopTs0=ts2v(steps[cur].ts);loopTs1=ts2v(steps[cur].endTs)});\n"
+            + "// 时间轴交互：点击跳转、拖动播放头、ctrl+click 设循环段\n"
+            + "var dragging=false;\n"
+            + "function seekAt(e){\n"
+            + "  var r=tl.getBoundingClientRect();\n"
+            + "  var frac=Math.min(1,Math.max(0,(e.clientX-r.left)/r.width));\n"
+            + "  if(vid){vid.currentTime=frac*dur}\n"
+            + "}\n"
+            + "tl.addEventListener('click',function(e){\n"
+            + "  if(e.ctrlKey||e.metaKey){\n"
+            + "    var r=tl.getBoundingClientRect();\n"
+            + "    var frac=(e.clientX-r.left)/r.width;\n"
+            + "    var t=frac*dur;\n"
+            + "    var idx=stepIdxAt(t);\n"
+            + "    loopTs0=ts2v(steps[idx].ts);loopTs1=ts2v(steps[idx].endTs);\n"
+            + "    jumpStep(idx);\n"
+            + "    return;\n"
+            + "  }\n"
+            + "  seekAt(e);\n"
+            + "});\n"
+            + "tl.addEventListener('mousedown',function(e){dragging=true;seekAt(e)});\n"
+            + "window.addEventListener('mouseup',function(){dragging=false});\n"
+            + "window.addEventListener('mousemove',function(e){if(dragging)seekAt(e)});\n"
+            + "refresh();\n"
+            + "</script></body></html>\n"
+            + "\n";
 }

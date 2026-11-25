@@ -59,7 +59,10 @@ class DriverValidationTest {
     fun rejectsNonPositiveKillTimeout() {
         val scenario = ScenarioSpec("smoke").apply {
             backend = "s1"
-            driver { command = "node"; killTimeoutSeconds = 0 }
+            driver {
+                command = "node"
+                killTimeoutSeconds = 0
+            }
         }
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(listOf(backend("s1", 25565)), emptyList(), listOf(scenario))
@@ -92,7 +95,12 @@ class DriverValidationTest {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 listOf(backend("s1", 25565)),
-                listOf(ProxySpec("wf").apply { port = 25577; routesTo("s1") }),
+                listOf(
+                    ProxySpec("wf").apply {
+                        port = 25577
+                        routesTo("s1")
+                    },
+                ),
                 listOf(scenario),
             )
         }
@@ -110,7 +118,12 @@ class DriverValidationTest {
         val ex = assertFailsWith<GradleException> {
             TopologyResolver.resolve(
                 listOf(backend("s1", 25565), backend("s2", 25566)),
-                listOf(ProxySpec("wf").apply { port = 25577; routesTo("s1", "s2") }),
+                listOf(
+                    ProxySpec("wf").apply {
+                        port = 25577
+                        routesTo("s1", "s2")
+                    },
+                ),
                 listOf(scenario),
             )
         }

@@ -20,8 +20,6 @@ import top.wcpe.mc.testkit.bot.OutputBudget
 import top.wcpe.mc.testkit.bot.ProcessLedger
 import top.wcpe.mc.testkit.bot.RunOutputSupervisor
 import top.wcpe.mc.testkit.bot.botLogFile
-import top.wcpe.mc.testkit.driver.DriverLauncher
-import top.wcpe.mc.testkit.driver.driverLogFile
 import top.wcpe.mc.testkit.config.BackendBungeeCordConfig
 import top.wcpe.mc.testkit.config.BackendVelocityConfig
 import top.wcpe.mc.testkit.config.MinecraftVersionGroup
@@ -42,6 +40,8 @@ import top.wcpe.mc.testkit.contract.McTestkitEnv
 import top.wcpe.mc.testkit.contract.McTestkitResultFile
 import top.wcpe.mc.testkit.contract.McTestkitRunDirectories
 import top.wcpe.mc.testkit.contract.McTestkitTaskNames
+import top.wcpe.mc.testkit.driver.DriverLauncher
+import top.wcpe.mc.testkit.driver.driverLogFile
 import top.wcpe.mc.testkit.dsl.BotSpec
 import top.wcpe.mc.testkit.dsl.DriverSpec
 import top.wcpe.mc.testkit.dsl.HookContext
@@ -2661,7 +2661,8 @@ object McTestkitTasks {
                 ) + spec.env
                 started += DriverLauncher.launch(
                     key = key,
-                    command = spec.command!!, // 拓扑校验期已拦空白命令
+                    // 拓扑校验期已拦空白命令
+                    command = spec.command!!,
                     args = spec.args,
                     workDir = workDir,
                     environment = environment,

@@ -76,6 +76,25 @@ object McTestkitEnv {
     /** 机器人生命周期回执文件；只用于 E2E 排障，不包含玩家、IP 或协议载荷。 */
     const val BOT_RECEIPT_FILE = PREFIX + "BOT_RECEIPT_FILE"
 
+    // ── driver 车道（通用进程驱动；编排→driver 下发，消费方自带的真客户端 / 外部进程进程读取）──
+    /** driver 应连接的服务地址（经代理时为代理地址）。 */
+    const val DRIVER_HOST = PREFIX + "DRIVER_HOST"
+
+    /** driver 应连接的服务端口（经代理时为代理端口）。 */
+    const val DRIVER_PORT = PREFIX + "DRIVER_PORT"
+
+    /** 本次执行的场景 id（与下发给桩 / bot 的 [SCENARIO] / [BOT_ACTION] 同源）。 */
+    const val DRIVER_SCENARIO = PREFIX + "DRIVER_SCENARIO"
+
+    /** driver 所连后端的声明名（与 [BACKEND_NAME] 同源）。 */
+    const val DRIVER_BACKEND_NAME = PREFIX + "DRIVER_BACKEND_NAME"
+
+    /** driver 的角色名（`driver("probe")` 声明时下发；匿名 driver 为空串）。 */
+    const val DRIVER_ROLE = PREFIX + "DRIVER_ROLE"
+
+    /** 本场景的结果目录绝对路径（driver 如需落证据文件，写这里使产物随场景归档）。 */
+    const val DRIVER_RESULTS_DIR = PREFIX + "DRIVER_RESULTS_DIR"
+
     // ── 集群（集群编排）/ 压测（压测编排）──
     /** 集群场景的有序后端名（逗号分隔；编排→机器人下发，bot 据此 `/server <name>` 切换目标，集群编排）。 */
     const val CLUSTER_BACKENDS = PREFIX + "CLUSTER_BACKENDS"

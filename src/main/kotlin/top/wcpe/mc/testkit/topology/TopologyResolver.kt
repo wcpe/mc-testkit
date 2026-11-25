@@ -271,6 +271,10 @@ object TopologyResolver {
             // 多 bot / 复制份数声明合法性（单场景多 bot，ADR-0009）
             validateScenarioBots(scenario, isStress)
 
+            // driver 车道声明合法性：命令必填、killTimeout >0、role 唯一；
+            // 当前只支持直连单后端场景（经代理 / 集群 / 压测的驱动接线另行扩展，报中文错不静默）
+            validateScenarioDrivers(scenario, isStress, hasBackends)
+
             if (scenario.resultTimeoutSeconds <= 0) {
                 throw GradleException(
                     "mcTestkit 场景「${scenario.name}」的 resultTimeoutSeconds 必须 >0（等桩写出结果文件的上限秒数）。",
@@ -417,6 +421,48 @@ object TopologyResolver {
                     "mcTestkit 场景「${scenario.name}」的 bot 角色名重复：「$duplicateRole」声明了多次，多 bot 的角色名必须唯一。",
                 )
             }
+        }
+    }
+
+    /**
+     * 校验 driver 车道声明（driver 车道：编排像管 bot 一样管真客户端 / 外部驱动进程）：
+     * ① command 必填非空白；② killTimeoutSeconds >0；③ 多 driver 的 role 唯一；
+     * ④ 当前只支持**直连单后端**场景——经代理 / 集群 / 压测的驱动接线另行扩展，
+     * 在配置期报中文错，不静默忽略声明。一律中文报错。
+     */
+    private fun validateScenarioDrivers(scenario: ScenarioSpec, isStress: Boolean, hasBackends: Boolean) {
+        val drivers = scenario.driverSpecs
+        if (drivers.isEmpty()) return
+        drivers.forEach { driver ->
+            if (driver.command.isNullOrBlank()) {
+                throw GradleException(
+                    "mcTestkit 场景「${scenario.name}」的 driver${driver.role?.let { "「$it」" } ?: ""} 缺少 command；" +
+                        "请给出可执行命令（如 command = \"node\"）。",
+                )
+            }
+            if (driver.killTimeoutSeconds <= 0) {
+                throw GradleException(
+                    "mcTestkit 场景「${scenario.name}」的 driver${driver.role?.let { "「$it」" } ?: ""} 的 killTimeoutSeconds 必须 >0" +
+                        "（温和收尾等待上限，超时升级强杀）。",
+                )
+            }
+        }
+        val duplicateRole = firstDuplicate(drivers.mapNotNull { it.role })
+        if (duplicateRole != null) {
+            throw GradleException(
+                "mcTestkit 场景「${scenario.name}」的 driver 角色名重复：「$duplicateRole」声明了多次，多 driver 的角色名必须唯一。",
+            )
+        }
+        when {
+            isStress -> throw GradleException(
+                "mcTestkit 压测场景「${scenario.name}」暂不支持 driver 车道（驱动进程的生命周期与钉服 bot 编排不同，另行扩展）；请去掉 driver 声明。",
+            )
+            hasBackends -> throw GradleException(
+                "mcTestkit 集群场景「${scenario.name}」暂不支持 driver 车道（多后端驱动编排另行扩展）；请去掉 driver 声明。",
+            )
+            scenario.via != null -> throw GradleException(
+                "mcTestkit 场景「${scenario.name}」暂不支持经代理的 driver 车道（另行扩展）；请去掉 via 或 driver 声明。",
+            )
         }
     }
 

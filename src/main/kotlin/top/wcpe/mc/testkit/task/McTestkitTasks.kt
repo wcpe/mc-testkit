@@ -20,6 +20,8 @@ import top.wcpe.mc.testkit.bot.OutputBudget
 import top.wcpe.mc.testkit.bot.ProcessLedger
 import top.wcpe.mc.testkit.bot.RunOutputSupervisor
 import top.wcpe.mc.testkit.bot.botLogFile
+import top.wcpe.mc.testkit.driver.DriverLauncher
+import top.wcpe.mc.testkit.driver.driverLogFile
 import top.wcpe.mc.testkit.config.BackendBungeeCordConfig
 import top.wcpe.mc.testkit.config.BackendVelocityConfig
 import top.wcpe.mc.testkit.config.MinecraftVersionGroup
@@ -41,6 +43,7 @@ import top.wcpe.mc.testkit.contract.McTestkitResultFile
 import top.wcpe.mc.testkit.contract.McTestkitRunDirectories
 import top.wcpe.mc.testkit.contract.McTestkitTaskNames
 import top.wcpe.mc.testkit.dsl.BotSpec
+import top.wcpe.mc.testkit.dsl.DriverSpec
 import top.wcpe.mc.testkit.dsl.HookContext
 import top.wcpe.mc.testkit.dsl.McTestkitExtension
 import top.wcpe.mc.testkit.dsl.ProxyPlatform
@@ -683,6 +686,31 @@ object McTestkitTasks {
         val beforeHooks = hookTasks.before
         val afterHooks = hookTasks.after
 
+        val hasDrivers = scenario.driverSpecs.isNotEmpty()
+
+        // driver 车道：launch<Key>Driver 先起消费方进程（真客户端 / 外部驱动重试等服务端就绪），
+        // verify 随后起服务端跑场景；收尾由 verify 的 finally 统一杀净（监管温和→强杀）。
+        val launchDriver: TaskProvider<DefaultTask>? = if (hasDrivers) {
+            registerTask(project, McTestkitTaskNames.launchDriver(scenario.name)) { task ->
+                task.group = TASK_GROUP
+                task.description = "启动场景 ${scenario.name} 的进程驱动（driver 车道：声明多 driver 时起多个进程）"
+                task.dependsOn(prepare)
+                beforeHooks?.let { task.dependsOn(it) }
+                task.doLast {
+                    // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
+                    launchScenarioDrivers(
+                        ctx,
+                        scenario,
+                        host = "127.0.0.1",
+                        port = backend.port,
+                        backendName = backend.name,
+                    )
+                }
+            }
+        } else {
+            null
+        }
+
         val launch: TaskProvider<DefaultTask>? = if (hasBots) {
             registerTask(project, McTestkitTaskNames.launchBot(scenario.name)) { task ->
                 task.group = TASK_GROUP
@@ -708,12 +736,15 @@ object McTestkitTasks {
             task.group = TASK_GROUP
             task.description = "运行场景 ${scenario.name}（直连后端），读结果判 PASS/FAIL"
             task.dependsOn(prepare)
-            // 有 bot 时 verify 须在 launch 之后（机器人先连上，后端跑完才有结果）
+            // 有 bot / driver 时 verify 须在对应 launch 之后（驱动先起跑，后端跑完才有结果）
             if (launch != null) {
                 task.mustRunAfter(launch)
             }
-            // 无 bot 时没有 launch 任务承载「场景前」时序，钩子改挂到 verify 之前
-            if (launch == null) beforeHooks?.let { task.dependsOn(it) }
+            if (launchDriver != null) {
+                task.mustRunAfter(launchDriver)
+            }
+            // 无 launch 任务承载「场景前」时序时，钩子改挂到 verify 之前
+            if (launch == null && launchDriver == null) beforeHooks?.let { task.dependsOn(it) }
             // 收尾：场景后钩子在判定结束后执行（含失败路径）
             afterHooks?.let { task.finalizedBy(it) }
             // 收尾：回写持久运行库缓存（下次冷启动恢复用；失败路径同样执行）
@@ -724,8 +755,9 @@ object McTestkitTasks {
                     runBackendForeground(ctx, backend, scenario.name, scenario.resultTimeoutSeconds, mavenSources)
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
-                    // 成功 / 失败都收尾全部 bot（多 bot 防残留；单 bot 已自停为安全 no-op）
+                    // 成功 / 失败都收尾全部 bot 与 driver（防残留；已自停为安全 no-op；杀不净由监管判不可信）
                     if (hasBots) stopScenarioBots(ctx, scenario)
+                    if (hasDrivers) stopScenarioDrivers(ctx, scenario)
                 }
             }
         }
@@ -754,6 +786,15 @@ object McTestkitTasks {
                 task.group = TASK_GROUP
                 task.description = "一键运行场景 ${scenario.name}：启动机器人 + 验证"
                 task.dependsOn(launch, verify)
+            }
+        }
+
+        // 有 driver 的场景：一键「启动进程驱动 + 验证」
+        if (launchDriver != null) {
+            registerTask(project, McTestkitTaskNames.withDriver(scenario.name)) { task ->
+                task.group = TASK_GROUP
+                task.description = "一键运行场景 ${scenario.name}：启动进程驱动（driver 车道）+ 验证"
+                task.dependsOn(launchDriver, verify)
             }
         }
 
@@ -2573,6 +2614,80 @@ object McTestkitTasks {
 
     /** [scenarioProcessLifetimeMs] 在编排自身等待之外留的宽限（秒）。 */
     internal const val PROCESS_LIFETIME_SLACK_SECONDS = 600L
+
+    /**
+     * driver 进程的唯一 key（日志 / pid / 台账基名）：多 driver 时 `driver-<role>`，
+     * 单匿名 driver 时 `driver`（场景内唯一，无需再带场景名——日志已落该场景结果目录）。
+     */
+    internal fun driverKey(scenario: ScenarioSpec, spec: DriverSpec, index: Int): String =
+        when {
+            spec.role != null -> "driver-${spec.role}"
+            scenario.driverSpecs.size == 1 -> "driver"
+            else -> "driver-${index + 1}"
+        }
+
+    /**
+     * 起一个场景的 driver 进程（driver 车道：真客户端 / 外部驱动与 bot 同口径生命周期）。
+     *
+     * 起在 launch<Key>Driver 任务里（服务端就绪之前），driver 自行重试等端口开放；
+     * 「完成即退出」（如真客户端观测端口由开转关）由 driver 自己兑现，编排只负责场景收尾杀净。
+     * 中途起失败时已起的先收掉再抛（同 [launchBots] 的防残留口径）。
+     *
+     * @param host driver 连接目标地址（直连为 127.0.0.1；经代理时为代理地址）。
+     * @param port driver 连接目标端口（直连为后端端口；经代理为代理端口）。
+     */
+    private fun launchScenarioDrivers(
+        ctx: TaskExecutionContext,
+        scenario: ScenarioSpec,
+        host: String,
+        port: Int,
+        backendName: String,
+    ): List<BotProcessHandle> {
+        val started = mutableListOf<BotProcessHandle>()
+        try {
+            scenario.driverSpecs.forEachIndexed { index, spec ->
+                val key = driverKey(scenario, spec, index)
+                val workDir = spec.workDir?.takeIf { it.isNotBlank() }
+                    ?.let { File(ctx.projectDir, it) }
+                    ?: ctx.projectDir
+                // 契约 env 在先、业务 env 在后：业务项可按场景需要覆盖同名片段（同 bot env 口径）
+                val environment = mapOf(
+                    McTestkitEnv.DRIVER_HOST to host,
+                    McTestkitEnv.DRIVER_PORT to port.toString(),
+                    McTestkitEnv.DRIVER_SCENARIO to scenario.name,
+                    McTestkitEnv.DRIVER_BACKEND_NAME to backendName,
+                    McTestkitEnv.DRIVER_ROLE to (spec.role ?: ""),
+                    McTestkitEnv.DRIVER_RESULTS_DIR to ctx.layout.resultsDir.absolutePath,
+                ) + spec.env
+                started += DriverLauncher.launch(
+                    key = key,
+                    command = spec.command!!, // 拓扑校验期已拦空白命令
+                    args = spec.args,
+                    workDir = workDir,
+                    environment = environment,
+                    resultsDir = ctx.layout.resultsDir,
+                    budget = ctx.outputBudget(),
+                    lifetimeMs = scenarioProcessLifetimeMs(scenario),
+                    logger = { ctx.info(it) },
+                )
+            }
+        } catch (ex: Exception) {
+            if (started.isNotEmpty()) {
+                ctx.warn("有 ${started.size} 个 driver 已启动但后续 driver 启动失败，先收掉这些再报错")
+                started.forEach { handle -> runCatching { handle.stop { ctx.info(it) } } }
+            }
+            throw ex
+        }
+        return started
+    }
+
+    /** 停掉场景的全部 driver：交给进程监管（温和→限时→强杀升级），没起过或已自停的是安全 no-op。 */
+    private fun stopScenarioDrivers(ctx: TaskExecutionContext, scenario: ScenarioSpec) {
+        val supervisor = ctx.runBudget().supervisor
+        scenario.driverSpecs.forEachIndexed { index, spec ->
+            supervisor.stopLog(driverLogFile(ctx.layout.resultsDir, driverKey(scenario, spec, index)))
+        }
+    }
 
     /**
      * 起一组 bot 进程（单场景多 bot 多 bot 展开 + 每进程 env 装配；**场景与 serve 共用**，serve 人机混场）。

@@ -93,6 +93,43 @@ object BotProcessPlanner {
     fun opUsernames(scenarioName: String, bots: List<BotSpec>): List<String> =
         expand(scenarioName, bots.filter { it.op }).map { it.username }.distinct()
 
+    /**
+     * console 命令通道的许可发送者名单：`MC_TESTKIT_E2E_CMD_SENDERS` 的内容（协议 v2 第二闸）。
+     *
+     * 与 [opUsernames] 刻意不同源：名单是**本轮实际起的全部 bot 进程用户名**，不过滤 `op`——
+     * `execCommand` 走服务端权限通道，文档定死「bot 本身不需要 OP」（API §3.4.2）；若沿用 OP 名单，
+     * 未提权 bot 持正确令牌也会被桩拒（回归 finding BUG-0002）。
+     *
+     * 单 bot 消费方 `BOT_USERNAME` override：单进程不强制唯一名，进程实登录名是 env 里的覆盖值
+     * （[extraEnvironments] 的 `forceUniqueUsername` 只在多进程时盖写），名单因此取
+     * `plan.env[BOT_USERNAME] ?: plan.username`（回归 finding BUG-0003）；多进程强制唯一，直接用 plan.username。
+     */
+    fun commandSenders(scenarioName: String, bots: List<BotSpec>): List<String> {
+        val plans = expand(scenarioName, bots)
+        val single = plans.size == 1
+        return plans.map { plan ->
+            // 空白覆盖同样按未覆盖处理：bot 进程对空白 BOT_USERNAME 按未设置理解、
+            // 仍以 plan.username 登录（找不到 env 里的有效名才退回声明名）。
+            if (single) {
+                plan.env[McTestkitEnv.BOT_USERNAME]?.takeIf { it.isNotBlank() } ?: plan.username
+            } else {
+                plan.username
+            }
+        }.distinct()
+    }
+
+    /**
+     * 压测场景命令通道的许可发送者名单：全部压测 bot 用户名（不看 `op`，理由同 [commandSenders]）。
+     *
+     * @param action 该场景的 bot action（`bot.action ?: 场景名`，由调用方解析）。
+     */
+    fun stressUsernames(action: String, bot: BotSpec, serverCount: Int, botsPerServer: Int): List<String> {
+        val baseName = stressUsernameBase(action, bot)
+        return (1..serverCount)
+            .flatMap { serverIndex -> (1..botsPerServer).map { botIndex -> stressUsername(baseName, serverIndex, botIndex) } }
+            .distinct()
+    }
+
     /** 压测 bot 的用户名基名：显式 `username` > 该场景的 action（与压测起进程处的派生规则同源）。 */
     fun stressUsernameBase(action: String, bot: BotSpec): String = bot.username ?: action
 

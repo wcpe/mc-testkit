@@ -64,7 +64,7 @@ public final class McTestkitProtocol {
     public static final String COMMAND_CHANNEL = "mc-testkit:cmd";
 
     /**
-     * 机器人请求以 console 身份执行一条命令：{@code E2E_CMD:<id>:<command>}。
+     * 机器人请求以 console 身份执行一条命令：{@code E2E_CMD:<token>:<id>:<command>}（v2，带鉴权令牌）。
      *
      * <p>{@code <id>} 由机器人生成，用于配对请求与回执；{@code <command>} 是**其余全部内容**，
      * 因此命令里出现的冒号（例如 {@code give <玩家> minecraft:stone}）原样保留。
@@ -139,22 +139,32 @@ public final class McTestkitProtocol {
     }
 
     /**
-     * 拼接「console 命令请求」完整消息：{@code E2E_CMD:<id>:<command>}。
+     * 拼接「console 命令请求」完整消息（v2）：{@code E2E_CMD:<token>:<id>:<command>}。
      *
-     * @param id      请求 id（**不得含冒号**——它是第一个字段，含冒号会让接收方配错请求）
+     * <p>令牌字段鉴权：桩侧只认与本后端 env {@code MC_TESTKIT_E2E_CMD_TOKEN} 逐字一致的令牌；
+     * 无令牌字段的旧协议请求会被桩拒绝（fail-closed，v1 不再受理）。
+     *
+     * @param token   通道令牌（**不得含冒号**；由编排注入 bot 进程 env）
+     * @param id      请求 id（**不得含冒号**——它是配对字段，含冒号会让接收方配错请求）
      * @param command 待执行命令（可带前导 {@code /}，桩侧会去掉；其中的冒号原样保留）
      * @return 消息
-     * @throws IllegalArgumentException id 为空或含冒号时抛出，消息为中文
+     * @throws IllegalArgumentException token / id 为空或含冒号时抛出，消息为中文
      */
-    public static String commandRequest(String id, String command) {
+    public static String commandRequest(String token, String id, String command) {
+        if (token == null || token.isEmpty()) {
+            throw new IllegalArgumentException("命令通道令牌为空——桩侧 fail-closed 会拒绝该请求，请检查编排 env 注入");
+        }
+        if (token.indexOf(':') >= 0) {
+            throw new IllegalArgumentException("命令通道令牌不得含冒号——它是协议字段，含冒号会让帧解析错位");
+        }
         if (id == null || id.isEmpty()) {
             throw new IllegalArgumentException("命令请求 id 不得为空——没有 id 的回执无法与请求配对");
         }
         if (id.indexOf(':') >= 0) {
             throw new IllegalArgumentException(
-                "命令请求 id 不得含冒号（收到：" + id + "）——它是第一个字段，含冒号会让接收方配错请求");
+                "命令请求 id 不得含冒号（收到：" + id + "）——它是协议字段，含冒号会让接收方配错请求");
         }
-        return COMMAND_PREFIX + id + ":" + (command == null ? "" : command);
+        return COMMAND_PREFIX + token + ":" + id + ":" + (command == null ? "" : command);
     }
 
     /**
@@ -173,40 +183,66 @@ public final class McTestkitProtocol {
     }
 
     /**
-     * 从 {@code E2E_CMD:<id>:<command>} 取出 id。
+     * 从 {@code E2E_CMD:<token>:<id>:<command>}（v2）取出令牌。
      *
      * @param payload 收到的消息
-     * @return id；消息不是命令请求（无 {@link #COMMAND_PREFIX} 前缀或缺 id）时返回 null
+     * @return 令牌；消息不是命令请求（无 {@link #COMMAND_PREFIX} 前缀或缺字段）时返回 null
+     */
+    public static String commandRequestToken(String payload) {
+        if (payload == null || !payload.startsWith(COMMAND_PREFIX)) {
+            return null;
+        }
+        int firstEnd = payload.indexOf(':', COMMAND_PREFIX.length());
+        if (firstEnd < 0) {
+            return null;
+        }
+        String token = payload.substring(COMMAND_PREFIX.length(), firstEnd);
+        return token.isEmpty() ? null : token;
+    }
+
+    /**
+     * 从 {@code E2E_CMD:<token>:<id>:<command>}（v2）取出 id。
+     *
+     * @param payload 收到的消息
+     * @return id；消息不是 v2 命令请求（缺令牌段或缺 id 段）时返回 null
      */
     public static String commandRequestId(String payload) {
         if (payload == null || !payload.startsWith(COMMAND_PREFIX)) {
             return null;
         }
-        int end = payload.indexOf(':', COMMAND_PREFIX.length());
-        if (end < 0) {
+        int firstEnd = payload.indexOf(':', COMMAND_PREFIX.length());
+        if (firstEnd < 0) {
             return null;
         }
-        String id = payload.substring(COMMAND_PREFIX.length(), end);
+        int secondEnd = payload.indexOf(':', firstEnd + 1);
+        if (secondEnd < 0) {
+            return null;
+        }
+        String id = payload.substring(firstEnd + 1, secondEnd);
         return id.isEmpty() ? null : id;
     }
 
     /**
-     * 从 {@code E2E_CMD:<id>:<command>} 取出命令全文。
+     * 从 {@code E2E_CMD:<token>:<id>:<command>}（v2）取出命令全文。
      *
-     * <p>在**首个**冒号处切分，故命令里出现的冒号（如 {@code minecraft:stone}）原样保留。
+     * <p>在**前两个**冒号处切分，故命令里出现的冒号（如 {@code minecraft:stone}）原样保留。
      *
      * @param payload 收到的消息
-     * @return 命令；消息不是命令请求时返回 null（空命令返回空串）
+     * @return 命令；消息不是 v2 命令请求时返回 null（空命令返回空串）
      */
     public static String commandRequestBody(String payload) {
         if (payload == null || !payload.startsWith(COMMAND_PREFIX)) {
             return null;
         }
-        int end = payload.indexOf(':', COMMAND_PREFIX.length());
-        if (end < 0) {
+        int firstEnd = payload.indexOf(':', COMMAND_PREFIX.length());
+        if (firstEnd < 0) {
             return null;
         }
-        return payload.substring(end + 1);
+        int secondEnd = payload.indexOf(':', firstEnd + 1);
+        if (secondEnd < 0) {
+            return null;
+        }
+        return payload.substring(secondEnd + 1);
     }
 
     /** 压成单行：换行 / 回车变空格，避免一条回执在日志里被切成几行。 */

@@ -38,6 +38,18 @@ object McTestkitEnv {
     const val RESULT_FILE = PREFIX + "RESULT_FILE"
 
     /**
+     * console 命令通道（`E2E_CMD`）鉴权令牌；编排每构建随机生成，同时下发给服务端桩与 bot 进程。
+     * 桩侧未配置该变量时整条命令通道 fail-closed（拒绝一切命令请求）。令牌不进日志。
+     */
+    const val CMD_TOKEN = PREFIX + "CMD_TOKEN"
+
+    /**
+     * console 命令通道的许可发送者玩家名清单（逗号分隔；编排把本轮 bot 用户名下发给桩）。
+     * 第二道闸：令牌正确之外还要求发送者在清单内；清单为空串时按「无 bot 场景」处理——拒绝全部命令。
+     */
+    const val CMD_SENDERS = PREFIX + "CMD_SENDERS"
+
+    /**
      * 本后端的声明名（编排起每个后端时下发，与下发给 bot 的 [CLUSTER_BACKENDS] 同源、有序对应）。
      * 集群/压测下各后端各不相同（如 `s1` / `s2`）；消费方（被测插件或桩）据此 per-backend 派生身份——
      * 典型用法是做 `server-id` 后缀，使同组各服 server-id 不同（跨服归属/转服交接所需）。

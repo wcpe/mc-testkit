@@ -2,7 +2,7 @@
 
 ## 状态
 
-已接受（新增两条**并列**的 bot 命令执行通道，并补齐机器人侧的封装 API；不取代任何既有决策正文，不改动 ADR-0006 冻结的 env 前缀 / 任务命名 / 结果文件约定）
+已接受（新增两条**并列**的 bot 命令执行通道，并补齐机器人侧的封装 API；不取代任何既有决策正文，不改动 ADR-0006 冻结的 env 前缀 / 任务命名 / 结果文件约定）。其中**仅「二、E2E_CMD v1 帧格式」**自 0.20.0 起被 [ADR-0030](0030-cmd-channel-auth.md) 的 v2 双闸鉴权协议取代，其余决策正文仍然有效
 
 ## 背景
 
@@ -49,6 +49,8 @@ scenario("admin-flow") {
 **1.7.10 静默跳过**：该版本本身不支持 bot（`MinecraftVersionGroup.isBotSupported` 为 false），没有 bot 也就没有要提权的对象。
 
 ### 二、插件消息 console 命令通道（`E2E_CMD` 协议）
+
+> v1 帧格式已被 [ADR-0030](0030-cmd-channel-auth.md) 取代（见状态行）；下表 v1 行仅留档。
 
 新增一对冻结协议常量（`McTestkitProtocol`）：
 

@@ -21,15 +21,16 @@ class McTestkitProtocolTest {
 
     @Test
     void commandRequestJoinsIdAndCommand() {
-        assertEquals("E2E_CMD:1:/gamemode creative Steve",
-            McTestkitProtocol.commandRequest("1", "/gamemode creative Steve"));
+        assertEquals("E2E_CMD:tok:1:/gamemode creative Steve",
+            McTestkitProtocol.commandRequest("tok", "1", "/gamemode creative Steve"));
     }
 
     @Test
     void commandRequestKeepsColonsInsideCommand() {
         // 命令里的冒号（命名空间）必须原样保留：id 之后的内容整体都是 command
-        String message = McTestkitProtocol.commandRequest("c-1", "give Steve minecraft:stone 1");
-        assertEquals("E2E_CMD:c-1:give Steve minecraft:stone 1", message);
+        String message = McTestkitProtocol.commandRequest("tok", "c-1", "give Steve minecraft:stone 1");
+        assertEquals("E2E_CMD:tok:c-1:give Steve minecraft:stone 1", message);
+        assertEquals("tok", McTestkitProtocol.commandRequestToken(message));
         assertEquals("c-1", McTestkitProtocol.commandRequestId(message));
         assertEquals("give Steve minecraft:stone 1", McTestkitProtocol.commandRequestBody(message));
     }
@@ -37,22 +38,26 @@ class McTestkitProtocolTest {
     @Test
     void commandRequestSplitsOnFirstColonOnly() {
         // 命令自身还可含多个冒号；取 body 必须只按**首个**冒号切
-        String message = McTestkitProtocol.commandRequest("id7", "a:b:c:d");
+        String message = McTestkitProtocol.commandRequest("tok", "id7", "a:b:c:d");
         assertEquals("a:b:c:d", McTestkitProtocol.commandRequestBody(message));
     }
 
     @Test
     void commandRequestRejectsBadId() {
-        assertThrows(IllegalArgumentException.class, () -> McTestkitProtocol.commandRequest("", "/say hi"));
-        assertThrows(IllegalArgumentException.class, () -> McTestkitProtocol.commandRequest(null, "/say hi"));
+        assertThrows(IllegalArgumentException.class, () -> McTestkitProtocol.commandRequest("tok", "", "/say hi"));
+        assertThrows(IllegalArgumentException.class, () -> McTestkitProtocol.commandRequest("tok", null, "/say hi"));
         // id 含冒号会让接收方在第一个冒号处配错请求，必须当场拒绝而不是拼出一条歧义消息
-        assertThrows(IllegalArgumentException.class, () -> McTestkitProtocol.commandRequest("a:b", "/say hi"));
+        assertThrows(IllegalArgumentException.class, () -> McTestkitProtocol.commandRequest("tok", "a:b", "/say hi"));
+        // 令牌同样不得为空 / 含冒号——桩 fail-closed，发出无令牌帧只会等超时
+        assertThrows(IllegalArgumentException.class, () -> McTestkitProtocol.commandRequest("", "i", "/say hi"));
+        assertThrows(IllegalArgumentException.class, () -> McTestkitProtocol.commandRequest(null, "i", "/say hi"));
+        assertThrows(IllegalArgumentException.class, () -> McTestkitProtocol.commandRequest("a:b", "i", "/say hi"));
     }
 
     @Test
     void commandRequestWithoutCommandIsStillParseable() {
-        String message = McTestkitProtocol.commandRequest("x", "");
-        assertEquals("E2E_CMD:x:", message);
+        String message = McTestkitProtocol.commandRequest("tok", "x", "");
+        assertEquals("E2E_CMD:tok:x:", message);
         assertEquals("x", McTestkitProtocol.commandRequestId(message));
         assertEquals("", McTestkitProtocol.commandRequestBody(message));
     }
@@ -66,6 +71,11 @@ class McTestkitProtocolTest {
         // 缺 id 的残缺载荷（只有前缀 + 命令）不得被当成有效请求
         assertNull(McTestkitProtocol.commandRequestId("E2E_CMD:/say hi"));
         assertNull(McTestkitProtocol.commandRequestBody("E2E_CMD:/say hi"));
+        // v1 旧帧（E2E_CMD:<id>:<command>）在 v2 解析下第二个"字段"其实是命令头：
+        // id 段会被读成命令开头——只要不带第二冒号就解析不出 id/body，天然被拒
+        assertNull(McTestkitProtocol.commandRequestToken("E2E_CMD:1"));
+        assertNull(McTestkitProtocol.commandRequestId("E2E_CMD:1:/say hi"));
+        assertNull(McTestkitProtocol.commandRequestBody("E2E_CMD:1:/say hi"));
     }
 
     @Test

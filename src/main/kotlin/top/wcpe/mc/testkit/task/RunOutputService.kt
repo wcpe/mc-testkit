@@ -15,9 +15,32 @@ import java.io.File
 import java.util.*
 
 /** 每个顶层 Gradle 构建一份（含配置缓存复用时的任务副本）；结果目录的接手规则见 [RunOutputState]。 */
+/** 生成一个新的 console 命令通道令牌（SecureRandom 24 字节 hex）；每次构建由 [RunOutputService] 持有一份。 */
+internal fun generateCommandChannelToken(): String {
+    val bytes = ByteArray(24)
+    java.security.SecureRandom().nextBytes(bytes)
+    return bytes.joinToString("") { "%02x".format(it) }
+}
+
 abstract class RunOutputService : BuildService<BuildServiceParameters.None>, AutoCloseable {
     val budget: OutputBudget by lazy { OutputBudget.fromConfig() }
     private val runId = UUID.randomUUID().toString()
+
+    /**
+     * 本次构建的 console 命令通道令牌（SecureRandom 24 字节 hex），惰性生成一次。
+     *
+     * 放在构建服务而非任务上下文：配置缓存复用时每个任务拿到的是**各自反序列化的**上下文副本，
+     * 字段级令牌会让「起后端的任务」与「起 bot 的任务」各自摇出不同令牌、同一通道全部被拒；
+     * 构建服务实例在同一次顶层构建内对全部任务副本唯一，令牌因此天然对齐。
+     * 令牌不进日志、不落盘（只经 env 下发给桩与 bot 进程）。
+     */
+    @Volatile
+    private var commandChannelTokenValue: String? = null
+
+    /** 返回本次构建的通道令牌（同一次构建内恒定）。 */
+    @Synchronized
+    fun commandChannelToken(): String =
+        commandChannelTokenValue ?: generateCommandChannelToken().also { commandChannelTokenValue = it }
     private val states = linkedSetOf<File>()
 
     /** 本次接手的状态文件。拒绝接手的保持原样，拒绝就会持续到隐患消除，而不是只挡住一次构建。 */

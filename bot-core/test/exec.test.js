@@ -14,6 +14,9 @@ const { mock } = require('node:test')
 const commands = require('../src/lib/commands')
 const { execCommand, execCommands } = require('../src/lib/exec')
 
+// v2 协议要求通道令牌（桩 fail-closed）；使用真实通信原语的用例统一走这个测试令牌
+process.env.MC_TESTKIT_E2E_CMD_TOKEN = 'test-tok'
+
 // 构造一个假协议客户端：记录写出的包、可手动注入收到的包。
 // `ended` 默认 false——minecraft-protocol 的 Client 在 setSocket 时同样置 false。
 function fakeClient(overrides = {}) {
@@ -130,7 +133,7 @@ test('execCommand 超时返回 ok=false，说明里含命令、超时毫秒与�
   assert.match(result.output, /桩未装载该通道/, '要指出最可能的原因：桩没装这条通道')
   assert.equal(client.listenerCount('custom_payload'), 0, '超时后不得残留监听器')
   assert.equal(client.registered.length, 1, '即便超时，通道也真的声明过')
-  assert.match(sentMessages(client)[0], /^E2E_CMD:[^-:]+-[^:]+:time set day$/, '线上格式须与 FR-30 协议一致')
+  assert.match(sentMessages(client)[0], /^E2E_CMD:test-tok:[^-:]+-[^:]+:time set day$/, '线上格式须与 FR-30 协议一致')
 })
 
 test('execCommand 对空命令与非法类型直接返回失败且完全不发包', async (t) => {
@@ -196,7 +199,7 @@ test('走真实通信原语：并发两条命令的回执各归各的，不串�
   const second = execCommand(bot, 'time set night', { timeoutMs: 1000 })
 
   // 两条请求都真的写到了线上，各自的 id 不同
-  const ids = sentMessages(client).map((message) => message.split(':')[1])
+  const ids = sentMessages(client).map((message) => message.split(':')[2])
   assert.equal(ids.length, 2)
   assert.notEqual(ids[0], ids[1])
 
@@ -222,7 +225,7 @@ test('execCommands 顺序执行：第二条失败后第三条不再执行', asyn
   for (let round = 0; round < 2; round += 1) {
     await new Promise((resolve) => setImmediate(resolve))
     const request = sentMessages(client)[round]
-    const id = request.split(':')[1]
+    const id = request.split(':')[2]
     client.emit('custom_payload', donePacket(id, round === 1 ? 'FAIL' : 'PASS', round === 1 ? '命令未被服务端接受' : 'ok'))
   }
 

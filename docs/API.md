@@ -368,7 +368,7 @@ dependencies {
 用于覆盖默认值、提供 jar / 模板路径、调节规模与超时（须可移植、不写死本机绝对路径）。前缀固定 `MC_TESTKIT_E2E_`（ADR-0006，本期不做 DSL 可配）。已冻结的核心名（**全集随 FR-02/04/06 补全，前缀与风格不变**）：
 
 - 服务端/模板：`…MINECRAFT_VERSION`、`…SERVER_TEMPLATE_DIR`、`…PLUGIN_UNDER_TEST_JAR`、`…PAPER_JAR`/`…FOLIA_JAR`/`…SPIGOT_JAR`（后端 jar 覆盖，离线/CI 逃生口）。其中旧全局 `…SERVER_TEMPLATE_DIR` 的相对值按 JVM / Gradle 当前工作目录解析；新增节点 `templateDirectory(envOrPath)` 的相对值才按应用项目 `Project.projectDir` 解析。
-- 桩↔编排交接（编排起后端时下发，桩据此判定）：`…SCENARIO`（本次场景 id = **DSL 场景名原样下发**，桩据此选场景；故 DSL 场景名须与桩 `ScenarioName` id、机器人 `action` 用**同一个 kebab-case id**、三处一致，否则桩无法匹配场景而判失败）、`…RESULT_FILE`（结果文件**绝对路径** = verify 读取处，桩写到这里二者对齐）、`…BACKEND_NAME`（**本后端的声明名**，编排起**每个**后端时下发，与 `…CLUSTER_BACKENDS` 同源、有序对应；集群/压测下各服各不相同，消费方据此 per-backend 派生身份——典型用法是拼不同 `server-id` 后缀。编排只「告诉每个后端它是谁」，不规定怎么用，见 FR-12）。
+- 桩↔编排交接（编排起后端时下发，桩据此判定）：`…SCENARIO`（本次场景 id = **DSL 场景名原样下发**，桩据此选场景；故 DSL 场景名须与桩 `ScenarioName` id、机器人 `action` 用**同一个 kebab-case id**、三处一致，否则桩无法匹配场景而判失败）、`…RESULT_FILE`（结果文件**绝对路径** = verify 读取处，桩写到这里二者对齐）、`…CMD_TOKEN`（console 命令通道令牌，每构建随机生成；桩未配置时通道 fail-closed，见 §3.4.1）、`…CMD_SENDERS`（命令通道许可发送者名单，逗号分隔的 bot 用户名）、`…BACKEND_NAME`（**本后端的声明名**，编排起**每个**后端时下发，与 `…CLUSTER_BACKENDS` 同源、有序对应；集群/压测下各服各不相同，消费方据此 per-backend 派生身份——典型用法是拼不同 `server-id` 后缀。编排只「告诉每个后端它是谁」，不规定怎么用，见 FR-12）。
 - **持久手测保留场景 id**（FR-17，ADR-0011）：serve 起后端时经 `…SCENARIO` 下发保留 id `__mc_testkit_serve__`（契约常量 `McTestkitContract.SERVE_SCENARIO_ID`），告诉桩**空闲**（不驱动 / 不判定 / 不关服）；`template/harness` 据此空闲（未同步新模板的老桩遇此未知 id 在 `onEnable` 抛错被禁用、服务端照常挂起，对任何桩都安全）。serve **不下发** `…RESULT_FILE`（不判定）。此 id 用双下划线前后缀与消费方 kebab-case 业务场景名划清边界。
 - 代理（jar/版本/端口）：`…WATERFALL_JAR`/`…WATERFALL_VERSION`、`…VELOCITY_JAR`/`…VELOCITY_VERSION`、`…BUNGEECORD_JAR`/`…BUNGEECORD_VERSION`、`…PROXY_PORT`、`…PROXY_BASE_PORT`。
 - 节点 Java（FR-22）：`MC_TESTKIT_JAVA_HOME_<主版本>`，如 `MC_TESTKIT_JAVA_HOME_25`。显式声明的 proxy `javaVersion` 缺失时启动前中文失败；backend 继续沿用 MC 版本段选择并可通过 `jvmArg`/`javaAgent` 注入诊断参数。
@@ -394,7 +394,7 @@ dependencies {
 - `E2E_ASSERT:<name>`：机器人触发一条**服务端断言**（桩据结果自行写 PASS/FAIL 并关服）。
 - `E2E_ASSERT_DONE:<name>:<outcome>`：桩回报断言已执行完毕（仅回执用，不替代结果文件）。
 - `E2E_PROBE_RESULT:<name>:<text>`：桩回报一条**取证**的只读结果——**不写结果文件、不关服**，判定权留在机器人/编排侧。
-- `E2E_CMD:<id>:<command>` / `E2E_CMD_DONE:<id>:<PASS|FAIL>:<output>`：console 命令通道（FR-30，见 §3.4.1）。
+- `E2E_CMD:<token>:<id>:<command>` / `E2E_CMD_DONE:<id>:<PASS|FAIL>:<output>`：console 命令通道（FR-30，见 §3.4.1；v2 带鉴权令牌）。
 
 > 以上 8 条为**冻结的框架核心协议**。集群 / 崩溃接管等场景的桩↔bot 还可约定**场景特定标记**——如 `template/harness` 里 bot 到达 / 落到目标后端后发的「到达确认」标记 `E2E_CLUSTER_ARRIVED`，及崩溃接管（FR-15）示例里 bot 触发默认后端模拟宕机的 `E2E_TRIGGER_CRASH`（桩收到即 `Runtime.halt`）——均属 template / 消费方约定、**不进**冻结协议；真实跨服一致性 / 接管判定由消费方桩按业务替换。
 
@@ -404,14 +404,16 @@ dependencies {
 
 | 方向 | 消息 | 说明 |
 |---|---|---|
-| bot → 桩 | `E2E_CMD:<id>:<command>` | 请求以 console 身份执行 `<command>`；`<id>` 由机器人生成，用于配对 |
+| bot → 桩 | `E2E_CMD:<token>:<id>:<command>` | 请求以 console 身份执行 `<command>`；`<token>` 为通道鉴权令牌（见下「鉴权」），`<id>` 由机器人生成，用于配对 |
 | 桩 → bot | `E2E_CMD_DONE:<id>:<PASS\|FAIL>:<output>` | 执行结果；`<output>` 为单行化的结果说明 / 失败原因 |
 
 **为什么不用聊天**（三条都是通道本身的属性，没有实现技巧能绕过）：聊天有 256 字符硬上限，长命令（带 NBT 的 `/give`、长 `/execute` 链）会被**静默截断**；控制流量会污染其他玩家的聊天记录；测试控制流不该出现在任何玩家屏幕上。
 
+**鉴权（v2，fail-closed）**：这条通道的命令以 console 身份执行（等价控制台全权），任何能入服的玩家都可发插件消息，因此必须上锁。双闸：①**通道令牌**——编排每构建用 SecureRandom 生成令牌，经 `MC_TESTKIT_E2E_CMD_TOKEN` 同时下发给后端桩与 bot 进程 env；请求令牌不符（或桩侧未配置令牌、或旧版 `E2E_CMD:<id>:<command>` 帧）一律拒绝，不执行；②**发送者名单**——`MC_TESTKIT_E2E_CMD_SENDERS`（逗号分隔，编排下发本轮 bot 用户名）不在名单内的发送者同样拒绝；名单为空串时按「无 bot 场景」拒绝一切请求。拒绝时若有可解析 id 会以 `E2E_CMD_DONE:<id>:FAIL` 回执让发送方早死；令牌**不进日志、不回执**。
+
 **通道名**：`mc-testkit:cmd`。1.13+ 要求 `namespace:path` 形式的 `Identifier`，1.12 及更早是裸字符串（旧版上限 20 字符）——该名对两段格式都合法，故**同一常量覆盖全部支持版本**。桩基类 `McTestkitHarnessPlugin` 在 `onEnable` 自动注册入站 + 出站通道，消费方**无需任何接线**；覆盖 `onDisable()` 时须调用 `super.onDisable()`（否则重载后同一通道堆积多个注册，一条命令被执行多次）。
 
-**解析规则（必须按此实现）**：请求在**首个**冒号处切出 `<id>`，其余全部是 `<command>`；回执**最多切 4 段**——第 1 段前缀、第 2 段 `<id>`、第 3 段判定、第 4 段 `<output>` 全文。`<output>` 是最后一段，**可以含冒号**（如 `已给予 minecraft:stone x1`），按无上限切分会把它截断成 `stone x1`——这是静默失真。`<output>` 中的换行 / 回车由桩侧压成空格（一条回执不该在日志里断成几行）。
+**解析规则（必须按此实现）**：请求在**前两个**冒号处切出 `<token>` 与 `<id>`，其余全部是 `<command>`；回执**最多切 4 段**——第 1 段前缀、第 2 段 `<id>`、第 3 段判定、第 4 段 `<output>` 全文。`<output>` 是最后一段，**可以含冒号**（如 `已给予 minecraft:stone x1`），按无上限切分会把它截断成 `stone x1`——这是静默失真。`<output>` 中的换行 / 回车由桩侧压成空格（一条回执不该在日志里断成几行）。
 
 **执行语义与线程**：桩收到请求后**投主线程**执行 `server.dispatchCommand(server.getConsoleSender(), command)`（命令会读写世界对象，Folia 上跨线程直接抛线程检查异常、Paper 的 `AsyncCatcher` 也会拦），回执也在主线程发。`<PASS>` 只表示「命令被服务端接受并执行」（`dispatchCommand` 返回 `true`），**不表示**「世界状态已符合预期」——后者是服务端断言要回答的问题。
 
@@ -419,7 +421,7 @@ dependencies {
 
 **旧服务端降级**：该 API 自 Paper 1.16 起提供；纯 Spigot / 更早的 Paper 上不存在，此时回退到真实 console 发送者，`<output>` 退化为**执行结果说明**（命令未被接受的原因 / 抛出的异常类型与消息），业务输出只留在服务端控制台日志。回退是降级而非失败：命令照常执行。桩用反射调用它，避免在缺该方法的服务端上抛 `NoSuchMethodError` 把降级变成崩溃。
 
-**机器人侧**：`@wcpe/mc-testkit-bot/lib/commands` 提供通信原语 `sendCommandPayload(bot, id, command)` / `waitForCommandResult(bot, id, timeoutMs)`。它在首次发送前调用 mineflayer 的 `registerChannel(name, parser, custom=true)` 声明通道——**这一步不能省**：服务端把回执发给某个玩家前会检查该玩家是否声明过接收这个通道（已核对 Paper 1.20.1 / 1.20.4 的 `CraftPlayer.sendPluginMessage`；旧版服务端未逐一核对，但声明通道是协议标准动作，对旧版同样必需），未声明则**静默丢弃**，机器人侧只会看到超时。「发命令 → 拿到结构化结果」的高层封装见 §3.4.2，本层不做、也不替调用方重试。
+**机器人侧**：`@wcpe/mc-testkit-bot/lib/commands` 提供通信原语 `sendCommandPayload(bot, id, command)`（令牌默认读 `MC_TESTKIT_E2E_CMD_TOKEN`，也可显式传第 4 参） / `waitForCommandResult(bot, id, timeoutMs)`。它在首次发送前调用 mineflayer 的 `registerChannel(name, parser, custom=true)` 声明通道——**这一步不能省**：服务端把回执发给某个玩家前会检查该玩家是否声明过接收这个通道（已核对 Paper 1.20.1 / 1.20.4 的 `CraftPlayer.sendPluginMessage`；旧版服务端未逐一核对，但声明通道是协议标准动作，对旧版同样必需），未声明则**静默丢弃**，机器人侧只会看到超时。「发命令 → 拿到结构化结果」的高层封装见 §3.4.2，本层不做、也不替调用方重试。
 
 **版本**：需要桩升级 `harness-core` 才有这条能力（旧桩照常工作，只是没有它）。通道对 1.8–1.21 的协议线形态一致（包名 `custom_payload`、字段 `channel` + `data`），无需按版本分支。
 

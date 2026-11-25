@@ -134,7 +134,7 @@ class McTestkitE2eHarnessPlugin : McTestkitHarnessPlugin(), Listener {
     /** 场景启动：无机器人的 smoke 直接判定；需要玩家的场景挂等待超时。 */
     private fun bootstrapScenario() {
         when (scenario) {
-            ScenarioName.SMOKE -> runSmokeScenario()
+            ScenarioName.SMOKE, ScenarioName.BROKER_MESSAGING -> runSmokeScenario()
             ScenarioName.CONTINUOUS_STRESS -> {
                 // 压测计时在「首个 bot 加入」时启动（见 onPlayerJoin）；此处只挂「迟迟无 bot」失败兜底
                 logger.info("[E2E] 持续压测场景，等待首个 bot 加入后开始 ${harnessConfig.stressDurationSeconds}s 计时")
@@ -229,8 +229,9 @@ class McTestkitE2eHarnessPlugin : McTestkitHarnessPlugin(), Listener {
             ScenarioName.MULTI_BOT -> Unit
             // serve 持久手测在基类 onEnable 已短路（桩空闲），不到此
             ScenarioName.SERVE -> Unit
-            // smoke 不经玩家驱动；其余场景由消费方补充分支
+            // smoke / broker-messaging 不经玩家驱动；其余场景由消费方补充分支
             ScenarioName.SMOKE -> Unit
+            ScenarioName.BROKER_MESSAGING -> Unit
         }
     }
 

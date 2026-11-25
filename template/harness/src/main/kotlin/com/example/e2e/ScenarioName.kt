@@ -53,6 +53,12 @@ enum class ScenarioName(val id: String) {
      * 桩据此**空闲**：不驱动任何场景、不挂超时、不写结果、不关服——把服务端留给真人客户端手测。
      */
     SERVE("__mc_testkit_serve__"),
+
+    /**
+     * broker 消息链路 smoke 场景（编排层 `beaconBroker` 钩子配套）：broker 供给、接入、
+     * approve 链与 send→poll→ack 自检全由钩子承担，桩只需就绪即 PASS。
+     */
+    BROKER_MESSAGING("broker-messaging"),
     ;
 
     companion object {

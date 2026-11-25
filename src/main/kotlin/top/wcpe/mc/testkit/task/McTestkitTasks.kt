@@ -177,22 +177,12 @@ internal class TaskExecutionContext(
     fun outputBudget(): OutputBudget = outputService.get().attach(layout.resultsDir)
 
     /**
-     * 本次构建的 console 命令通道令牌；惰性生成一次（SecureRandom 24 字节 hex），
-     * 同时下发给服务端桩与 bot 进程 env，桩据此鉴权（fail-closed）。
+     * 本次构建的 console 命令通道令牌，下发给服务端桩与 bot 进程 env，桩据此鉴权（fail-closed）。
      *
-     * `@Transient`：配置缓存恢复后重新生成即可——后端与 bot 的 env 都在执行期解析，同一次执行内恒定。
+     * 委托给构建服务 [RunOutputService.commandChannelToken]：配置缓存复用时各任务拿到本上下文的
+     * 独立副本，字段级缓存会让后端任务与 bot 任务摇出不同令牌（回归 finding BUG-0001）。
      */
-    @Transient
-    private var commandChannelTokenValue: String? = null
-
-    /** 返回本次构建的通道令牌（同一次执行内恒定）。 */
-    @Synchronized
-    fun commandChannelToken(): String =
-        commandChannelTokenValue ?: run {
-            val bytes = ByteArray(24)
-            java.security.SecureRandom().nextBytes(bytes)
-            bytes.joinToString("") { "%02x".format(it) }.also { commandChannelTokenValue = it }
-        }
+    fun commandChannelToken(): String = outputService.get().commandChannelToken()
 
     /**
      * 下发给后端桩的命令通道 env：令牌 + 许可发送者名单（本轮 bot 用户名）。
@@ -816,7 +806,7 @@ object McTestkitTasks {
                         } else {
                             null
                         },
-                        commandSenders = BotProcessPlanner.opUsernames(scenario.name, scenario.botSpecs),
+                        commandSenders = BotProcessPlanner.commandSenders(scenario.name, scenario.botSpecs),
                     )
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
@@ -984,7 +974,7 @@ object McTestkitTasks {
                         scenario.name,
                         scenario.resultTimeoutSeconds,
                         mavenSources,
-                        commandSenders = BotProcessPlanner.opUsernames(scenario.name, scenario.botSpecs),
+                        commandSenders = BotProcessPlanner.commandSenders(scenario.name, scenario.botSpecs),
                     )
                     // ⑤ 只认结果文件判定
                     verifyScenarioResult(ctx, scenario.name)
@@ -1117,7 +1107,7 @@ object McTestkitTasks {
                                 scenario.name,
                                 resultFile,
                                 mavenSources,
-                                commandSenders = BotProcessPlanner.opUsernames(scenario.name, scenario.botSpecs),
+                                commandSenders = BotProcessPlanner.commandSenders(scenario.name, scenario.botSpecs),
                             )
                     }
                     // ② 后台起集群代理（单 listener + N 具名 server）
@@ -1494,6 +1484,11 @@ object McTestkitTasks {
                     val stressOpNames = scenario.botSpec?.let { bot ->
                         BotProcessPlanner.stressOpUsernames(action, bot, stressBackends.size, stress.botsPerServer)
                     } ?: emptyList()
+                    // 命令通道名单与 op 无关（文档定死 execCommand 走服务端权限、bot 不需 OP）：
+                    // 许可发送者 = 本轮实际起的全部压测 bot 用户名
+                    val stressSenderNames = scenario.botSpec?.let { bot ->
+                        BotProcessPlanner.stressUsernames(action, bot, stressBackends.size, stress.botsPerServer)
+                    } ?: emptyList()
                     stressBackends.forEach { backend ->
                         val runDir = layout.clusterBackendRunDir(backend.name)
                         prepareRunDirectory(
@@ -1512,7 +1507,7 @@ object McTestkitTasks {
                                 scenario.name,
                                 stressResultFile(layout, scenario.name, backend.name),
                                 mavenSources,
-                                commandSenders = stressOpNames,
+                                commandSenders = stressSenderNames,
                             )
                     }
 
@@ -2008,7 +2003,7 @@ object McTestkitTasks {
                 backendRunDir,
                 mavenSources,
                 pty = attachEnabled,
-                commandSenders = BotProcessPlanner.opUsernames(serveName, botSpecs),
+                commandSenders = BotProcessPlanner.commandSenders(serveName, botSpecs),
             )
             // ③' PTY 模式：服务端 stdout 是终端流，先接上输出泵（落日志 + 推给附加控制台）再等就绪
             if (attachEnabled) {
@@ -2406,7 +2401,7 @@ object McTestkitTasks {
                     backend,
                     runDir,
                     mavenSources,
-                    commandSenders = BotProcessPlanner.opUsernames(serveName, botSpecs),
+                    commandSenders = BotProcessPlanner.commandSenders(serveName, botSpecs),
                 )
             }
             // ② 后台起集群代理（单 listener + N 具名 server，供真人 /server 切换）

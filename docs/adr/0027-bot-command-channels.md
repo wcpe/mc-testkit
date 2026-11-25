@@ -50,6 +50,8 @@ scenario("admin-flow") {
 
 ### 二、插件消息 console 命令通道（`E2E_CMD` 协议）
 
+> **被取代**：v1 帧格式自 0.20.0 起升级为 v2 双闸鉴权协议（fail-closed，无兼容旁路），见 [ADR-0030](0030-cmd-channel-auth.md)。下表 v1 行仅留档。
+
 新增一对冻结协议常量（`McTestkitProtocol`）：
 
 | 方向 | 消息 | 说明 |

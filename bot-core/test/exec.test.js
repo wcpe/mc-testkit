@@ -15,7 +15,7 @@ const commands = require('../src/lib/commands')
 const { execCommand, execCommands } = require('../src/lib/exec')
 
 // v2 协议要求通道令牌（桩 fail-closed）；使用真实通信原语的用例统一走这个测试令牌
-process.env.MC_TESTKIT_E2E_CMD_TOKEN = process.env.MC_TESTKIT_E2E_CMD_TOKEN || 'test-tok'
+process.env.MC_TESTKIT_E2E_CMD_TOKEN = 'test-tok'
 
 // 构造一个假协议客户端：记录写出的包、可手动注入收到的包。
 // `ended` 默认 false——minecraft-protocol 的 Client 在 setSocket 时同样置 false。

@@ -6,6 +6,10 @@
 
 ## [未发布]
 
+### 新增
+
+- **driver 车道：通用进程驱动 DSL（`scenario { driver { } }`），编排像管 bot 一样管真客户端 / 外部驱动进程**：`DriverSpec` 声明消费方自带的任意可执行命令——`command`（必填）+ `args(...)` + `env(name, value)` + `workDir`（相对工程根）+ `killTimeoutSeconds`（默认 15）。calcite 真客户端、自研压测器、外部探针不再需要消费方自己写 Gradle 任务拉进程并自管生命周期。生命周期语义按 A 方案实证口径定死：场景结束（PASS / FAIL / 中断）必收尾——温和 destroy、限时未退升级强杀，杀不净由进程监管判本次执行不可信；「完成即退出」（真客户端观测端口由开转关后退 0）由 driver 自己兑现，判定权仍在结果文件。新增任务 `launch<Key>Driver`（在服务端就绪门之前拉起，driver 自行重试等端口开放）与聚合 `e2e<Key>WithDriver`；产物同 bot 口径——`driver-<key>.log` / `driver-<key>.pid`（带启动时刻）落结果目录、台账登记 `driver/<key>` 供 `stopE2eProcesses` 跨轮收尾、输出经同一输出预算计限额。契约 env 新增 `…DRIVER_HOST` / `…DRIVER_PORT` / `…DRIVER_SCENARIO` / `…DRIVER_BACKEND_NAME` / `…DRIVER_ROLE` / `…DRIVER_RESULTS_DIR`，业务 env 原样透传。多 driver 用具名 `driver("<角色>") { }`（角色名须唯一），driver 与 bot 可同时声明、独立起名独立收尾。当前只支持直连单后端场景：经代理 / 集群 / 压测声明 driver 在配置期中文报错（另行扩展，不静默忽略）；`command` 空白、`killTimeoutSeconds <= 0`、角色名重复同样配置期中文报错。`argsFromFile(path)` 支持从构建期冻结的启动模板读参数（每行一个参数，读在拉起时刻）；`launchAfterReady = true` 声明分阶段拉起——该 driver 不在就绪前起跑，改由 verify 在后端端口可连后体内拉起（LAN Host→Join 类先等上游信号再放下游的拓扑；应用级就绪回执仍由 driver 脚本自重试）。`recordEvidence = true` 声明录屏 / 截图证据：注入 `…RECORD=1` + `…RECORD_DIR`（默认 `<结果目录>/recordings/`），driver 用自己的捕获能力落证据（calcite 走自身截图、服务端侧走 ffmpeg 屏幕捕获），JVM 套件可读 harness-core 新 `McTestkitRecorder`（`available()`/`screenshot`/`start`+`stop`）；可选降级是硬规则——ffmpeg 缺失、无显示环境或未声明时只告警返回 null，测试照常 PASS、永不改判定，无头环境正确跑。契约见 `docs/API.md` §3.1 / §3.2 / §3.3；校验回归锚点 `DriverValidationTest`、降级锚点 `McTestkitRecorderTest`。
+
 ### 修复
 
 - **发布失败后重跑不可能变绿：三个构件的发布与建 Release 都不幂等**：`v0.18.1` 因发布凭据失效在「发布构件」一步 401 失败，凭据修好后重跑，却先后撞上两处「不可覆盖」——根构件已在别处补发成功、`gh release create` 与已存在的 Release 撞名（`Release.tag_name already exists`）。于是**一次实际成功的补发被拖成红色**，回查发布历史会误以为 0.18.1 没发出去。现四处（根插件、`harness-core`、`bot-core`、GitHub Release）统一按「远端已有该版本则跳过」处理：Maven / npm 构件查远端是否已存在该版本，Release 先 `gh release view` 探测。已存在时只打印核对信息、不再报错，因此**修好凭据后重跑即可收敛**，不必删 Release 或改版本号重来。根构件的幂等判断复用 `VERSION`（与 tag 校验同源），路径按真实 `groupId`（`top.wcpe.mc`）拼成 `top/wcpe/mc/mc-testkit/…`——漏掉 `mc` 段会永远查到 404、静默退化成「每次都重复发布」。已存在的 Release **不重写正文**：正文由 GitHub 从 PR 自动生成，重跑时区间内 PR 没有变化，重新生成收益为零，反而会覆盖人工在网页上补的说明。

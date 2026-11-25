@@ -246,6 +246,98 @@ class BotSpec(val role: String? = null) : java.io.Serializable {
 }
 
 /**
+ * 通用进程驱动声明（场景内可选；driver 车道：编排像管 bot 一样管真客户端 / 外部驱动进程）。
+ *
+ * 与 [BotSpec] 的区别：bot 是框架内建 mineflayer 内核（模板脚本 + 固定 env 契约），
+ * driver 是**消费方自带的任意可执行命令**（command + args + env + workDir）——calcite 真客户端、
+ * 自研压测器、外部探针都走这条车道。框架只负责生命周期：按场景起、按场景收。
+ *
+ * 生命周期语义（A 方案实证口径，不议价）：
+ * - 场景结束（PASS / FAIL / 中断）必收尾 driver 进程——温和 destroy → 限时未退升级强杀
+ *   （监管 [top.wcpe.mc.testkit.bot.RunOutputSupervisor] 内建升级，杀不净判本次执行不可信）；
+ * - 「完成即退出」由 driver 自己兑现（如真客户端观测「端口由开转关」后退 0）——编排等结果文件，
+ *   driver 提前退出只记日志，判定权仍在结果文件；
+ * - pid / 日志 / 台账与 bot 同口径：`driver-<key>.log` / `driver-<key>.pid` / `driver/<key>`。
+ *
+ * 实现 [java.io.Serializable]：同 [BotSpec]，供任务动作闭包安全捕获。
+ *
+ * @property role 角色标签（`driver("probe") { }` 的名字；匿名 `driver { }` 为 null）。同场景多个
+ *   driver 时须各有唯一 role（区分日志 / pid / 台账）。
+ */
+@McTestkitDsl
+class DriverSpec(val role: String? = null) : java.io.Serializable {
+    /** 可执行命令（必填；如 `node`、`java`、绝对路径）。 */
+    var command: String? = null
+
+    /** 命令参数（按声明顺序）。 */
+    private val mutableArgs = mutableListOf<String>()
+
+    /** 已声明的全部参数。 */
+    val args: List<String> get() = mutableArgs.toList()
+
+    /** 追加命令参数。 */
+    fun args(vararg values: String) {
+        mutableArgs += values
+    }
+
+    private val mutableArgsFiles = mutableListOf<String>()
+
+    /** 已声明的参数文件路径（按声明顺序；相对消费工程根目录）。 */
+    val argsFiles: List<String> get() = mutableArgsFiles.toList()
+
+    /**
+     * 从文件读入命令参数（追加在 [args] 之后，按声明顺序展开）。
+     *
+     * 文件格式：每行一个参数，空行与 `#` 开头的注释行忽略——面向消费方构建期冻结的启动模板
+     * （如逐站冻结的 classpath argfile / -D 属性清单）。路径相对消费工程根目录；文件由构建期
+     * 生成时，读取发生在 driver 拉起时刻而非配置期。
+     */
+    fun argsFromFile(path: String) {
+        mutableArgsFiles += path
+    }
+
+    /**
+     * 进程工作目录（相对消费工程根目录，null / 空白表示工程根目录本身）。
+     * 用相对路径：声明会被多台机器复用，本机绝对路径不可移植。
+     */
+    var workDir: String? = null
+
+    /**
+     * 分阶段拉起：true 时该 driver **不在** `launch<Key>Driver` 里起，改为后端端口就绪后由
+     * verify 在体内拉起（LAN Host→Join 等「先等上游就绪信号再起下游」拓扑）。
+     *
+     * 就绪判据是「后端端口可连」这一编排可见事实；更高层的应用级就绪回执（如 Host 发布就绪证明
+     * 后才放 Join）仍由 driver 脚本自身重试兑现，编排只保证后起于端口开放。
+     * 默认 false：与其他 driver 一起在服务端就绪前拉起（自行重试等端口）。
+     */
+    var launchAfterReady: Boolean = false
+
+    /**
+     * 声明本 driver 要录屏 / 截图证据：编排注入 `…RECORD=1` 与 `…RECORD_DIR`
+     * （默认 `<结果目录>/recordings/`），driver 进程用自己的捕获能力（calcite 截图、
+     * xvfb/ffmpeg 等可选链）读 env 落证据；JVM 侧套件可读
+     * `top.wcpe.mc.testkit.harness.McTestkitRecorder` 走同一契约。
+     *
+     * 可选降级：录制依赖（ffmpeg / 显示环境）缺失时测试照常 PASS，只是没有视觉证据——
+     * 无头环境必须正确跑，本开关永不改变判定语义。
+     */
+    var recordEvidence: Boolean = false
+
+    /** 温和收尾等待上限（秒），超时升级强杀；默认 15（与收尾原语口径一致）。 */
+    var killTimeoutSeconds: Long = 15L
+
+    private val mutableEnv = LinkedHashMap<String, String>()
+
+    /** 透传给 driver 进程的**业务特定**环境变量（消费方自定名）。 */
+    val env: Map<String, String> get() = mutableEnv.toMap()
+
+    /** 声明一个透传给 driver 进程的业务环境变量（同 [BotSpec.env]，scope-discipline）。 */
+    fun env(name: String, value: String) {
+        mutableEnv[name] = value
+    }
+}
+
+/**
  * 压测维度声明（场景内可选，压测编排）。声明 `stress` 即「压测场景」（ADR-0008）：复用
  * [ScenarioSpec.backends] 表 N 服，每服起 [botsPerServer] 个 bot 进程**钉在本服**持续随机施压
  * （不 `/server` 切换，区别于集群跨服场景）。规模与时长在配置期校验须为正。
@@ -316,6 +408,26 @@ class ScenarioSpec(val name: String) : java.io.Serializable {
      */
     fun bot(role: String, configure: BotSpec.() -> Unit) {
         mutableBots += BotSpec(role).apply(configure)
+    }
+
+    private val mutableDrivers = mutableListOf<DriverSpec>()
+
+    /** 该场景声明的全部进程驱动（按声明顺序；空表示无 driver）。 */
+    val driverSpecs: List<DriverSpec> get() = mutableDrivers.toList()
+
+    /**
+     * 声明该场景由一个匿名通用进程驱动（driver 车道：真客户端 / 外部驱动）。
+     *
+     * driver 与 bot 可同时声明：bot 连真服驱动游戏内行为，driver 跑场景外进程（如 calcite
+     * 真客户端打另一视角），编排对两者做同口径生命周期收尾。
+     */
+    fun driver(configure: DriverSpec.() -> Unit) {
+        mutableDrivers += DriverSpec().apply(configure)
+    }
+
+    /** 声明该场景由一个**具名角色**进程驱动（多 driver 时须各有唯一 role）。 */
+    fun driver(role: String, configure: DriverSpec.() -> Unit) {
+        mutableDrivers += DriverSpec(role).apply(configure)
     }
 
     private var mutableStress: StressSpec? = null

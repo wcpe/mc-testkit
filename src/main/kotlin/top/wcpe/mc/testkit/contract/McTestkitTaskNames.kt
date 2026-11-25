@@ -38,8 +38,14 @@ object McTestkitTaskNames {
     /** 启动机器人任务：`launch<Key>Bot`。 */
     fun launchBot(scenario: String): String = "launch" + scenario.toTaskKey() + "Bot"
 
+    /** 启动进程驱动任务（driver 车道）：`launch<Key>Driver`。 */
+    fun launchDriver(scenario: String): String = "launch" + scenario.toTaskKey() + "Driver"
+
     /** 一键「启动机器人 + 验证」任务：`e2e<Key>WithBot`。 */
     fun withBot(scenario: String): String = verify(scenario) + "WithBot"
+
+    /** 一键「启动进程驱动 + 验证」任务：`e2e<Key>WithDriver`。 */
+    fun withDriver(scenario: String): String = verify(scenario) + "WithDriver"
 
     /**
      * 场景前钩子任务：`before<Key>Scenario`（仅当场景声明了 `beforeScenario` 时注册）。

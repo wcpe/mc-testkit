@@ -62,48 +62,74 @@ function donePacket(text) {
 
 test('sendCommandPayload 发出 custom_payload 且字段为 channel + data', () => {
   const client = fakeClient()
-  const message = sendCommandPayload(fakeBot(client), 'r1', 'gamemode creative Steve')
+  const message = sendCommandPayload(fakeBot(client), 'r1', 'gamemode creative Steve', 'tok-1')
 
-  assert.equal(message, 'E2E_CMD:r1:gamemode creative Steve')
+  assert.equal(message, 'E2E_CMD:tok-1:r1:gamemode creative Steve')
   assert.equal(client.written.length, 1)
   const { packetName, packet } = client.written[0]
   assert.equal(packetName, 'custom_payload')
   assert.equal(packet.channel, COMMAND_CHANNEL)
   assert.ok(Buffer.isBuffer(packet.data), 'data 必须是 Buffer')
-  assert.equal(packet.data.toString('utf8'), 'E2E_CMD:r1:gamemode creative Steve')
+  assert.equal(packet.data.toString('utf8'), 'E2E_CMD:tok-1:r1:gamemode creative Steve')
 })
 
 test('sendCommandPayload 首次发送时声明通道（服务端否则会静默丢弃回执）', () => {
   const client = fakeClient()
   const bot = fakeBot(client)
 
-  sendCommandPayload(bot, 'a', 'say hi')
+  sendCommandPayload(bot, 'a', 'say hi', 'tok-1')
   assert.deepEqual(client.registered, [{ name: COMMAND_CHANNEL, parser: null, custom: true }],
     '必须带 custom=true 才会真正发出 REGISTER 包')
 
   // 第二条命令不应重复声明同名通道
-  sendCommandPayload(bot, 'b', 'say hi again')
+  sendCommandPayload(bot, 'b', 'say hi again', 'tok-1')
   assert.equal(client.registered.length, 1, '同名通道只应声明一次')
   assert.equal(client.written.length, 2)
 })
 
 test('sendCommandPayload 保留命令里的冒号', () => {
   const client = fakeClient()
-  const message = sendCommandPayload(fakeBot(client), 'x', 'give Steve minecraft:stone 1')
-  assert.equal(message, 'E2E_CMD:x:give Steve minecraft:stone 1')
-  assert.equal(client.written[0].packet.data.toString('utf8'), 'E2E_CMD:x:give Steve minecraft:stone 1')
+  const message = sendCommandPayload(fakeBot(client), 'x', 'give Steve minecraft:stone 1', 'tok-1')
+  assert.equal(message, 'E2E_CMD:tok-1:x:give Steve minecraft:stone 1')
+  assert.equal(client.written[0].packet.data.toString('utf8'), 'E2E_CMD:tok-1:x:give Steve minecraft:stone 1')
+})
+
+test('sendCommandPayload 拒绝空令牌与含冒号令牌（桩 fail-closed，发送前明报）', () => {
+  const client = fakeClient()
+  const bot = fakeBot(client)
+  assert.throws(() => sendCommandPayload(bot, 'a', 'say hi', ''), /令牌为空/)
+  assert.throws(() => sendCommandPayload(bot, 'a', 'say hi', 'a:b'), /不得含冒号/)
+  const saved = process.env.MC_TESTKIT_E2E_CMD_TOKEN
+  delete process.env.MC_TESTKIT_E2E_CMD_TOKEN
+  try {
+    assert.throws(() => sendCommandPayload(bot, 'a', 'say hi'), /令牌为空/)
+  } finally {
+    if (saved !== undefined) process.env.MC_TESTKIT_E2E_CMD_TOKEN = saved
+  }
+  assert.equal(client.written.length, 0, '被拒绝的请求不得真的发出')
+})
+
+test('sendCommandPayload 默认读 MC_TESTKIT_E2E_CMD_TOKEN', () => {
+  const client = fakeClient()
+  process.env.MC_TESTKIT_E2E_CMD_TOKEN = 'env-tok'
+  try {
+    const message = sendCommandPayload(fakeBot(client), 'i9', 'say hi')
+    assert.equal(message, 'E2E_CMD:env-tok:i9:say hi')
+  } finally {
+    delete process.env.MC_TESTKIT_E2E_CMD_TOKEN
+  }
 })
 
 test('sendCommandPayload 拒绝非法 id', () => {
   const client = fakeClient()
   const bot = fakeBot(client)
-  assert.throws(() => sendCommandPayload(bot, '', 'say hi'), /id 不得为空/)
-  assert.throws(() => sendCommandPayload(bot, 'a:b', 'say hi'), /不得含冒号/)
+  assert.throws(() => sendCommandPayload(bot, '', 'say hi', 'tok-1'), /id 不得为空/)
+  assert.throws(() => sendCommandPayload(bot, 'a:b', 'say hi', 'tok-1'), /不得含冒号/)
   assert.equal(client.written.length, 0, '被拒绝的请求不得真的发出')
 })
 
 test('sendCommandPayload 对缺少协议客户端的 bot 明确报错', () => {
-  assert.throws(() => sendCommandPayload({}, 'a', 'say hi'), /协议客户端/)
+  assert.throws(() => sendCommandPayload({}, 'a', 'say hi', 'tok-1'), /协议客户端/)
 })
 
 test('parseCommandDone 按最多 4 段解析，output 里的冒号保留', () => {

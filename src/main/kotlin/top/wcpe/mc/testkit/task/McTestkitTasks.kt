@@ -176,6 +176,34 @@ internal class TaskExecutionContext(
     /** 接手结果目录（[RunOutputService.attach]）并返回本次构建的输出预算；会起 bot / 钩子进程的路径用它。 */
     fun outputBudget(): OutputBudget = outputService.get().attach(layout.resultsDir)
 
+    /**
+     * 本次构建的 console 命令通道令牌；惰性生成一次（SecureRandom 24 字节 hex），
+     * 同时下发给服务端桩与 bot 进程 env，桩据此鉴权（fail-closed）。
+     *
+     * `@Transient`：配置缓存恢复后重新生成即可——后端与 bot 的 env 都在执行期解析，同一次执行内恒定。
+     */
+    @Transient
+    private var commandChannelTokenValue: String? = null
+
+    /** 返回本次构建的通道令牌（同一次执行内恒定）。 */
+    @Synchronized
+    fun commandChannelToken(): String =
+        commandChannelTokenValue ?: run {
+            val bytes = ByteArray(24)
+            java.security.SecureRandom().nextBytes(bytes)
+            bytes.joinToString("") { "%02x".format(it) }.also { commandChannelTokenValue = it }
+        }
+
+    /**
+     * 下发给后端桩的命令通道 env：令牌 + 许可发送者名单（本轮 bot 用户名）。
+     *
+     * [senders] 为空时下发空串——桩按「无 bot 场景」拒绝一切 console 命令请求（无合法来源）。
+     */
+    fun commandChannelEnv(senders: List<String>): Map<String, String> = mapOf(
+        McTestkitEnv.CMD_TOKEN to commandChannelToken(),
+        McTestkitEnv.CMD_SENDERS to senders.joinToString(","),
+    )
+
     /** 接手结果目录后做健康检查；读判定结果前后调用，上一次构建遗留的隐患与本次的输出失败都在这里抛出。 */
     fun checkRunHealthy() {
         val service = outputService.get()
@@ -788,6 +816,7 @@ object McTestkitTasks {
                         } else {
                             null
                         },
+                        commandSenders = BotProcessPlanner.opUsernames(scenario.name, scenario.botSpecs),
                     )
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
@@ -949,7 +978,14 @@ object McTestkitTasks {
                         protocolVersion = ProxyProtocolVersion.forBackend(backend.version),
                     )
                     // ④ 前台起后端（自停 waitFor）
-                    runBackendForeground(ctx, backend, scenario.name, scenario.resultTimeoutSeconds, mavenSources)
+                    runBackendForeground(
+                        ctx,
+                        backend,
+                        scenario.name,
+                        scenario.resultTimeoutSeconds,
+                        mavenSources,
+                        commandSenders = BotProcessPlanner.opUsernames(scenario.name, scenario.botSpecs),
+                    )
                     // ⑤ 只认结果文件判定
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
@@ -1074,7 +1110,15 @@ object McTestkitTasks {
                             BackendBungeeCordConfig.apply(runDir, backend.version)
                         }
                         backendProcesses[backend.name] =
-                            startBackendBackground(ctx, backend, runDir, scenario.name, resultFile, mavenSources)
+                            startBackendBackground(
+                                ctx,
+                                backend,
+                                runDir,
+                                scenario.name,
+                                resultFile,
+                                mavenSources,
+                                commandSenders = BotProcessPlanner.opUsernames(scenario.name, scenario.botSpecs),
+                            )
                     }
                     // ② 后台起集群代理（单 listener + N 具名 server）
                     proxyProcess = startClusterProxyBackground(
@@ -1130,6 +1174,7 @@ object McTestkitTasks {
         scenario: String,
         resultFile: File,
         sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
+        commandSenders: List<String> = emptyList(),
     ): Process {
         val layout = ctx.layout
         val jar = resolveBackendJar(ctx, backend, sources)
@@ -1145,7 +1190,7 @@ object McTestkitTasks {
                     McTestkitEnv.SCENARIO to scenario,
                     McTestkitEnv.RESULT_FILE to resultFile.absolutePath,
                     McTestkitEnv.BACKEND_NAME to backend.name,
-                ),
+                ) + ctx.commandChannelEnv(commandSenders),
             ),
             javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
@@ -1467,6 +1512,7 @@ object McTestkitTasks {
                                 scenario.name,
                                 stressResultFile(layout, scenario.name, backend.name),
                                 mavenSources,
+                                commandSenders = stressOpNames,
                             )
                     }
 
@@ -1613,6 +1659,8 @@ object McTestkitTasks {
                     McTestkitEnv.BOT_INDEX to i.toString(),
                     McTestkitEnv.STRESS_RANDOM_SEED to stress.randomSeed.toString(),
                     McTestkitEnv.STRESS_DURATION_SECONDS to stress.durationSeconds.toString(),
+                    // console 命令通道令牌（与本 run 后端桩同一令牌；桩 fail-closed 鉴权）
+                    McTestkitEnv.CMD_TOKEN to ctx.commandChannelToken(),
                 )
                 val environment = connection.toEnvironment(extraEnv, ctx::readEnv)
                 processes += BotLauncher.launch(
@@ -1954,7 +2002,14 @@ object McTestkitTasks {
                 awaitPortOpen(ctx, proxy.port, "代理 ${proxy.name}")
             }
             // ③ 前台起后端：下发哨兵场景 id 使桩空闲、不关服（ADR-0011），不下发 RESULT_FILE（serve 不判定）
-            backendProcess = startServeBackend(ctx, backend, backendRunDir, mavenSources, pty = attachEnabled)
+            backendProcess = startServeBackend(
+                ctx,
+                backend,
+                backendRunDir,
+                mavenSources,
+                pty = attachEnabled,
+                commandSenders = BotProcessPlanner.opUsernames(serveName, botSpecs),
+            )
             // ③' PTY 模式：服务端 stdout 是终端流，先接上输出泵（落日志 + 推给附加控制台）再等就绪
             if (attachEnabled) {
                 attach = startAttachConsole(ctx, backendProcess, backendLogFile)
@@ -2019,6 +2074,7 @@ object McTestkitTasks {
         runDir: File,
         sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
         pty: Boolean = false,
+        commandSenders: List<String> = emptyList(),
     ): Process {
         val jar = resolveBackendJar(ctx, backend, sources)
         val process = ServerLauncher.launch(
@@ -2033,7 +2089,7 @@ object McTestkitTasks {
                     // 哨兵场景：告诉桩进入空闲（不驱动 / 不关服，ADR-0011）；serve 不判定故不下发 RESULT_FILE
                     McTestkitEnv.SCENARIO to McTestkitContract.SERVE_SCENARIO_ID,
                     McTestkitEnv.BACKEND_NAME to backend.name,
-                ),
+                ) + ctx.commandChannelEnv(commandSenders),
             ),
             javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
@@ -2345,7 +2401,13 @@ object McTestkitTasks {
                 } else {
                     BackendBungeeCordConfig.apply(runDir, backend.version)
                 }
-                backendProcesses[backend.name] = startServeClusterBackend(ctx, backend, runDir, mavenSources)
+                backendProcesses[backend.name] = startServeClusterBackend(
+                    ctx,
+                    backend,
+                    runDir,
+                    mavenSources,
+                    commandSenders = BotProcessPlanner.opUsernames(serveName, botSpecs),
+                )
             }
             // ② 后台起集群代理（单 listener + N 具名 server，供真人 /server 切换）
             proxyProcess = startClusterProxyBackground(
@@ -2421,6 +2483,7 @@ object McTestkitTasks {
         backend: ResolvedBackend,
         runDir: File,
         sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
+        commandSenders: List<String> = emptyList(),
     ): Process {
         val layout = ctx.layout
         val jar = resolveBackendJar(ctx, backend, sources)
@@ -2435,7 +2498,7 @@ object McTestkitTasks {
                 mapOf(
                     McTestkitEnv.SCENARIO to McTestkitContract.SERVE_SCENARIO_ID,
                     McTestkitEnv.BACKEND_NAME to backend.name,
-                ),
+                ) + ctx.commandChannelEnv(commandSenders),
             ),
             javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
@@ -2506,6 +2569,7 @@ object McTestkitTasks {
         stopTaskName: String? = McTestkitTaskNames.STOP_PROCESSES,
         onBackendReady: (() -> Unit)? = null,
         recordEnv: Map<String, String> = emptyMap(),
+        commandSenders: List<String> = emptyList(),
     ) {
         val layout = ctx.layout
         val runDir = layout.backendRunDir(backend.name)
@@ -2528,7 +2592,7 @@ object McTestkitTasks {
                     McTestkitEnv.SCENARIO to scenario,
                     McTestkitEnv.RESULT_FILE to resultFilePath,
                     McTestkitEnv.BACKEND_NAME to backend.name,
-                ) + recordEnv,
+                ) + recordEnv + ctx.commandChannelEnv(commandSenders),
             ),
             javaPath = resolveBackendJava(ctx, backend),
             logger = { ctx.info(it) },
@@ -2895,6 +2959,8 @@ object McTestkitTasks {
         val environment = connection.toEnvironment(
             extraEnvironment = extraEnv + mapOf(
                 McTestkitEnv.BOT_RECEIPT_FILE to receiptFile.absolutePath,
+                // console 命令通道令牌（与本 run 后端桩同一令牌；桩 fail-closed 鉴权）
+                McTestkitEnv.CMD_TOKEN to ctx.commandChannelToken(),
             ),
             override = ctx::readEnv,
         )

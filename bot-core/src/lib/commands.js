@@ -2,7 +2,9 @@
 
 // 插件消息 console 命令通道的机器人侧通信原语（FR-30，ADR-0027）。
 //
-// 这条通道只做**通信原语**：发一条 `E2E_CMD:<id>:<command>`，等回执 `E2E_CMD_DONE:<id>:<PASS|FAIL>:<output>`。
+// 这条通道只做**通信原语**：发一条 `E2E_CMD:<token>:<id>:<command>`（v2，带鉴权令牌），
+// 等回执 `E2E_CMD_DONE:<id>:<PASS|FAIL>:<output>`。
+// 令牌由编排经 `MC_TESTKIT_E2E_CMD_TOKEN` 下发；桩侧无令牌或不符即 fail-closed 拒绝。
 // 「发命令 → 拿到结构化结果」的高层封装是另一个需求（FR-31），本模块不提供，也不替调用方做重试。
 //
 // 为什么不走聊天：聊天有 256 字符硬上限（长命令被**静默截断**）、会污染其他玩家的聊天记录、
@@ -83,17 +85,25 @@ function ensureChannel(client, channel) {
  * @param {Object} bot mineflayer bot
  * @param {string} id 请求 id（与回执配对；不得含冒号）
  * @param {string} command 待执行命令（可带前导 `/`）
+ * @param {string} [token] 通道令牌；默认取 `MC_TESTKIT_E2E_CMD_TOKEN`（编排下发）。缺失即抛错——
+ *   桩侧 fail-closed，发无令牌帧只会等到超时，不如在发送前明报
  * @returns {string} 实际发出的消息文本
  */
-function sendCommandPayload(bot, id, command) {
+function sendCommandPayload(bot, id, command, token = process.env.MC_TESTKIT_E2E_CMD_TOKEN) {
   const client = protocolClientOf(bot)
+  if (typeof token !== 'string' || token.length === 0) {
+    throw new Error('命令通道令牌为空（缺 MC_TESTKIT_E2E_CMD_TOKEN）——桩侧 fail-closed 会拒绝该请求，请检查编排 env 注入')
+  }
+  if (token.includes(':')) {
+    throw new Error('命令通道令牌不得含冒号——它是协议字段，含冒号会让帧解析错位')
+  }
   if (typeof id !== 'string' || id.length === 0) {
     throw new Error('命令请求 id 不得为空——没有 id 的回执无法与请求配对')
   }
   if (id.includes(':')) {
-    throw new Error(`命令请求 id 不得含冒号（收到：${id}）——它是第一个字段，含冒号会让回执配对错位`)
+    throw new Error(`命令请求 id 不得含冒号（收到：${id}）——它是协议字段，含冒号会让回执配对错位`)
   }
-  const message = `${COMMAND_PREFIX}${id}:${command == null ? '' : command}`
+  const message = `${COMMAND_PREFIX}${token}:${id}:${command == null ? '' : command}`
   ensureChannel(client, COMMAND_CHANNEL)
   client.write('custom_payload', {
     channel: COMMAND_CHANNEL,

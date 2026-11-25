@@ -903,16 +903,71 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
             }
             // 载荷按 UTF-8 解码（与机器人侧 Buffer.from(text, 'utf8') 对齐）
             String payload = new String(message, CHANNEL_CHARSET);
+            if (!commandChannelAuthorized(player, payload)) {
+                return;
+            }
             String id = McTestkitProtocol.commandRequestId(payload);
             String command = McTestkitProtocol.commandRequestBody(payload);
             if (id == null || command == null) {
                 // 不是命令请求（或 id 缺失）：不猜、不执行，只记日志——
                 // 静默忽略会让机器人侧一直等到超时，看不出是载荷格式不对
-                getLogger().warning("[E2E] 收到无法解析的命令请求，已忽略：" + payload);
+                getLogger().warning("[E2E] 收到无法解析的命令请求，已忽略");
                 return;
             }
             // 回调多半在网络线程：命令会读写世界对象，必须切主线程（与 E2E_ASSERT 的线程约定一致）
             runOnMainThread(() -> runConsoleCommand(player, id, command));
+        }
+
+        /**
+         * 命令通道鉴权（双闸，fail-closed）。
+         *
+         * <p>闸一（通道令牌）：{@code MC_TESTKIT_E2E_CMD_TOKEN} 未配置或请求令牌不符即拒绝——
+         * 该通道命令以 console 身份执行（等价于控制台全权），绝不能裸奔；
+         * 拒绝响应不含令牌，日志也不打印令牌值。
+         *
+         * <p>闸二（发送者名单）：令牌正确之外还要求发送者玩家名在
+         * {@code MC_TESTKIT_E2E_CMD_SENDERS}（逗号分隔）内；名单缺失或为空时按「无 bot 场景」
+         * 处理——console 命令此时没有合法来源，拒绝一切请求。
+         *
+         * @return true 才放行，false 已拒绝（回复/日志均已处理）
+         */
+        private boolean commandChannelAuthorized(Player player, String payload) {
+            String expectedToken = McTestkitEnv.envOrNull(McTestkitEnv.CMD_TOKEN);
+            String requestToken = McTestkitProtocol.commandRequestToken(payload);
+            if (expectedToken == null || !expectedToken.equals(requestToken)) {
+                // 不解析 id 段以外的内容——v1 帧的"第二个字段"其实是命令头，不能拿去发回执
+                String rawId = McTestkitProtocol.commandRequestId(payload);
+                getLogger().warning("[E2E] 拒绝命令请求：令牌未配置或不符"
+                    + " 来自=" + (player == null ? "<null>" : player.getName()));
+                if (rawId != null && requestToken != null && player != null) {
+                    // v2 帧但令牌错：以 id 回执 FAIL，让机器人侧早死而不是等超时（回执不含令牌）
+                    sendCommandDone(player,
+                        McTestkitProtocol.commandDone(rawId, false, "command rejected: token mismatch"));
+                }
+                return false;
+            }
+            String senders = McTestkitEnv.envOrNull(McTestkitEnv.CMD_SENDERS);
+            String sender = player == null ? null : player.getName();
+            boolean allowed = false;
+            if (senders != null && sender != null) {
+                for (String name : senders.split(",")) {
+                    if (name.trim().equals(sender)) {
+                        allowed = true;
+                        break;
+                    }
+                }
+            }
+            if (!allowed) {
+                getLogger().warning("[E2E] 拒绝命令请求：发送者不在许可名单"
+                    + " 来自=" + (player == null ? "<null>" : player.getName()));
+                String rawId = McTestkitProtocol.commandRequestId(payload);
+                if (rawId != null && player != null) {
+                    sendCommandDone(player,
+                        McTestkitProtocol.commandDone(rawId, false, "command rejected: sender not allowed"));
+                }
+                return false;
+            }
+            return true;
         }
     }
 }

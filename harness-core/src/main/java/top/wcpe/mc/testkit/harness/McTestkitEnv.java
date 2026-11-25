@@ -17,6 +17,20 @@ public final class McTestkitEnv {
     /** 结果文件绝对路径（桩写到这里，编排 verify 从这里读，二者对齐）。 */
     public static final String RESULT_FILE = PREFIX + "RESULT_FILE";
 
+    /**
+     * console 命令通道（{@code E2E_CMD}）鉴权令牌（编排每构建随机生成，双侧下发）。
+     *
+     * <p>未配置时整条命令通道 <b>fail-closed</b>：拒绝一切命令请求。令牌不进日志。
+     */
+    public static final String CMD_TOKEN = PREFIX + "CMD_TOKEN";
+
+    /**
+     * console 命令通道的许可发送者玩家名清单（逗号分隔）。
+     *
+     * <p>第二道闸：令牌正确之外还要求发送者在清单内；未配置或空串按「无 bot 场景」处理——拒绝全部命令。
+     */
+    public static final String CMD_SENDERS = PREFIX + "CMD_SENDERS";
+
     /** 本后端的声明名（集群 / 压测下各服不同，每后端身份注入；消费方据此 per-backend 派生身份）。 */
     public static final String BACKEND_NAME = PREFIX + "BACKEND_NAME";
 

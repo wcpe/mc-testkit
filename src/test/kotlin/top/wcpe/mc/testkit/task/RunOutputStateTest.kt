@@ -71,8 +71,8 @@ class RunOutputStateTest {
     @Test
     @DisplayName("构建进行中的记录带上持有它的构建 JVM；取不到启动时刻时留空")
     fun runningRecordNamesItsOwner() {
-        assertEquals("RUNNING\n$run\nowner=4242@1795244000000\n", RunOutputState.running(run, survivor))
-        assertEquals("RUNNING\n$run\nowner=\n", RunOutputState.running(run, null))
+        assertEquals("RUNNING\n$run\nowner=4242@1795244000000\nhb=1\n", RunOutputState.running(run, survivor))
+        assertEquals("RUNNING\n$run\nowner=\nhb=1\n", RunOutputState.running(run, null))
     }
 
     @Test
@@ -87,6 +87,53 @@ class RunOutputStateTest {
             ),
         )
         assertEquals(RunOutputState.Prior.Refused("state=RUNNING run=$run owner=4242@1795244000000", Remedy.WAIT_OWNER), prior)
+    }
+
+    @Test
+    @DisplayName("持有者 pid 活着但心跳已过期（daemon 空闲、构建早亡）：按持有者结束处理")
+    fun staleHeartbeatOwnerIsTreatedAsEnded() {
+        val record = RunOutputState.running(run, survivor)
+        assertEquals(
+            RunOutputState.Prior.Abandoned(run),
+            RunOutputState.inspect(
+                record,
+                isAlive = { it == survivor },
+                isCurrentJvm = notCurrentJvm,
+                heartbeatFresh = { false },
+            ),
+            "带 hb 标记的记录心跳过期时，哪怕 owner pid（daemon）还活着也按持有者结束处理",
+        )
+    }
+
+    @Test
+    @DisplayName("持有者 pid 活着且心跳新鲜：仍按持有者存活等待")
+    fun freshHeartbeatOwnerIsStillWaitedFor() {
+        val prior = assertIs<RunOutputState.Prior.Refused>(
+            RunOutputState.inspect(
+                RunOutputState.running(run, survivor),
+                isAlive = { it == survivor },
+                isCurrentJvm = notCurrentJvm,
+                heartbeatFresh = { true },
+                liveWriters = { error("持有者还在跑时不该查台账") },
+            ),
+        )
+        assertEquals(Remedy.WAIT_OWNER, prior.remedy)
+    }
+
+    @Test
+    @DisplayName("无 hb 标记的旧版记录不受心跳影响：只看 pid 存活（保守行为不回退）")
+    fun legacyRecordWithoutHeartbeatMarkerKeepsPidOnlyBehavior() {
+        val legacy = "RUNNING\n$run\nowner=4242@1795244000000\n"
+        val prior = assertIs<RunOutputState.Prior.Refused>(
+            RunOutputState.inspect(
+                legacy,
+                isAlive = { it == survivor },
+                isCurrentJvm = notCurrentJvm,
+                heartbeatFresh = { false },
+                liveWriters = { error("旧版记录无心跳语义，持有者活着就该等") },
+            ),
+        )
+        assertEquals(Remedy.WAIT_OWNER, prior.remedy)
     }
 
     @Test

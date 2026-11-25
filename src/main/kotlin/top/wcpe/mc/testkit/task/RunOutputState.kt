@@ -56,7 +56,7 @@ internal object RunOutputState {
     }
 
     /** [owner] 为 null（取不到启动时刻）时，这次构建若没收尾就结束，下一次构建只能按无法确认处理。 */
-    fun running(runId: String, owner: ProcessIdentity?): String = "RUNNING\n$runId\nowner=${owner ?: ""}\n"
+    fun running(runId: String, owner: ProcessIdentity?): String = "RUNNING\n$runId\nowner=${owner ?: ""}\nhb=1\n"
 
     /** [survivors] 为 null 表示无法确认收尾是否干净。 */
     fun closed(runId: String, bytes: Long, failure: String?, survivors: List<ProcessIdentity>?): String {
@@ -65,11 +65,18 @@ internal object RunOutputState {
         return "$status\n$runId\nbytes=$bytes\n${failure.orEmpty()}\nlive=$live\n"
     }
 
+    /** 心跳新鲜度窗口：持有方每 15s 续写一次，8 倍余量吃 GC 暂停与机器负载。 */
+    const val HEARTBEAT_FRESH_MILLIS = 120_000L
+
     /** [liveWriters] 见 [inspect]。 */
     fun read(file: File, liveWriters: () -> List<String> = { emptyList() }): Prior = when {
         !file.isFile -> Prior.None
         file.length() > MAX_BYTES -> Prior.Refused("state=oversized", Remedy.DELETE_STATE)
-        else -> inspect(file.readText(Charsets.UTF_8), liveWriters = liveWriters)
+        else -> inspect(
+            file.readText(Charsets.UTF_8),
+            liveWriters = liveWriters,
+            heartbeatFresh = { System.currentTimeMillis() - file.lastModified() < HEARTBEAT_FRESH_MILLIS },
+        )
     }
 
     /**
@@ -84,6 +91,7 @@ internal object RunOutputState {
         isAlive: (ProcessIdentity) -> Boolean = ProcessIdentity::isAlive,
         isCurrentJvm: (ProcessIdentity) -> Boolean = { it == ProcessIdentity.current() },
         liveWriters: () -> List<String> = { emptyList() },
+        heartbeatFresh: () -> Boolean = { true },
     ): Prior {
         if (text.isEmpty()) return Prior.None
         val lines = text.lines()
@@ -93,7 +101,14 @@ internal object RunOutputState {
             "RUNNING" -> {
                 val owner = lines.getOrNull(2)?.takeIf { it.startsWith("owner=") }?.removePrefix("owner=")?.let(ProcessIdentity::parse)
                     ?: return Prior.Refused("state=RUNNING run=$runId owner=unrecorded", Remedy.DELETE_STATE)
-                if (!isCurrentJvm(owner) && isAlive(owner)) {
+                // 心跳闸门：Gradle 守护进程是长命共享的——持有记录的构建结束后 daemon 本身不死，
+                // 只看 pid 存活会把「daemon 空闲、构建早亡」误判成「持有者还在跑」，stale lock 永久阻塞。
+                // 持有方在构建期间每 15s 续写状态文件（mtime 即心跳）；带 hb 标记的记录若 mtime 过期，
+                // 说明持有构建已不在写——哪怕 owner pid（daemon）还活着也按持有者结束处理。
+                // 无 hb 标记的旧版记录无法区分，维持只看 pid 存活的保守行为。
+                val heartbeatPresent = lines.getOrNull(3)?.trim() == "hb=1"
+                val ownerGone = !isAlive(owner) || (heartbeatPresent && !heartbeatFresh())
+                if (!isCurrentJvm(owner) && !ownerGone) {
                     return Prior.Refused("state=RUNNING run=$runId owner=$owner", Remedy.WAIT_OWNER)
                 }
                 val writers = liveWriters()

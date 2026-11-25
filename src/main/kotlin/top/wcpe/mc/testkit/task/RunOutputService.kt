@@ -84,9 +84,31 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
         return budget
     }
 
+    private val heartbeatThreads = java.util.concurrent.ConcurrentHashMap<File, Thread>()
+
     private fun own(state: File) {
-        state.writeText(RunOutputState.running(runId, ProcessIdentity.current()))
+        val content = RunOutputState.running(runId, ProcessIdentity.current())
+        state.writeText(content)
         owned += state
+        // 心跳：Gradle 守护进程长命共享，pid 存活无法区分「daemon 忙跑本构建」与「daemon 空闲、
+        // 本构建早已结束」——持有期间每 15s 重写同一内容刷新 mtime，下一次构建据此判断持有构建
+        // 是否还在写。daemon 线程不拦 JVM 退出；close 先停心跳再写终态，避免终态被心跳覆写。
+        val thread = Thread {
+            try {
+                while (!Thread.currentThread().isInterrupted) {
+                    Thread.sleep(HEARTBEAT_INTERVAL_MILLIS)
+                    state.writeText(content)
+                }
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } catch (_: Exception) {
+                // 心跳写失败（目录被清等）不影响构建本身，静默停跳即可——下一次构建按 mtime 过期处理。
+            }
+        }
+        thread.isDaemon = true
+        thread.name = "mc-testkit-output-heartbeat"
+        heartbeatThreads[state] = thread
+        thread.start()
     }
 
     /** 进程台账里身份核对得上、仍存活、又不归本次构建监管的 bot 与钩子进程：往结果目录写日志的只有它们。 */
@@ -128,6 +150,9 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
     }
 
     override fun close() {
+        heartbeatThreads.values.forEach { it.interrupt() }
+        heartbeatThreads.values.forEach { it.join(2000) }
+        heartbeatThreads.clear()
         val supervisor = budget.supervisor
         supervisor.close()
         val truncated = budget.truncatedSinks()
@@ -143,6 +168,7 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
     }
 
     private companion object {
+        private const val HEARTBEAT_INTERVAL_MILLIS = 15_000L
         val logger = Logging.getLogger(RunOutputService::class.java)
     }
 }

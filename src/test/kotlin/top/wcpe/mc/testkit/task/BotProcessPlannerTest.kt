@@ -6,6 +6,7 @@ import top.wcpe.mc.testkit.dsl.BotSpec
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -384,5 +385,49 @@ class BotProcessPlannerTest {
             BotProcessPlanner.stressOpUsernames(action, bot { username = "P" }, 2, 2).isEmpty(),
             "未开启 op 的压测 bot 不应提权",
         )
+    }
+
+    @Test
+    @DisplayName("命令通道名单含未提权 bot，且单 bot 空白 BOT_USERNAME 覆盖退回声明名")
+    fun commandSendersCoverAllBotsAndBlankOverride() {
+        val senders = BotProcessPlanner.commandSenders(
+            "smoke",
+            listOf(
+                bot { username = "worker" },
+                bot { username = "admin"; op = true },
+            ),
+        )
+        assertEquals(
+            listOf("worker", "admin"),
+            senders,
+            "许可发送者是本轮全部 bot 用户名，不过滤 op（execCommand 走服务端权限、bot 不需 OP）",
+        )
+
+        val overridden = bot { username = "declared"; env(McTestkitEnv.BOT_USERNAME, "  ") }
+        assertEquals(
+            listOf("declared"),
+            BotProcessPlanner.commandSenders("smoke", listOf(overridden)),
+            "空白 BOT_USERNAME 覆盖按未覆盖处理：进程以声明名登录，名单不能落空",
+        )
+    }
+
+    @Test
+    @DisplayName("压测命令通道名单与 op 无关：全部压测 bot 用户名都在内")
+    fun stressUsernamesCoverAllStressBots() {
+        val action = "continuous-stress"
+        assertEquals(
+            listOf("P_s1_1", "P_s1_2", "P_s2_1", "P_s2_2"),
+            BotProcessPlanner.stressUsernames(action, bot { username = "P" }, serverCount = 2, botsPerServer = 2),
+            "未开启 op 的压测 bot 同样持有令牌、同样要能被名单放行",
+        )
+    }
+
+    @Test
+    @DisplayName("命令通道令牌为 24 字节 hex 且每次构建不同")
+    fun commandChannelTokenIsPerBuildRandom() {
+        val first = generateCommandChannelToken()
+        val second = generateCommandChannelToken()
+        assertTrue(Regex("^[0-9a-f]{48}$").matches(first), "令牌应为 24 字节 hex")
+        assertNotEquals(first, second, "令牌必须每构建随机生成（复用同一令牌会扩大冒用窗口）")
     }
 }

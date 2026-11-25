@@ -108,7 +108,10 @@ object BotProcessPlanner {
         val plans = expand(scenarioName, bots)
         val single = plans.size == 1
         return plans.map { plan ->
-            if (single) plan.env[McTestkitEnv.BOT_USERNAME] ?: plan.username else plan.username
+            // 空白覆盖同样按未覆盖处理：bot 进程对空白 BOT_USERNAME 按未设置理解、
+            // 仍以 plan.username 登录（找不到 env 里的有效名才退回声明名）。
+            if (single) plan.env[McTestkitEnv.BOT_USERNAME]?.takeIf { it.isNotBlank() } ?: plan.username
+            else plan.username
         }.distinct()
     }
 

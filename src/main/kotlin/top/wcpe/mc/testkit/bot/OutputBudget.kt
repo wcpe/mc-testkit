@@ -162,6 +162,7 @@ class BoundedProcessOutputPump(
     private val logFile: File,
     internal val budget: OutputBudget,
     private val onTruncated: (String) -> Unit = {},
+    private val processAlive: (() -> Boolean)? = null,
 ) {
     private val sink = budget.acquire(label)
 
@@ -187,7 +188,12 @@ class BoundedProcessOutputPump(
                 }
             }
         } catch (ex: IOException) {
-            budget.fail("IOFAIL sink=$label ${ex.javaClass.simpleName}")
+            // 收尾杀进程时管道随进程死亡而断流——进程已不存活即预期终结，不是输出失败；
+            // 进程仍在却读出错才是真 IO 故障（盘满、权限、管道异常）。
+            val teardown = processAlive?.let { !it() } ?: false
+            if (!teardown) {
+                budget.fail("IOFAIL sink=$label ${ex.javaClass.simpleName}")
+            }
         } finally {
             runCatching { out?.close() }
             finished = true

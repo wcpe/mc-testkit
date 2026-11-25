@@ -51,7 +51,7 @@ internal object ScenarioHookRuntime {
         pb.environment().putAll(env)
         val process = pb.start()
         try {
-            val pump = BoundedProcessOutputPump("hook:${logFile.name.take(100)}", process.inputStream, logFile, owner)
+            val pump = BoundedProcessOutputPump("hook:${logFile.name.take(100)}", process.inputStream, logFile, owner, processAlive = { process.isAlive })
             val handle = top.wcpe.mc.testkit.bot.BotProcessHandle(process, pump, logFile)
             val thread = Thread({ pump.run() }, "mc-testkit-hook-pump").apply { isDaemon = true }
             handle.pumpThread = thread

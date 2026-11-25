@@ -39,6 +39,26 @@ class DriverValidationTest {
         assertEquals(listOf("driver/main.js", "arg1"), spec.args)
         assertEquals("1.20.1", spec.env["CALCITE_MC_VERSION"])
         assertEquals(15L, spec.killTimeoutSeconds)
+        assertEquals(emptyList(), spec.argsFiles)
+        assertEquals(false, spec.launchAfterReady)
+    }
+
+    @Test
+    @DisplayName("argsFromFile 与 launchAfterReady 声明应被保留")
+    fun acceptsArgsFromFileAndStagedLaunch() {
+        val scenario = ScenarioSpec("lan").apply {
+            backend = "s1"
+            driver("host") { command = "java" }
+            driver("join") {
+                command = "java"
+                launchAfterReady = true
+                argsFromFile("build/lan/join-args.txt")
+            }
+        }
+        TopologyResolver.resolve(listOf(backend("s1", 25565)), emptyList(), listOf(scenario))
+        val join = scenario.driverSpecs.last()
+        assertEquals(true, join.launchAfterReady)
+        assertEquals(listOf("build/lan/join-args.txt"), join.argsFiles)
     }
 
     @Test

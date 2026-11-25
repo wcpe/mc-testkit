@@ -687,10 +687,14 @@ object McTestkitTasks {
         val afterHooks = hookTasks.after
 
         val hasDrivers = scenario.driverSpecs.isNotEmpty()
+        // 分阶段：launchAfterReady=false 的随 launchDriver 在就绪前拉起；=true 的由 verify
+        // 在后端端口就绪后体内拉起（LAN Host→Join 类先等上游信号再放下游的拓扑）。
+        val hasPreReadyDrivers = scenario.driverSpecs.any { !it.launchAfterReady }
+        val hasPostReadyDrivers = scenario.driverSpecs.any { it.launchAfterReady }
 
         // driver 车道：launch<Key>Driver 先起消费方进程（真客户端 / 外部驱动重试等服务端就绪），
         // verify 随后起服务端跑场景；收尾由 verify 的 finally 统一杀净（监管温和→强杀）。
-        val launchDriver: TaskProvider<DefaultTask>? = if (hasDrivers) {
+        val launchDriver: TaskProvider<DefaultTask>? = if (hasPreReadyDrivers) {
             registerTask(project, McTestkitTaskNames.launchDriver(scenario.name)) { task ->
                 task.group = TASK_GROUP
                 task.description = "启动场景 ${scenario.name} 的进程驱动（driver 车道：声明多 driver 时起多个进程）"
@@ -704,6 +708,7 @@ object McTestkitTasks {
                         host = "127.0.0.1",
                         port = backend.port,
                         backendName = backend.name,
+                        staged = false,
                     )
                 }
             }
@@ -752,7 +757,28 @@ object McTestkitTasks {
             task.doLast {
                 // 动作闭包只捕获可序列化上下文快照（不含 Project），兼容 Gradle 配置缓存
                 try {
-                    runBackendForeground(ctx, backend, scenario.name, scenario.resultTimeoutSeconds, mavenSources)
+                    runBackendForeground(
+                        ctx,
+                        backend,
+                        scenario.name,
+                        scenario.resultTimeoutSeconds,
+                        mavenSources,
+                        onBackendReady = if (hasPostReadyDrivers) {
+                            {
+                                ctx.info("后端端口已就绪，拉起 launchAfterReady 分阶段 driver")
+                                launchScenarioDrivers(
+                                    ctx,
+                                    scenario,
+                                    host = "127.0.0.1",
+                                    port = backend.port,
+                                    backendName = backend.name,
+                                    staged = true,
+                                )
+                            }
+                        } else {
+                            null
+                        },
+                    )
                     verifyScenarioResult(ctx, scenario.name)
                 } finally {
                     // 成功 / 失败都收尾全部 bot 与 driver（防残留；已自停为安全 no-op；杀不净由监管判不可信）
@@ -789,12 +815,16 @@ object McTestkitTasks {
             }
         }
 
-        // 有 driver 的场景：一键「启动进程驱动 + 验证」
-        if (launchDriver != null) {
+        // 有 driver 的场景：一键「启动进程驱动 + 验证」（全部 launchAfterReady 时无 launch 任务，直接挂 verify）
+        if (hasDrivers) {
             registerTask(project, McTestkitTaskNames.withDriver(scenario.name)) { task ->
                 task.group = TASK_GROUP
                 task.description = "一键运行场景 ${scenario.name}：启动进程驱动（driver 车道）+ 验证"
-                task.dependsOn(launchDriver, verify)
+                if (launchDriver != null) {
+                    task.dependsOn(launchDriver, verify)
+                } else {
+                    task.dependsOn(verify)
+                }
             }
         }
 
@@ -2453,6 +2483,7 @@ object McTestkitTasks {
         resultTimeoutSeconds: Long,
         sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
         stopTaskName: String? = McTestkitTaskNames.STOP_PROCESSES,
+        onBackendReady: (() -> Unit)? = null,
     ) {
         val layout = ctx.layout
         val runDir = layout.backendRunDir(backend.name)
@@ -2483,6 +2514,12 @@ object McTestkitTasks {
         val pidFile = provisionPidFile(runDir, backend.name)
         recordProcessedPid(ctx, pidFile, "$LEDGER_KEY_BACKEND/${backend.name}", process, backend.port)
         try {
+            // 分阶段拉起点：后端端口可连（≈服务端就绪）后回调，供 launchAfterReady driver 此刻起跑。
+            // 判据与集群路径就绪门同源（awaitPortOpen）：端口迟迟不开等满上限即中文失败收尾。
+            if (onBackendReady != null) {
+                awaitPortOpen(ctx, backend.port, "后端 ${backend.name}")
+                onBackendReady()
+            }
             // 等被测后端跑完：以「桩写出结果文件」为权威完成信号（结果文件是真源，见 verify/），
             // 而非死等 JVM 退出——真实后端的依赖（数据源 / Redis 连接池等非守护线程）常使 JVM 在
             // Bukkit.shutdown 后仍不退出。结果出现后给一小段优雅自停窗口，仍不退则强杀，避免空等到超时。
@@ -2642,10 +2679,12 @@ object McTestkitTasks {
         host: String,
         port: Int,
         backendName: String,
+        staged: Boolean,
     ): List<BotProcessHandle> {
         val started = mutableListOf<BotProcessHandle>()
         try {
             scenario.driverSpecs.forEachIndexed { index, spec ->
+                if (spec.launchAfterReady != staged) return@forEachIndexed
                 val key = driverKey(scenario, spec, index)
                 val workDir = spec.workDir?.takeIf { it.isNotBlank() }
                     ?.let { File(ctx.projectDir, it) }
@@ -2659,11 +2698,21 @@ object McTestkitTasks {
                     McTestkitEnv.DRIVER_ROLE to (spec.role ?: ""),
                     McTestkitEnv.DRIVER_RESULTS_DIR to ctx.layout.resultsDir.absolutePath,
                 ) + spec.env
+                val resolvedArgs = spec.args + spec.argsFiles.flatMap { argsFile ->
+                    val file = File(ctx.projectDir, argsFile)
+                    require(file.isFile) {
+                        "场景 ${scenario.name} 的 driver「$key」声明的参数文件不存在：${file.absolutePath}" +
+                            "（由构建期生成时请先跑生成它的任务）"
+                    }
+                    file.readLines()
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() && !it.startsWith("#") }
+                }
                 started += DriverLauncher.launch(
                     key = key,
                     // 拓扑校验期已拦空白命令
                     command = spec.command!!,
-                    args = spec.args,
+                    args = resolvedArgs,
                     workDir = workDir,
                     environment = environment,
                     resultsDir = ctx.layout.resultsDir,

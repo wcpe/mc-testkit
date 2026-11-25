@@ -280,11 +280,37 @@ class DriverSpec(val role: String? = null) : java.io.Serializable {
         mutableArgs += values
     }
 
+    private val mutableArgsFiles = mutableListOf<String>()
+
+    /** 已声明的参数文件路径（按声明顺序；相对消费工程根目录）。 */
+    val argsFiles: List<String> get() = mutableArgsFiles.toList()
+
+    /**
+     * 从文件读入命令参数（追加在 [args] 之后，按声明顺序展开）。
+     *
+     * 文件格式：每行一个参数，空行与 `#` 开头的注释行忽略——面向消费方构建期冻结的启动模板
+     * （如逐站冻结的 classpath argfile / -D 属性清单）。路径相对消费工程根目录；文件由构建期
+     * 生成时，读取发生在 driver 拉起时刻而非配置期。
+     */
+    fun argsFromFile(path: String) {
+        mutableArgsFiles += path
+    }
+
     /**
      * 进程工作目录（相对消费工程根目录，null / 空白表示工程根目录本身）。
      * 用相对路径：声明会被多台机器复用，本机绝对路径不可移植。
      */
     var workDir: String? = null
+
+    /**
+     * 分阶段拉起：true 时该 driver **不在** `launch<Key>Driver` 里起，改为后端端口就绪后由
+     * verify 在体内拉起（LAN Host→Join 等「先等上游就绪信号再起下游」拓扑）。
+     *
+     * 就绪判据是「后端端口可连」这一编排可见事实；更高层的应用级就绪回执（如 Host 发布就绪证明
+     * 后才放 Join）仍由 driver 脚本自身重试兑现，编排只保证后起于端口开放。
+     * 默认 false：与其他 driver 一起在服务端就绪前拉起（自行重试等端口）。
+     */
+    var launchAfterReady: Boolean = false
 
     /** 温和收尾等待上限（秒），超时升级强杀；默认 15（与收尾原语口径一致）。 */
     var killTimeoutSeconds: Long = 15L

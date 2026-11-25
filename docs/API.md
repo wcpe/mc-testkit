@@ -184,7 +184,7 @@ scenario("batch-admin") {
 
 > 经 **Velocity 代理**走 modern forwarding（代理 `velocity.toml` + 后端 `paper-global proxies.velocity`，共享 forwarding secret，见 ADR-0010）：支持单后端经代理 / 集群 `/server` 切换 / 崩溃接管 fallback；**不支持压测钉服**（Velocity 单端口无「一端口对一后端」，`stress + via=velocity` 配置期中文报错）。Velocity 用自有版本号（env `…VELOCITY_VERSION` 缺省 `3.5.1`，即受控的最新 3.x，非后端 MC 版本）；Waterfall/BungeeCord 经代理写 `config.yml`、Velocity 写 `velocity.toml` + `forwarding.secret`。
 
-**driver 车道（通用进程驱动，`scenario { driver { } }`，加法扩展）**：`DriverSpec` 声明消费方自带的任意可执行命令——`command`（必填）+ `args(...)` + `env(name, value)` + `workDir`（相对工程根，缺省工程根）+ `killTimeoutSeconds`（默认 15）。calcite 真客户端、自研压测器、外部探针都走这条车道，替代消费方自己写 Gradle 任务拉进程（A 方案）。编排像管 bot 一样管它的生命周期：
+**driver 车道（通用进程驱动，`scenario { driver { } }`，加法扩展）**：`DriverSpec` 声明消费方自带的任意可执行命令——`command`（必填）+ `args(...)` + `argsFromFile(path)`（每行一个参数，空行与 `#` 注释忽略；读在拉起时刻，供消费方构建期冻结的启动模板）+ `env(name, value)` + `workDir`（相对工程根，缺省工程根）+ `killTimeoutSeconds`（默认 15）+ `launchAfterReady`（默认 false；true 时该 driver 不在 `launch<Key>Driver` 里起，改由 verify 在后端端口就绪后体内拉起，用于 LAN Host→Join 等分阶段拓扑——编排只保证后起于端口开放，应用级就绪回执仍由 driver 脚本自重试）。calcite 真客户端、自研压测器、外部探针都走这条车道，替代消费方自己写 Gradle 任务拉进程（A 方案）。编排像管 bot 一样管它的生命周期：
 
 - **启动**：`launch<Key>Driver` 任务在 prepare 之后、服务端就绪门**之前**拉起（先于 verify 起服——真客户端 / 外部驱动自行重试等端口开放，与 A 方案实证的时序一致）；聚合任务 `e2e<Key>WithDriver` = launch + verify。
 - **收尾（不议价）**：场景结束（PASS / FAIL / 中断）必收尾——先温和 `destroy`，`killTimeoutSeconds` 内未退升级 `destroyForcibly`；杀不净由进程监管把本次执行判不可信（即便结果文件写的是 PASS）。中途某个 driver 起失败时，已起的先收掉再抛错，不留残留。

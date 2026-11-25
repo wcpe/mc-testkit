@@ -42,6 +42,9 @@ class OutputBudgetTest {
     private companion object {
         /** 子进程存活/退出的兜底时限：Windows PTY 格下单源文件编译启动偶发超过 8s。 */
         const val CHILD_DEADLINE_MS = 30_000L
+
+        /** 输出泵 EOF 读尽等待上限：BotLauncher.awaitPump 只接受 1..5 秒，取上限。 */
+        const val PUMP_EOF_SECONDS = 5L
     }
 
     @org.junit.jupiter.api.AfterEach fun closeOwners() {
@@ -273,7 +276,7 @@ class OutputBudgetTest {
         try {
             assertTrue(child.waitFor(CHILD_DEADLINE_MS, TimeUnit.MILLISECONDS), "截断后管道照常被抽干，子进程应当自己跑完")
             assertEquals(0, child.exitValue(), "子进程不应被杀，退出码应为 0")
-            assertTrue(handle.awaitPump(5), "子进程退出后泵应当读到 EOF 结束")
+            assertTrue(handle.awaitPump(PUMP_EOF_SECONDS), "子进程退出后泵应当读到 EOF 结束")
             assertTrue(handle.isTruncated(), "该日志应当已截断")
 
             handle.stop()

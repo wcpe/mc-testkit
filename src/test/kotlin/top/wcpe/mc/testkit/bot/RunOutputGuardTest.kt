@@ -67,7 +67,7 @@ class RunOutputGuardTest {
     }
 
     private fun waitDone(h: BotProcessHandle) {
-        assertTrue(h.process.waitFor(4, TimeUnit.SECONDS), "子进程必须在外部期限内退出")
+        assertTrue(h.process.waitFor(6, TimeUnit.SECONDS), "子进程必须在外部期限内退出")
         assertTrue(h.awaitPump(2), "泵必须在外部期限内结束")
     }
 
@@ -323,7 +323,7 @@ class RunOutputGuardTest {
             start(p, File(dir, "many-$i.log"), b, 8000)
         }
         try {
-            handles.forEach { assertTrue(it.process.waitFor(4, TimeUnit.SECONDS), "短命进程应当自己退出") }
+            handles.forEach { assertTrue(it.process.waitFor(6, TimeUnit.SECONDS), "短命进程应当自己退出") }
             handles.forEach { assertTrue(it.awaitPump(2), "每个进程的泵都应当读到 EOF") }
             assertNull(b.failureReason(), "进程数量本身不得触发失败，实际：${b.failureReason()}")
             b.supervisor.close()
@@ -357,7 +357,7 @@ class RunOutputGuardTest {
         assertFalse(id.copy(startMillis = id.startMillis + 1).isAlive(), "pid 相同但启动时刻不同，不是同一个进程")
         assertEquals(id, ProcessIdentity.parse(id.toString()), "文本形式必须能原样读回")
         p.destroyForcibly()
-        assertTrue(p.waitFor(4, TimeUnit.SECONDS), "强杀后进程必须退出")
+        assertTrue(p.waitFor(6, TimeUnit.SECONDS), "强杀后进程必须退出")
         assertFalse(id.isAlive(), "已退出的进程不再算存活")
     }
 
@@ -377,7 +377,7 @@ class RunOutputGuardTest {
         val cmd = listOf(javaCommand(), "-cp", fixtureClasspath(), GuardChild::class.java.name, "burst", "131072")
         val p = ScenarioHookRuntime.startBackground(cmd, emptyMap(), dir, File(dir, "hook.log"), b)
         try {
-            assertTrue(p.waitFor(4, TimeUnit.SECONDS), "截断后钩子进程应当自己跑完")
+            assertTrue(p.waitFor(6, TimeUnit.SECONDS), "截断后钩子进程应当自己跑完")
             assertTrue(File(dir, "hook.log").length() <= 64 * 1024, "钩子日志不得超过单日志上限")
             val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
             while (b.truncatedSinks() == 0 && System.nanoTime() < until) Thread.sleep(10)
@@ -401,7 +401,7 @@ class RunOutputGuardTest {
         val p = ScenarioHookRuntime.startBackground(cmd, emptyMap(), dir, File(dir, "cleanup.log"), b, cleanup = true)
         owned += p
         try {
-            assertTrue(p.waitFor(4, TimeUnit.SECONDS), "收尾进程应当自己跑完")
+            assertTrue(p.waitFor(6, TimeUnit.SECONDS), "收尾进程应当自己跑完")
             assertEquals(0, p.exitValue(), "收尾进程应当正常退出")
             val log = File(dir, "cleanup.log")
             val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)

@@ -170,6 +170,16 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
         finish(McTestkitResultWriter.STATUS_FAIL, message, java.util.Collections.emptyMap());
     }
 
+    /**
+     * 判 FAIL（带场景明细键）：原子写结果文件 + 延迟关服（幂等）。
+     *
+     * <p>明细键与 {@link #pass(String, Map)} 同形态——失败现场的排障读数（期望值、观测值、
+     * 计数）以独立键落盘，消费方断言 / 人工排查直接读字段而不是抠 message 文本。
+     */
+    protected final void fail(String message, Map<String, String> details) {
+        finish(McTestkitResultWriter.STATUS_FAIL, message, details);
+    }
+
     /** 判定是否已结束（消费方据此短路重复驱动 / 重复上报）。 */
     protected final boolean isFinished() {
         return finished.get();
@@ -362,7 +372,7 @@ public abstract class McTestkitHarnessPlugin extends JavaPlugin implements Liste
         if (outcome.passed) {
             pass(outcome.message);
         } else {
-            fail(outcome.message);
+            fail(outcome.message, outcome.facts);
         }
         // 回执在结论落定**之后**发：先有结论再通知，否则机器人可能在结果文件
         // 尚未写出时就读到旧的/空的文件，把"还没写"误判成"没通过"。

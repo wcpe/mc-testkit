@@ -60,6 +60,16 @@ public final class McTestkitResultWriter {
     }
 
     /**
+     * 判 FAIL（带场景明细键，如 expected / observed / worldCount）。
+     *
+     * <p>与 PASS 的明细键同形态：失败时的排障读数（期望值、实际读数、现场计数）以独立键落盘，
+     * 消费方与人工排查不必再从 message 文本里抠数字。
+     */
+    public void fail(String message, Map<String, String> details) {
+        write(STATUS_FAIL, message, details);
+    }
+
+    /**
      * 写出结果文件。
      *
      * @param status  结果状态，取 {@link #STATUS_PASS} / {@link #STATUS_FAIL}。

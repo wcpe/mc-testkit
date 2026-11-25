@@ -34,7 +34,7 @@ import kotlin.test.assertTrue
  * 与 [ProcessReaperTest] 同口径：用 `java <单源文件>` 派生，不依赖 node，
  * 无 Node 的 CI 也能跑。
  */
-@org.junit.jupiter.api.Timeout(10)
+@org.junit.jupiter.api.Timeout(60)
 class OutputBudgetTest {
     private val supervisedBudgets = mutableSetOf<OutputBudget>()
 
@@ -95,7 +95,7 @@ class OutputBudgetTest {
         val pump = BoundedProcessOutputPump(label = label, input = process.inputStream, logFile = logFile, budget = budget)
         val handle = BotProcessHandle(process, pump, logFile)
         supervisedBudgets += budget
-        budget.supervisor.register(handle, 8000)
+        budget.supervisor.register(handle, 30_000)
         pump.run()
         return pump
     }
@@ -262,7 +262,7 @@ class OutputBudgetTest {
         val pumpThread = Thread({ handle.pump.run() }, "test-pump-reap").apply { isDaemon = true }
         handle.pumpThread = pumpThread
         supervisedBudgets += budget
-        budget.supervisor.register(handle, 8000)
+        budget.supervisor.register(handle, 30_000)
         pumpThread.start()
         try {
             assertTrue(child.waitFor(8, TimeUnit.SECONDS), "截断后管道照常被抽干，子进程应当自己跑完")

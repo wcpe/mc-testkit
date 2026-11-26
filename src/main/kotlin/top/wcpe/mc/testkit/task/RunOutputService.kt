@@ -169,7 +169,9 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
 
     /** 状态文件一律原子写：先写同目录临时文件再改名——截空再写会让并发接手方读到空文件误判可接手。 */
     private fun writeStateAtomic(state: File, content: String) {
-        val tmp = File(state.parentFile, state.name + ".tmp")
+        // 临时文件名带本次构建 runId：两个并发构建共用同一目录时各写各的临时文件，
+        // 否则一方会把另一方刚截空的临时文件改名发布出去，正式记录变成半成品。
+        val tmp = File(state.parentFile, state.name + "." + runId + ".tmp")
         tmp.writeText(content)
         if (!tmp.renameTo(state)) {
             state.writeText(content)

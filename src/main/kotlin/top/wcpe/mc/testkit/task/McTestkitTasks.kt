@@ -1042,8 +1042,10 @@ object McTestkitTasks {
             hookTasks.after?.let { task.finalizedBy(it) }
             // 收尾：回写持久运行库缓存（与集群收尾同层，失败路径同样执行）
             finalizeWithRuntimeCacheSync(task)
-            // 场景前/就绪后钩子由统一注册的 before 任务与体内调用承载；集群路径需在起服前显式等 before
-            hookTasks.before?.let { task.dependsOn(it) }
+            // 就绪后钩子由体内调用承载；场景前钩子在集群体内执行（见 ① 与 ①'）：
+            // 集群没有独立 prepare 任务——每后端 prepare 都在本任务体内进行，若 before 仍挂
+            // dependsOn 则钩子的运行目录写入会被随后的 prepare 抹掉（接入配置、外部插件 jar 丢失）。
+            // 故集群路径不接 before<Key>Scenario 依赖、改在体内「全部 prepare 后、全部起服前」调用。
             val clusterHookCtx = hookContext(
                 ctx,
                 scenario.name,
@@ -1070,22 +1072,8 @@ object McTestkitTasks {
                             PortTarget(proxy.port, "集群代理 ${proxy.name}"),
                         stopTaskName = stopName,
                     )
-                    // 场景前钩子已由 before<Key>Scenario 任务承载（task.dependsOn 保证在起服前执行），
-                    // 故此处不再重复调用——重复执行会让「起控制面」这类非幂等钩子起两份进程。
-
-                    // ① 每后端独立运行目录 prepare + BungeeCord 模式 + 后台起（同 SCENARIO / RESULT_FILE）
-                    val sameVersionPredecessors = sameVersionStartupPredecessors(
-                        clusterBackends.map { backend -> backend.name to backend.version },
-                    )
+                    // ① 每后端独立运行目录 prepare + BungeeCord 模式（先全部备好，不起服）
                     clusterBackends.forEach { backend ->
-                        sameVersionPredecessors[backend.name]?.let { predecessor ->
-                            val prior = clusterBackends.first { candidate -> candidate.name == predecessor }
-                            awaitPortOpen(ctx, prior.port, "同版本集群后端 ${prior.name}")
-                            copyRuntimeCaches(
-                                layout.clusterBackendRunDir(prior.name),
-                                layout.clusterBackendRunDir(backend.name),
-                            )
-                        }
                         val runDir = layout.clusterBackendRunDir(backend.name)
                         prepareRunDirectory(
                             ctx,
@@ -1099,6 +1087,34 @@ object McTestkitTasks {
                         } else {
                             BackendBungeeCordConfig.apply(runDir, backend.version)
                         }
+                    }
+                    // ①'' 代理运行目录也要先 stage 好：stageProxyRuntime 会整目录重建，
+                    //     钩子写入须在 stage 之后，否则注入的接入配置/外部插件 jar 被抹掉。
+                    val preStagedProxyVersion = stageClusterProxyRuntime(
+                        ctx,
+                        proxy,
+                        clusterBackends,
+                        runtime.proxies.getValue(proxy.name),
+                        layout.proxyRunDir,
+                    )
+                    // ①' 场景前钩子：后端与代理运行目录已备、全部进程未起——钩子可安全向
+                    //     plugins/ 等目录写入（外部依赖进程、接入配置、外部插件 jar）。
+                    runBeforeHooks(ctx, scenario.beforeHooks, clusterHookCtx)
+
+                    // ② 逐后端后台起（同 SCENARIO / RESULT_FILE）；同版本缓存接力移到起动段
+                    val sameVersionPredecessors = sameVersionStartupPredecessors(
+                        clusterBackends.map { backend -> backend.name to backend.version },
+                    )
+                    clusterBackends.forEach { backend ->
+                        sameVersionPredecessors[backend.name]?.let { predecessor ->
+                            val prior = clusterBackends.first { candidate -> candidate.name == predecessor }
+                            awaitPortOpen(ctx, prior.port, "同版本集群后端 ${prior.name}")
+                            copyRuntimeCaches(
+                                layout.clusterBackendRunDir(prior.name),
+                                layout.clusterBackendRunDir(backend.name),
+                            )
+                        }
+                        val runDir = layout.clusterBackendRunDir(backend.name)
                         backendProcesses[backend.name] =
                             startBackendBackground(
                                 ctx,
@@ -1110,7 +1126,7 @@ object McTestkitTasks {
                                 commandSenders = BotProcessPlanner.commandSenders(scenario.name, scenario.botSpecs),
                             )
                     }
-                    // ② 后台起集群代理（单 listener + N 具名 server）
+                    // ② 后台起集群代理（单 listener + N 具名 server；目录已在 ①'' stage，不再重建）
                     proxyProcess = startClusterProxyBackground(
                         ctx,
                         proxy,
@@ -1119,6 +1135,7 @@ object McTestkitTasks {
                         scenario.name,
                         resultFile,
                         mavenSources,
+                        preStagedVersion = preStagedProxyVersion,
                     )
                     // ②' 确定性就绪门：等全部后端 + 代理端口可连再起 bot（不靠 bot 盲重试赛慢启动，慢 CI 上稳）
                     clusterBackends.forEach { awaitPortOpen(ctx, it.port, "集群后端 ${it.name}") }
@@ -1206,21 +1223,12 @@ object McTestkitTasks {
         resultFile: File? = null,
         sources: MavenCoordinateSources = MavenCoordinateSources.EMPTY,
         pty: Boolean = false,
+        preStagedVersion: String? = null,
     ): Process {
         val layout = ctx.layout
         val proxyRunDir = layout.proxyRunDir
-        val requestedVersion = proxyDownloadVersion(proxy, clusterBackends.first().version)
-        stageProxyRuntime(
-            proxyRunDir,
-            resources,
-            writeFrameworkConfiguration = {
-                writeClusterProxyConfiguration(ctx, proxyRunDir, proxy, clusterBackends)
-            },
-            preparePlatformRuntime = {
-                provisionWaterfallModulesIfNeeded(ctx, proxy.platform, requestedVersion, proxyRunDir)
-            },
-            logger = { ctx.info(it) },
-        )
+        val requestedVersion = preStagedVersion
+            ?: stageClusterProxyRuntime(ctx, proxy, clusterBackends, resources, proxyRunDir)
         val jar = resolveNodeJar(ctx, proxy.platform.name.lowercase(), requestedVersion, proxy.mavenServer, sources)
         val process = ServerLauncher.launch(
             jar = jar,
@@ -1248,6 +1256,34 @@ object McTestkitTasks {
                 "（servers: ${clusterBackends.joinToString(",") { it.name }}）",
         )
         return process
+    }
+
+    /**
+     * 只做集群代理运行目录的 stage（清旧目录、铺框架配置、备平台模块），不起进程——
+     * 返回代理实际使用版本。集群任务把它与进程起动拆开，以便在「目录已铺好、进程未起」
+     * 的窗口跑场景前钩子（钩子可安全向 plugins/ 写入接入配置与外部插件 jar，
+     * 不会被 stageProxyRuntime 的目录重建抹掉）。
+     */
+    private fun stageClusterProxyRuntime(
+        ctx: TaskExecutionContext,
+        proxy: ResolvedProxy,
+        clusterBackends: List<ResolvedBackend>,
+        resources: ProxyRuntimeResources,
+        proxyRunDir: File,
+    ): String {
+        val requestedVersion = proxyDownloadVersion(proxy, clusterBackends.first().version)
+        stageProxyRuntime(
+            proxyRunDir,
+            resources,
+            writeFrameworkConfiguration = {
+                writeClusterProxyConfiguration(ctx, proxyRunDir, proxy, clusterBackends)
+            },
+            preparePlatformRuntime = {
+                provisionWaterfallModulesIfNeeded(ctx, proxy.platform, requestedVersion, proxyRunDir)
+            },
+            logger = { ctx.info(it) },
+        )
+        return requestedVersion
     }
 
     /**

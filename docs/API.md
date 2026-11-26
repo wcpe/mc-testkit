@@ -546,9 +546,45 @@ bot 先起、后端后起，不存在「全部节点已就绪」的时刻。在�
 | `SleepHook` | 沉降等待（等异步模块就绪等） |
 | `HookChain` | 按序串联多个钩子，任一步失败即中断 |
 
-**自动任务**：`before<Key>Scenario` / `after<Key>Scenario` **仅在声明了对应钩子时注册**，且自身不接线——由各场景形态的任务接：`e2e<Key>` / `launch<Key>Bot` / `e2e<Key>Via<Proxy>` / `e2e<Key>Cluster` / `e2e<Key>Stress` 上 `dependsOn(before<Key>Scenario)`、`finalizedBy(after<Key>Scenario)`
+**自动任务**：`before<Key>Scenario` / `after<Key>Scenario` **仅在声明了对应钩子时注册**，且自身不接线——由各场景形态的任务接：`e2e<Key>` / `launch<Key>Bot` / `e2e<Key>Via<Proxy>` / `e2e<Key>Stress` 上 `dependsOn(before<Key>Scenario)`、`finalizedBy(after<Key>Scenario)`
 （早期版本让钩子任务自己 `dependsOn(prepareE2e<Key>)` 是错的：集群场景不生成该任务，声明 `beforeScenario` 会报 `Task with path 'prepareE2e…' not found`）。
 `readyScenario` **不生成任务**——它需要「节点已就绪」这一时刻，由集群任务在端口就绪门之后、bot 启动之前直接调用。
+**集群形态下 `beforeScenario` 由集群任务体内承载**（不是 `dependsOn`）：集群没有独立 prepare 任务——每后端 `prepareRunDirectory` 与代理 `stageProxyRuntime` 都在 `e2e<Key>Cluster` 体内做、且都会重建运行目录。若钩子仍挂前置任务，其向 `plugins/` 等目录的写入（接入配置、外部插件 jar）会被随后的目录重建抹掉。因此集群任务的时序固定为：全部后端 prepare + 代理 stage → `beforeScenario` → 逐后端起动 → 起代理（目录不再重建）→ 就绪门 → `readyScenario` → bot。直连 / 经代理形态语义不变（`before<Key>Scenario` 依赖独立 prepare 任务，同样在「目录就绪后、起服前」执行）。
+
+#### `beaconBroker { }` — Beacon broker 测试环境一键供给
+
+`scenario` 上的 `beaconBroker { }` 块把上面的三段时序打包成一条声明，为「消费方插件依赖 Beacon 控制面/agent 链路」的场景提供现成的 broker 测试环境：
+
+```kotlin
+scenario("broker-messaging") {
+    backends("s1", "s2"); via = "wf"
+    beaconBroker {
+        port = 18848                     // 控制面 http-addr 端口（默认 18848）
+        // version = "1.5.0"             // Beacon 版本（GitHub release 坐标）
+        // adminPassword / authSecret    // 缺省读 env BEACON_ADMIN_PASSWORD / BEACON_AUTH_SECRET，再缺省用 e2e 内置值
+        // namespaceName / namespaceCode = "e2e"
+        // injectAgents = true           // 向 plugins/ 注入 BeaconAgent.jar / BeaconAgentProxy.jar 并写接入 config.yml
+        // approveIdentities = true      // ready 钩子轮询批准 agent 身份（挂 readyScenario，仅集群/直连+代理就绪门形态）
+        // serverIds = mapOf("s1" to "s1") // 后端名 → approve 绑定的 serverId 覆盖
+        // messagingProbe = true         // 全部 active 后自跑 send→poll→ack 探针自证投递链
+        // expectedSha256 = "…"          // 供给产物 SHA-256 校验
+    }
+    resultTimeoutSeconds = 900
+}
+```
+
+接线语义：
+
+- **供给**：按平台标签（`darwin|linux|windows-amd64|arm64`）从 `releaseBaseUrl`（默认 GitHub release 坐标 `…/download/v<version>/`）供给 `beacon-<version>-<tag>` 控制面二进制与 `BeaconAgent/BeaconAgentProxy` jar，走 `ExternalArtifactProvisioner` 缓存（`resultsDir/beacon-cache`），`expectedSha256` 可钉校验。
+- **起控制面**：写 `config.yml`（sqlite + admin 凭据）起 `beacon -config`，TCP 就绪门后登录并 `ensureNamespace`（已存在则轮换取回明文 token），接入凭据落 `resultsDir/beacon-broker-<场景>.properties`（endpoint / adminUser / adminPassword / namespaceId / namespaceCode / bootstrapToken，运行时生成、非仓库凭据）。
+- **接入**：每后端写 `plugins/BeaconAgent/config.yml`（`beacon.endpoints` + `bootstrap-token`）并注入 `BeaconAgent.jar`；代理同型注入 `BeaconAgentProxy.jar`。
+- **approve 链**：`readyScenario` 轮询 `GET /admin/v2/agent-identities`，对 pending 身份走 `approve → approval-requests/approve` 二级批准，绑定 serverId（后端名或 `serverIds` 覆盖，代理为 `proxy`）；期望数全部 `active` 才算就绪。
+- **消息自检**：`messagingProbe` 注册两个临时身份（`mctk-probe-a/b`，kind backend），同样走完 approve 链，再真实 `send→poll→ack` 一轮——broker 投递链可用与否当场有结论，不依赖服务端内 agent 行为。
+- **收尾**：自动挂 `afterScenario(StopPidHook("hook-<场景>-beacon.pid"))` 收控制面进程；台账登记端口，残留进程可被 `stopE2eProcesses` 兜底。
+
+适用形态：集群（`backends + via`）与直连/经代理场景均可（`approveIdentities` 的 ready 钩子只在有就绪门的形态生效，其他形态配置期按 `readyScenario` 既有规则抛中文错）。
+
+**隔离与可重跑**：控制面 sqlite 库在每轮起动前清库（`beacon.db*`），上轮残留身份不混进本轮 approve 链；namespace token 只读凭据文件不再轮换（轮换会踢掉已接入 agent）。
 
 ### 3.6 结果文件（测试结论真源，已冻结）
 

@@ -491,6 +491,23 @@ class ScenarioSpec(val name: String) : java.io.Serializable {
     fun afterScenario(hook: ScenarioHook) {
         mutableAfterHooks += hook
     }
+
+    /**
+     * 一段声明完成 Beacon broker 测试环境供给（详见 [BeaconBrokerSpec]）：
+     * 控制面二进制供给与拉起、namespace 接入配置写入后端与代理、agent 插件 jar 注入、
+     * 身份批准链与进程收尾。
+     *
+     * 用法：`scenario("broker-smoke") { beaconBroker { port = 18848 } }`。
+     * [BeaconBrokerSpec.approveIdentities] 为 true 时经 [readyScenario]——仅在集群与直连场景生效。
+     */
+    fun beaconBroker(configure: BeaconBrokerSpec.() -> Unit) {
+        val spec = BeaconBrokerSpec().apply(configure)
+        beforeScenario(BeaconBrokerBeforeHook(spec))
+        if (spec.approveIdentities) {
+            readyScenario(BeaconApproveHook(spec))
+        }
+        afterScenario(StopPidHook("hook-$name-beacon.pid"))
+    }
 }
 
 /**

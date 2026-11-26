@@ -178,7 +178,13 @@ class BoundedProcessOutputPump(
             out = open()
             var reported = false
             while (true) {
-                val read = input.read(buffer)
+                // 读侧例外豁免只罩 read 本身：onTruncated 回调与 sink.write 抛出的 IOException
+                // 不是收尾杀进程的预期终结，混进同一 catch 会被静默吞掉（评审指正）。
+                val read = try {
+                    input.read(buffer)
+                } catch (ex: IOException) {
+                    break
+                }
                 if (read < 0) break
                 if (read == 0 || out == null) continue
                 sink.write(out, buffer, read)
@@ -188,9 +194,9 @@ class BoundedProcessOutputPump(
                 }
             }
         } catch (ex: IOException) {
-            // 读侧 IOException 不判败：收尾杀进程时 Java 的进程流关闭竞态（destroyForcibly 投递
-            // 异步窗口内 processExited 清理先合流）必然抛 Stream closed，这是预期终结而非输出故障；
-            // 泵读不到最多损失末尾证据，写盘失败才是失败——写侧（sink.write）判败口径不变。
+            // 写盘失败才是输出故障：读侧收尾杀进程的 Stream closed 竞态已在 read 处就地豁免，
+            // 抵达这里的 IOException 只会来自写侧或截断回调，如实判败不掩盖。
+            budget.fail("IOFAIL sink=$label ${ex.javaClass.simpleName}")
         } finally {
             runCatching { out?.close() }
             finished = true

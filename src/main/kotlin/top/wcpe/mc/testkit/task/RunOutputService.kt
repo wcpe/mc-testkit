@@ -88,7 +88,7 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
 
     private fun own(state: File) {
         val content = RunOutputState.running(runId, ProcessIdentity.current())
-        state.writeText(content)
+        writeStateAtomic(state, content)
         owned += state
         // 心跳：Gradle 守护进程长命共享，pid 存活无法区分「daemon 忙跑本构建」与「daemon 空闲、
         // 本构建早已结束」——持有期间每 15s 重写同一内容刷新 mtime，下一次构建据此判断持有构建
@@ -97,7 +97,7 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
             try {
                 while (!Thread.currentThread().isInterrupted) {
                     Thread.sleep(HEARTBEAT_INTERVAL_MILLIS)
-                    state.writeText(content)
+                    writeStateAtomic(state, content)
                 }
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
@@ -163,8 +163,17 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
             )
         }
         val record = RunOutputState.closed(runId, budget.usedBytes(), budget.failureReason(), supervisor.survivors())
-        owned.forEach { it.writeText(record) }
+        owned.forEach { writeStateAtomic(it, record) }
         checkHealthy()
+    }
+
+    /** 状态文件一律原子写：先写同目录临时文件再改名——截空再写会让并发接手方读到空文件误判可接手。 */
+    private fun writeStateAtomic(state: File, content: String) {
+        val tmp = File(state.parentFile, state.name + ".tmp")
+        tmp.writeText(content)
+        if (!tmp.renameTo(state)) {
+            state.writeText(content)
+        }
     }
 
     private companion object {

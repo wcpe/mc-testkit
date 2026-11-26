@@ -175,6 +175,7 @@ abstract class RunOutputService : BuildService<BuildServiceParameters.None>, Aut
         tmp.writeText(content)
         if (!tmp.renameTo(state)) {
             state.writeText(content)
+            tmp.delete()
         }
     }
 

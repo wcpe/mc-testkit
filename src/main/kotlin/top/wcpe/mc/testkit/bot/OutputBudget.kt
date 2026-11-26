@@ -162,6 +162,7 @@ class BoundedProcessOutputPump(
     private val logFile: File,
     internal val budget: OutputBudget,
     private val onTruncated: (String) -> Unit = {},
+    private val processAlive: (() -> Boolean)? = null,
 ) {
     private val sink = budget.acquire(label)
 
@@ -177,7 +178,13 @@ class BoundedProcessOutputPump(
             out = open()
             var reported = false
             while (true) {
-                val read = input.read(buffer)
+                // 读侧例外豁免只罩 read 本身：onTruncated 回调与 sink.write 抛出的 IOException
+                // 不是收尾杀进程的预期终结，混进同一 catch 会被静默吞掉（评审指正）。
+                val read = try {
+                    input.read(buffer)
+                } catch (ex: IOException) {
+                    break
+                }
                 if (read < 0) break
                 if (read == 0 || out == null) continue
                 sink.write(out, buffer, read)
@@ -187,6 +194,8 @@ class BoundedProcessOutputPump(
                 }
             }
         } catch (ex: IOException) {
+            // 写盘失败才是输出故障：读侧收尾杀进程的 Stream closed 竞态已在 read 处就地豁免，
+            // 抵达这里的 IOException 只会来自写侧或截断回调，如实判败不掩盖。
             budget.fail("IOFAIL sink=$label ${ex.javaClass.simpleName}")
         } finally {
             runCatching { out?.close() }

@@ -92,6 +92,7 @@ object DriverLauncher {
                 logFile = logFile,
                 budget = budget,
                 onTruncated = { logger("[OUTPUT_LIMIT] driver=$key $it") },
+                processAlive = { process.isAlive },
             )
             val handle = BotProcessHandle(process = process, pump = pump, logFile = logFile)
 

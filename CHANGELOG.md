@@ -14,6 +14,12 @@
 
 - **console 命令通道（`E2E_CMD`）补上鉴权——此前任何入服玩家发一条插件消息即得 console 全权**（offline serve / 手测模式下是真漏洞）：协议升 v2 `E2E_CMD:<token>:<id>:<command>`，双闸校验——①通道令牌：编排每构建用 SecureRandom 生成，经 `MC_TESTKIT_E2E_CMD_TOKEN` 同时下发给后端桩与 bot 进程 env，桩侧未配置或请求令牌不符即拒绝（fail-closed，不设 legacy 旁路）；②发送者名单：`MC_TESTKIT_E2E_CMD_SENDERS`（逗号分隔，编排下发本轮 bot 用户名）不在名单内的发送者同样拒绝，名单为空串时按「无 bot 场景」拒绝一切请求。令牌不进日志、不进回执。bot 侧 `sendCommandPayload` 默认读 `MC_TESTKIT_E2E_CMD_TOKEN`（可显式传第 4 参），缺失时在发送前中文报错而不是等超时。**破坏性**：v1 帧 `E2E_CMD:<id>:<command>` 不再受理——`@wcpe/mc-testkit-bot` 与 `harness-core` 须同版本配套使用（本版配对为 harness-core **0.4.0** + bot **0.3.0**，旧 bot 发 v1 帧一律被拒）。
 
+## [未发布]
+
+### 修复
+
+- **输出泵读侧 IOException 不再误判构建失败，且豁免范围收窄到 read 本身**：收尾杀进程时 Java 进程流关闭竞态必然抛 Stream closed，此前被外层 catch 当输出故障判败；现 read 处就地豁免视为预期终结。写侧与截断回调抛出的 IOException 不再被同一 catch 掩盖，如实判败。
+
 ## [0.19.0] - 2026-11-25
 
 ### 新增

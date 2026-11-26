@@ -167,6 +167,7 @@ object BotLauncher {
                 logFile = logFile,
                 budget = budget,
                 onTruncated = { logger("[OUTPUT_LIMIT] action=$action $it") },
+                processAlive = { process.isAlive },
             )
             val handle = BotProcessHandle(process = process, pump = pump, logFile = logFile)
 
